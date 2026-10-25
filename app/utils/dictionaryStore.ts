@@ -315,18 +315,25 @@ export class DictionaryStore {
       onProgress,
     );
 
+    // A Japanese–Chinese dictionary the user brings (e.g. 明鏡) replaces the bundled Wiktionary one: it goes
+    // first and the bundled ja-zh is switched off. Other dictionaries join at the end.
+    const chinese = /^zh/i.test(parsed.targetLanguage);
     const record: DictionaryRecord = {
       id,
       title: parsed.title || id,
       revision: parsed.revision,
       attribution: parsed.attribution,
       enabled: true,
-      order: maxOrder + 1,
+      order: chinese ? -1 : maxOrder + 1,
       builtin: false,
       count: parsed.entries.length,
     };
 
     await this.putDictionaryRecord(db, record);
+    if (chinese) {
+      for (const other of existing) if (other.builtin && other.id === 'wty-ja-zh' && other.enabled) await this.setEnabled(other.id, false);
+      await this.setOrder([id, ...existing.map((d) => d.id)]);
+    }
     onProgress?.(1);
     return record;
   }
