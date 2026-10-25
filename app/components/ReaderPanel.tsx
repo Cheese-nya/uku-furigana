@@ -7,9 +7,10 @@ import type { BookItem } from '../utils/libraryDatabase';
 import { TypographyPopover } from './TypographyPopover';
 import { GlassButton } from './glass/GlassButton';
 import { useGlass } from './glass/hooks';
-import { IconChevronLeft, IconRead, IconRuby, IconTextFormat, IconTranslate } from './glass/icons';
+import { IconChevronLeft, IconList, IconRead, IconRuby, IconTextFormat, IconTranslate } from './glass/icons';
+import { TocCard } from './TocCard';
 import { LookupCard, type LookupState } from './LookupCard';
-import { ReaderLine } from './ReaderLine';
+import { ReaderLine, bilingualSignature } from './ReaderLine';
 import { useBilingual } from '../hooks/useBilingual';
 import type { ReaderTools } from '../utils/readingTools';
 
@@ -94,7 +95,9 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
   const settleTimersRef = useRef<number[]>([]);
   const placeLineRef = useRef<(line: number) => boolean>(() => false);
   const frameRef = useRef<number | null>(null);
+  const [capsuleNode, setCapsuleNode] = useState<HTMLDivElement | null>(null);
   const capsuleRef = useGlass<HTMLDivElement>();
+  const setCapsule = useCallback((node: HTMLDivElement | null) => { capsuleRef(node); setCapsuleNode(node); }, [capsuleRef]);
   const isVertical = prefs.writingMode === 'vertical';
   const [lookup, setLookup] = useState<{ state: LookupState; line: number; start: number; end: number; anchor: HTMLElement | null } | null>(null);
   const lookupSeq = useRef(0);
@@ -108,6 +111,19 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
     return () => query.removeEventListener('change', update);
   }, []);
   const lineTexts = React.useMemo(() => annotatedLines.map(line => line.tokens.map(token => token.surface).join('')), [annotatedLines]);
+  // Books with a table of contents (EPUB/PDF) are read one chapter at a time: only that chapter is rendered.
+  const chapters = React.useMemo(() => book?.chapters ?? [], [book?.chapters]);
+  const chaptered = chapters.length > 1;
+  const chapterOf = useCallback((line: number) => {
+    let found = 0;
+    chapters.forEach((chapter, index) => { if (chapter.startLine <= line) found = index; });
+    return found;
+  }, [chapters]);
+  const [chapter, setChapter] = useState(() => chapterOf(book?.readingProgress.lineIndex ?? 0));
+  const [tocOpen, setTocOpen] = useState(false);
+  const range = chaptered && chapters[chapter]
+    ? { start: chapters[chapter].startLine, end: chapters[chapter].endLine }
+    : { start: 0, end: annotatedLines.length - 1 };
   const bilingual = useBilingual({
     enabled: prefs.bilingual, wantCount: aaOpen, bookId: book?.bookId ?? null, content: book?.content ?? '', lineTexts, articleRef, tools,
   });
@@ -130,6 +146,8 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
     setHudVisible(true);
     setScrollPercent(0);
     setAaOpen(false);
+    setTocOpen(false);
+    setChapter(chapterOf(book?.readingProgress.lineIndex ?? 0));
   }
 
   const processScroll = useCallback(() => {
@@ -163,18 +181,27 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
     const nodes = article.querySelectorAll<HTMLElement>('[data-line]');
     // An emptied page (re-annotating) clamps the scroll to 0; that is not the reader's place, so keep the saved one.
     if (nodes.length === 0) return;
-    let index = 0;
-    nodes.forEach(node => {
+    // The current line is the last one that has crossed the top (right edge when vertical). Lines are in order,
+    // so a binary search measures a handful of them per frame instead of every line of the book.
+    const passed = (node: HTMLElement) => {
       const rect = node.getBoundingClientRect();
-      if (isVertical ? rect.right >= window.innerWidth - 72 : rect.top <= 72) index = Number(node.dataset.line) || 0;
-    });
+      return isVertical ? rect.right >= window.innerWidth - 72 : rect.top <= 72;
+    };
+    let low = 0;
+    let high = nodes.length - 1;
+    let found = 0;
+    while (low <= high) {
+      const middle = (low + high) >> 1;
+      if (passed(nodes[middle])) { found = middle; low = middle + 1; } else high = middle - 1;
+    }
+    const index = Number(nodes[found].dataset.line) || 0;
     // Right after a restore, layout drift must not rewrite the saved place; only the reader's own scrolling may.
     if (placedLineRef.current !== null && !userMovedRef.current) return;
     if (index !== lastLineRef.current) {
       lastLineRef.current = index;
-      onUpdateProgress(0, index, nodes.length);
+      onUpdateProgress(chapterOf(index), index, annotatedLines.length);
     }
-  }, [isVertical, onUpdateProgress]);
+  }, [isVertical, onUpdateProgress, chapterOf, annotatedLines.length]);
 
   const handleScroll = useCallback(() => {
     if (frameRef.current !== null) return;
@@ -265,6 +292,25 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
     if (isProcessing || line === null || userMovedRef.current) return;
     placeLine(line);
   }, [isProcessing, placeLine]);
+
+  const goToChapter = (index: number) => {
+    const target = chapters[index];
+    if (!target) return;
+    setTocOpen(false);
+    setChapter(index);
+    setLookup(null);
+    resumeLineRef.current = null;
+    placedLineRef.current = null;
+    lastLineRef.current = target.startLine;
+    setScrollPercent(0);
+    onUpdateProgress(index, target.startLine, annotatedLines.length);
+    // The new chapter renders on the next frame; start it from the top.
+    requestAnimationFrame(() => {
+      if (articleRef.current) articleRef.current.scrollLeft = 0;
+      if (scrollerRef.current) scrollerRef.current.scrollTop = 0;
+      setHudVisible(true);
+    });
+  };
 
   const closeLookup = useCallback(() => {
     lookupSeq.current += 1;
@@ -370,27 +416,42 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
 
           {isProcessing && <p className="mb-4 font-sans text-xs text-[var(--label-2)]">{t.annotatingProgress}</p>}
 
-          {annotatedLines.map((line, lineIndex) => (
-            <ReaderLine
-              key={`${line.id}-${lineIndex}`}
-              line={line}
-              lineIndex={lineIndex}
-              bookId={book.bookId}
-              vertical={isVertical}
-              showRuby={prefs.showRuby}
-              bilingual={prefs.bilingual ? bilingual.retryBundle : undefined}
-              hit={lookup?.line === lineIndex ? lookup : null}
-              t={t}
-            />
-          ))}
+          {annotatedLines.slice(range.start, range.end + 1).map((line, offset) => {
+            const lineIndex = range.start + offset;
+            return (
+              <ReaderLine
+                key={`${line.id}-${lineIndex}`}
+                line={line}
+                lineIndex={lineIndex}
+                bookId={book.bookId}
+                vertical={isVertical}
+                showRuby={prefs.showRuby}
+                bilingual={prefs.bilingual ? bilingual.retryBundle : undefined}
+                bilingualSig={prefs.bilingual ? bilingualSignature(lineTexts[lineIndex] ?? '', bilingual.retryBundle.translations, bilingual.retryBundle.failed) : undefined}
+                hit={lookup?.line === lineIndex ? lookup : null}
+                t={t}
+              />
+            );
+          })}
+
+          {chaptered && (
+            <nav className="reader-chapnav">
+              <button type="button" className="btn" disabled={chapter === 0} onClick={() => goToChapter(chapter - 1)}>{t.readerPrevChapter}</button>
+              {chapter + 1 < chapters.length && (
+                <button type="button" className="btn btn-ink" onClick={() => goToChapter(chapter + 1)}>
+                  {t.readerNextChapter}<small>{chapters[chapter + 1].title}</small>
+                </button>
+              )}
+            </nav>
+          )}
         </article>
       </div>
 
       {/* Bottom glass capsule */}
       <div
-        ref={capsuleRef}
+        ref={setCapsule}
         className={`glass fixed bottom-[max(22px,env(safe-area-inset-bottom))] left-1/2 z-40 flex h-[52px] w-[min(470px,calc(100%-32px))] -translate-x-1/2 items-center gap-0.5 rounded-full px-2 ${
-          hudVisible || aaOpen
+          hudVisible || aaOpen || tocOpen
             ? 'transition-[translate,opacity] duration-[620ms,220ms] [transition-timing-function:var(--spring-bouncy),ease]'
             : 'pointer-events-none translate-y-[calc(100%+40px)] opacity-0 transition-[translate,opacity] duration-[340ms,260ms] [transition-timing-function:cubic-bezier(.4,0,.7,.2),ease]'
         }`}
@@ -398,10 +459,22 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
         <GlassButton icon aria-label={t.readerBackToLibrary} onClick={onGoToLibrary}>
           <IconChevronLeft />
         </GlassButton>
-        <div className="min-w-0 flex-1 text-center">
-          <b className="block truncate text-[13px]">{book.title}</b>
-          <span className="text-[11px] tabular-nums text-[var(--label-2)]">{fill(t.libraryBookProgress, { percent: scrollPercent })}</span>
-        </div>
+        {chaptered && (
+          <GlassButton icon aria-label={t.readerToc} aria-expanded={tocOpen} onClick={() => setTocOpen(open => !open)}>
+            <IconList />
+          </GlassButton>
+        )}
+        {chaptered ? (
+          <button type="button" aria-label={t.readerToc} onClick={() => setTocOpen(open => !open)} className="min-w-0 flex-1 rounded-[14px] px-1.5 py-1 text-center transition-colors hover:bg-[var(--item-hover)]">
+            <b className="block truncate text-[13px]">{book.title} · {chapters[chapter]?.title}</b>
+            <span className="text-[11px] tabular-nums text-[var(--label-2)]">{fill(t.readerChapterPercent, { current: chapter + 1, total: chapters.length, percent: scrollPercent })}</span>
+          </button>
+        ) : (
+          <div className="min-w-0 flex-1 text-center">
+            <b className="block truncate text-[13px]">{book.title}</b>
+            <span className="text-[11px] tabular-nums text-[var(--label-2)]">{fill(t.libraryBookProgress, { percent: scrollPercent })}</span>
+          </div>
+        )}
         <GlassButton icon aria-label={t.showRubyLabel} aria-pressed={prefs.showRuby} onClick={() => updatePrefs({ showRuby: !prefs.showRuby })}>
           <IconRuby />
         </GlassButton>
@@ -454,6 +527,20 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
         } : undefined}
         t={t}
       />
+
+      {chaptered && (
+        <TocCard
+          open={tocOpen}
+          onClose={() => setTocOpen(false)}
+          anchor={capsuleNode}
+          phone={phone}
+          chapters={chapters}
+          current={chapter}
+          percent={scrollPercent}
+          onSelect={goToChapter}
+          t={t}
+        />
+      )}
 
       <LookupCard
         state={lookup?.state ?? null}

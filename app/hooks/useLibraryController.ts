@@ -137,11 +137,21 @@ export function useLibraryController({
     return () => { active = false; };
   }, []);
 
-  // Persist library mutations (debounced). Guarded until the initial load completes.
+  // Persist library mutations (debounced). Guarded until the initial load completes. The whole library is
+  // serialised on every save, and reading moves the progress every few lines, so wait for a pause in
+  // scrolling; leaving the page (or the app going to the background) saves at once.
   useEffect(() => {
     if (!libraryReady) return;
-    const timer = setTimeout(() => { void saveLibraryWithFallback(libraryDb); }, 250);
-    return () => clearTimeout(timer);
+    const save = () => { void saveLibraryWithFallback(libraryDb); };
+    const timer = setTimeout(save, 1200);
+    const flush = () => { if (document.visibilityState === 'hidden') { clearTimeout(timer); save(); } };
+    document.addEventListener('visibilitychange', flush);
+    window.addEventListener('pagehide', save);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', flush);
+      window.removeEventListener('pagehide', save);
+    };
   }, [libraryDb, libraryReady]);
 
   useEffect(() => {

@@ -371,6 +371,9 @@ export interface Translations {
   libPixivFetchBtn: string;
   libPixivFetching: string;
   libPixivImportSuccess: string;
+  readerToc: string;
+  readerChapterOf: string;
+  readerChapterPercent: string;
   importingFile: string;
   importDone: string;
   importChapters: string;
@@ -855,6 +858,9 @@ export const translations: Record<Locale, Translations> = {
     libPixivFetchBtn: '导入台本',
     libPixivFetching: '正在获取...',
     libPixivImportSuccess: '已从 Pixiv 导入',
+    readerToc: '目录',
+    readerChapterOf: '第 {current} / {total} 章',
+    readerChapterPercent: '第 {current} / {total} 章 · {percent}%',
     importingFile: '正在导入 {name}',
     importDone: '已导入《{title}》',
     importChapters: '{count} 章',
@@ -1335,6 +1341,9 @@ export const translations: Record<Locale, Translations> = {
     libPixivFetchBtn: 'Import',
     libPixivFetching: 'Fetching...',
     libPixivImportSuccess: 'Imported from Pixiv',
+    readerToc: 'Contents',
+    readerChapterOf: 'Ch. {current} / {total}',
+    readerChapterPercent: 'Ch. {current} / {total} · {percent}%',
     importingFile: 'Importing {name}',
     importDone: 'Imported “{title}”',
     importChapters: '{count} chapters',

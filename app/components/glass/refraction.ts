@@ -166,8 +166,25 @@ function update(el: HTMLElement): void {
 }
 
 /** Register an element as refracting glass. Returns an unregister function. */
+// While anything scrolls, html[data-scrolling] swaps the refraction for plain blur (globals.css): the SVG
+// displacement is rasterised on the CPU every frame, which is what made scrolling stutter. It comes back
+// a moment after the scrolling stops.
+let scrollWatch = false;
+function watchScrolling() {
+  if (scrollWatch) return;
+  scrollWatch = true;
+  const root = document.documentElement;
+  let timer = 0;
+  document.addEventListener('scroll', () => {
+    if (!timer) root.dataset.scrolling = '';
+    window.clearTimeout(timer);
+    timer = window.setTimeout(() => { timer = 0; delete root.dataset.scrolling; }, 180);
+  }, { capture: true, passive: true });
+}
+
 export function registerGlass(el: HTMLElement, options: GlassOptions = {}): () => void {
   if (!refractionSupported()) return () => {};
+  watchScrolling();
   const lens = !!options.lens;
   const { filter, image, maps } = createFilter(lens);
   entries.set(el, { filter, image, maps, lens, key: '' });

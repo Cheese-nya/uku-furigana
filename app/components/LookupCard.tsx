@@ -110,11 +110,10 @@ function Footer({ state, dictTitles, t }: { state: LookupState; dictTitles: Reco
 }
 
 /** Phone: a card that rises from the bottom; the grabber expands it (tap / drag up) or closes it (drag down). */
-function PhoneCard({ state, onClose, children }: { state: LookupState | null; onClose: () => void; children: React.ReactNode }) {
+export function BottomCard({ open, onClose, label, children }: { open: boolean; onClose: () => void; label?: string; children: React.ReactNode }) {
   const ref = useGlass<HTMLDivElement>();
   const [tall, setTall] = useState(false);
   const startY = useRef<number | null>(null);
-  const open = Boolean(state);
   const onCloseRef = useRef(onClose);
   useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
   const [wasOpen, setWasOpen] = useState(open);
@@ -124,6 +123,7 @@ function PhoneCard({ state, onClose, children }: { state: LookupState | null; on
     <div
       ref={ref}
       role="dialog"
+      aria-label={label}
       aria-hidden={!open}
       className={`glass glass-sheet fixed inset-x-2 bottom-[max(8px,env(safe-area-inset-bottom))] z-[72] flex flex-col overflow-hidden rounded-[30px] transition-[translate,height] duration-[560ms,520ms] [transition-timing-function:var(--spring-smooth)] ${
         tall ? 'h-[86%]' : 'h-[46%]'} ${open ? 'translate-y-0' : 'pointer-events-none translate-y-[calc(100%+20px)]'}`}
@@ -159,7 +159,7 @@ export function LookupCard({ state, anchor, phone, onClose, dictTitles, locale, 
       <Footer state={shown} dictTitles={dictTitles} t={t} />
     </>
   );
-  if (phone) return <PhoneCard state={state} onClose={onClose}>{content}</PhoneCard>;
+  if (phone) return <BottomCard open={Boolean(state)} onClose={onClose} label={t.lookupDialog}>{content}</BottomCard>;
   return (
     <GlassPopover open={Boolean(state)} onClose={onClose} anchor={anchor} ariaLabel={t.lookupDialog} className="glass-sheet flex w-[340px] flex-col !p-0 overflow-hidden">
       {content}
