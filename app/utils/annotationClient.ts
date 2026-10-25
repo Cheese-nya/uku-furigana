@@ -1,3 +1,4 @@
+import type { AnalyzedToken } from './analyze';
 import type { ScriptLine } from './furigana';
 import type { AnnotationChunk, AnnotationInput, createAnnotator } from './annotationTask';
 import type { WorkerRequest, WorkerResponse } from '../workers/protocol';
@@ -20,6 +21,7 @@ export class AnnotationClient {
   private worker: Worker | null = null;
   private fallback: ReturnType<typeof createAnnotator> | null = null;
   private jobs = new Map<number, PendingJob>();
+  private analyses = new Map<number, { resolve: (tokens: AnalyzedToken[]) => void; reject: (error: unknown) => void }>();
   private sequence = 0;
   private disposed = false;
   private bootingFallback = false;
@@ -52,8 +54,15 @@ export class AnnotationClient {
       this.resolveReady();
       return;
     }
+    const analysis = this.analyses.get(message.taskId);
+    if (analysis) {
+      this.analyses.delete(message.taskId);
+      if (message.type === 'ANALYZED') analysis.resolve(message.tokens);
+      else if (message.type === 'ERROR') analysis.reject(new Error(message.error));
+      return;
+    }
     const job = this.jobs.get(message.taskId);
-    if (!job) return;
+    if (!job || message.type === 'ANALYZED') return;
     if (message.type === 'CHUNK') {
       job.lines.splice(message.chunk.offset, message.chunk.lines.length, ...message.chunk.lines);
       job.onChunk?.(message.chunk);
@@ -81,6 +90,9 @@ export class AnnotationClient {
       this.onState({ status: error ? 'degraded' : 'ready', mode: 'fallback', error: error || reason });
       this.resolveReady();
       for (const [id, job] of this.jobs) void this.runFallback(id, job);
+      // Analyses sent to the dead worker would never be answered; the reader taps again.
+      for (const analysis of this.analyses.values()) analysis.reject(new Error('查词引擎已重启，请再点一次'));
+      this.analyses.clear();
     } catch (error) {
       this.onState({ status: 'degraded', mode: 'fallback', error: String(error) });
       this.dispose();
@@ -117,6 +129,21 @@ export class AnnotationClient {
     });
   }
 
+  /** Kuromoji tokens with dictionary forms, for word lookup. */
+  async analyze(text: string): Promise<AnalyzedToken[]> {
+    await this.ready;
+    if (this.disposed) throw new DOMException('注音引擎已关闭', 'AbortError');
+    if (this.fallback) {
+      const [{ getTokenizer }, { toAnalyzedTokens }] = await Promise.all([import('./kuromojiEngine'), import('./analyze')]);
+      return toAnalyzedTokens(getTokenizer().tokenize(text));
+    }
+    const id = ++this.sequence;
+    return new Promise((resolve, reject) => {
+      this.analyses.set(id, { resolve, reject });
+      this.send({ type: 'ANALYZE', taskId: id, text });
+    });
+  }
+
   dispose() {
     this.disposed = true;
     clearTimeout(this.bootTimer);
@@ -127,5 +154,7 @@ export class AnnotationClient {
       job.reject(new DOMException('注音任务已取消', 'AbortError'));
     }
     this.jobs.clear();
+    for (const analysis of this.analyses.values()) analysis.reject(new DOMException('注音引擎已关闭', 'AbortError'));
+    this.analyses.clear();
   }
 }

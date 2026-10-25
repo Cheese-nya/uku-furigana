@@ -50,10 +50,16 @@ export function useFuriganaWorker(input: AnnotationInput) {
     return client.annotate(task, undefined, signal);
   }, []);
 
+  const analyze = useCallback((text: string) => {
+    const client = clientRef.current;
+    if (!client) return Promise.reject(new Error('注音引擎尚未就绪'));
+    return client.analyze(text);
+  }, []);
+
   const current = snapshot.input === input && snapshot.revision === revision;
   const lines = current ? snapshot.lines : [];
   const busy = !current || !snapshot.done;
   return { lines, busy, engine, error: current ? snapshot.error : '',
     progress: busy ? Math.round(lines.length / Math.max(1, input.text.split('\n').length) * 100) : 100,
-    annotate, retry: () => setRevision(value => value + 1) };
+    annotate, analyze, retry: () => setRevision(value => value + 1) };
 }

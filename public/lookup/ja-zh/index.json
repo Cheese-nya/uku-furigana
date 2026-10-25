@@ -1,0 +1,18 @@
+{
+  "id": "wty-ja-zh",
+  "title": "日中词典（维基词典）",
+  "titleEn": "Japanese–Chinese (Wiktionary)",
+  "revision": "2026.10.22",
+  "attribution": "Wiktionary contributors via kaikki.org / wty, CC BY-SA 4.0",
+  "license": "CC BY-SA 4.0",
+  "url": "https://github.com/yomidevs/wiktionary-to-yomitan",
+  "count": 112663,
+  "shards": [
+    "terms-00.json.gz",
+    "terms-01.json.gz",
+    "terms-02.json.gz",
+    "terms-03.json.gz",
+    "terms-04.json.gz",
+    "terms-05.json.gz"
+  ]
+}
