@@ -371,6 +371,21 @@ export interface Translations {
   libPixivFetchBtn: string;
   libPixivFetching: string;
   libPixivImportSuccess: string;
+  toolsDirect: string;
+  toolsProxy: string;
+  toolsGetKey: string;
+  toolsKeyPlaceholder: string;
+  toolsPickModel: string;
+  toolsFree: string;
+  toolsModelsFailed: string;
+  toolsTest: string;
+  toolsBadKey: string;
+  toolsTesting: string;
+  toolsTestOk: string;
+  toolsTestFail: string;
+  toolsLoginOpenRouter: string;
+  toolsLoggedIn: string;
+  toolsLoginFailed: string;
   readerToc: string;
   readerChapterOf: string;
   readerChapterPercent: string;
@@ -858,6 +873,21 @@ export const translations: Record<Locale, Translations> = {
     libPixivFetchBtn: '导入台本',
     libPixivFetching: '正在获取...',
     libPixivImportSuccess: '已从 Pixiv 导入',
+    toolsDirect: '国内直连',
+    toolsProxy: '国内可能需要代理',
+    toolsGetKey: '获取 Key ↗',
+    toolsKeyPlaceholder: '粘贴 Key',
+    toolsPickModel: '选择模型',
+    toolsFree: '免费',
+    toolsModelsFailed: '读取模型列表失败：{error}',
+    toolsTest: '测试连接',
+    toolsBadKey: 'Key 无效或没有权限',
+    toolsTesting: '正在测试…',
+    toolsTestOk: '✓ 可以使用 ·「こんにちは。」→「{text}」',
+    toolsTestFail: '不能使用：{error}',
+    toolsLoginOpenRouter: '用 OpenRouter 账号登录',
+    toolsLoggedIn: '✓ 已登录 OpenRouter，Key 已保存',
+    toolsLoginFailed: 'OpenRouter 登录失败：{error}',
     readerToc: '目录',
     readerChapterOf: '第 {current} / {total} 章',
     readerChapterPercent: '第 {current} / {total} 章 · {percent}%',
@@ -899,7 +929,7 @@ export const translations: Record<Locale, Translations> = {
     toolsLlmUrl: '接口地址',
     toolsLlmModel: '模型',
     toolsLlmKey: 'API Key',
-    toolsLlmNote: '兼容 OpenAI 格式的接口均可（DeepSeek、通义、Kimi、OpenAI…）。Key 只保存在本机。',
+    toolsLlmNote: 'Key 只保存在本机，翻译请求由本机直接发给该平台。',
     toolsTarget: '译文语言',
     toolsDicts: '查词词典',
     toolsDictBuiltin: '内置 · {count} · {license}',
@@ -1341,6 +1371,21 @@ export const translations: Record<Locale, Translations> = {
     libPixivFetchBtn: 'Import',
     libPixivFetching: 'Fetching...',
     libPixivImportSuccess: 'Imported from Pixiv',
+    toolsDirect: 'Works in mainland China',
+    toolsProxy: 'May need a proxy in mainland China',
+    toolsGetKey: 'Get a key ↗',
+    toolsKeyPlaceholder: 'Paste the key',
+    toolsPickModel: 'Choose a model',
+    toolsFree: 'free',
+    toolsModelsFailed: 'Could not load models: {error}',
+    toolsTest: 'Test',
+    toolsBadKey: 'invalid key or no access',
+    toolsTesting: 'Testing…',
+    toolsTestOk: '✓ Works · “こんにちは。” → “{text}”',
+    toolsTestFail: 'Not working: {error}',
+    toolsLoginOpenRouter: 'Sign in with OpenRouter',
+    toolsLoggedIn: '✓ Signed in to OpenRouter, key saved',
+    toolsLoginFailed: 'OpenRouter sign-in failed: {error}',
     readerToc: 'Contents',
     readerChapterOf: 'Ch. {current} / {total}',
     readerChapterPercent: 'Ch. {current} / {total} · {percent}%',
@@ -1382,7 +1427,7 @@ export const translations: Record<Locale, Translations> = {
     toolsLlmUrl: 'Endpoint',
     toolsLlmModel: 'Model',
     toolsLlmKey: 'API key',
-    toolsLlmNote: 'Any OpenAI-compatible endpoint works (DeepSeek, Qwen, Kimi, OpenAI…). The key stays on this device.',
+    toolsLlmNote: 'The key stays on this device; translations go straight from here to the platform.',
     toolsTarget: 'Translate into',
     toolsDicts: 'Dictionaries',
     toolsDictBuiltin: 'Built-in · {count} · {license}',

@@ -493,6 +493,7 @@ export default function DubbingStudioApp() {
         onImportDictionary={file => { void readingTools.importDictionary(file); }}
         importProgress={readingTools.importProgress}
         importError={readingTools.importError}
+        loginNotice={readingTools.loginNotice}
       />
       <GlassToast
         toast={importToast ?? (libraryToast ? { kind: 'info', title: libraryToast } : null)}

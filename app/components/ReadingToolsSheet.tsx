@@ -7,6 +7,7 @@ import { IconDictionary, IconImport, IconTrash } from './glass/icons';
 import type { Translations } from '../utils/i18n';
 import type { DictionaryInfo } from '../utils/readingTools';
 import type { TranslationSettings } from '../utils/translation';
+import { LlmFields } from './LlmFields';
 
 export interface ReadingToolsSheetProps {
   open: boolean;
@@ -23,6 +24,8 @@ export interface ReadingToolsSheetProps {
   /** 0–1 while a dictionary zip is being imported. */
   importProgress: number | null;
   importError: string;
+  /** Result of an OpenRouter sign-in that just came back, shown under the fields. */
+  loginNotice?: { ok: boolean; text: string };
 }
 
 const fill = (template: string, values: Record<string, string | number>) =>
@@ -36,21 +39,12 @@ function Section({ children }: { children: React.ReactNode }) {
   return <div className="mx-0.5 mb-2 mt-4 text-xs font-semibold text-[var(--label-2)] first:mt-0">{children}</div>;
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="mb-3 flex h-[42px] items-center gap-2.5 rounded-xl bg-[var(--fill-2)] px-3.5">
-      <span className="w-16 shrink-0 text-[13px] text-[var(--label-2)]">{label}</span>
-      {children}
-    </label>
-  );
-}
 
-const inputClass = 'min-w-0 flex-1 border-0 bg-transparent text-sm text-[var(--label)] outline-none placeholder:text-[var(--label-3)]';
 
 /** Translation & lookup settings (mockup v3 sheet): engine, LLM endpoint, target language, dictionaries. */
 export function ReadingToolsSheet({
   open, onClose, t, locale, settings, onSettingsChange, dictionaries, onToggleDictionary, onReorderDictionaries,
-  onRemoveDictionary, onImportDictionary, importProgress, importError,
+  onRemoveDictionary, onImportDictionary, importProgress, importError, loginNotice,
 }: ReadingToolsSheetProps) {
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [order, setOrder] = useState<DictionaryInfo[]>(dictionaries);
@@ -60,7 +54,6 @@ export function ReadingToolsSheet({
   if (source !== dictionaries) { setSource(dictionaries); setOrder(dictionaries); }
 
   const set = (patch: Partial<TranslationSettings>) => onSettingsChange({ ...settings, ...patch });
-  const setLlm = (patch: Partial<TranslationSettings['llm']>) => onSettingsChange({ ...settings, llm: { ...settings.llm, ...patch } });
 
   // Drag a row by its icon: rows swap as the pointer crosses a neighbour's middle; the order is saved on release.
   const onDragMove = (event: React.PointerEvent) => {
@@ -98,12 +91,7 @@ export function ReadingToolsSheet({
         options={[{ value: 'microsoft', label: t.toolsEngineMicrosoft }, { value: 'llm', label: t.toolsEngineLlm }]}
       />
       {settings.engine === 'llm' ? (
-        <div className="mt-3">
-          <Field label={t.toolsLlmUrl}><input className={inputClass} spellCheck={false} value={settings.llm.baseUrl} onChange={event => setLlm({ baseUrl: event.target.value })} /></Field>
-          <Field label={t.toolsLlmModel}><input className={inputClass} spellCheck={false} value={settings.llm.model} onChange={event => setLlm({ model: event.target.value })} /></Field>
-          <Field label={t.toolsLlmKey}><input className={inputClass} type="password" spellCheck={false} placeholder="sk-…" value={settings.llm.apiKey} onChange={event => setLlm({ apiKey: event.target.value })} /></Field>
-          <p className="mx-0.5 -mt-1 mb-1 text-xs leading-normal text-[var(--label-3)]">{t.toolsLlmNote}</p>
-        </div>
+        <LlmFields settings={settings} onSettingsChange={onSettingsChange} locale={locale} t={t} loginNotice={loginNotice} />
       ) : (
         <p className="mx-0.5 mt-2 text-xs leading-normal text-[var(--label-3)]">{t.toolsMsNote}</p>
       )}
