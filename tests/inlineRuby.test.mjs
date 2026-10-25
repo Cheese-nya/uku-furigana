@@ -162,12 +162,14 @@ test('editor, library and batch import all go through importTextScript; batch bo
   const read = path => readFileSync(fileURLToPath(new URL(path, import.meta.url)), 'utf8');
   const page = read('../app/page.tsx');
   const library = read('../app/hooks/useLibraryController.ts');
+  const bookImport = read('../app/utils/bookImport.ts');
   const batch = read('../app/hooks/useBatchProcessing.ts');
   assert.match(page, /importTextScript\(file\.name, await file\.text\(\)\)/);
-  assert.match(library, /importTextScript\(file\.name, /);
+  assert.match(bookImport, /importTextScript\(file\.name, /);
+  assert.match(library, /parseBookFile\(file\)/);
   assert.match(batch, /importTextScript\(item\.name, await item\.file\.text\(\)\)/);
-  for (const source of [page, library, batch]) assert.equal(/\bparseSRT\(|\bparseVtt\b/.test(source), false, 'no private subtitle parsing left');
-  assert.match(library, /format: scriptSourceFormat\(file\.name\)/);
+  for (const source of [page, library, batch, bookImport]) assert.equal(/\bparseSRT\(|\bparseVtt\b/.test(source), false, 'no private subtitle parsing left');
+  assert.match(bookImport, /format: scriptSourceFormat\(file\.name\)/);
   assert.match(batch, /format: scriptSourceFormat\(item\.name\)/);
   assert.equal(/batchTargetFormat === 'docx' \? 'docx'/.test(batch), false, 'the export target must not decide the book format');
   assert.match(page, /return generateTXT\(lines\);/);

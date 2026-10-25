@@ -220,7 +220,7 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
         </GlassButton>
       </div>
 
-      <input type="file" ref={editorFileInputRef} onChange={handleEditorFileImport} accept=".txt,.srt,.docx" className="hidden" />
+      <input type="file" ref={editorFileInputRef} onChange={handleEditorFileImport} accept=".txt,.srt,.docx,.epub,.pdf" className="hidden" />
 
       <h1 className="mx-1 mb-3.5 mt-1.5 text-[34px] font-bold tracking-[-0.02em] md:hidden">{t.mobileNavEditor}</h1>
       <div className="mb-3 md:hidden">

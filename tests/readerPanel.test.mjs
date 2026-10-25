@@ -8,6 +8,8 @@ const source = readFileSync(
   'utf8',
 );
 
+const line = readFileSync(fileURLToPath(new URL('../app/components/ReaderLine.tsx', import.meta.url)), 'utf8');
+
 // app/page.tsx was split: its Editor view, sidebar items, library and batch logic now live in
 // these files, so page-level source assertions read them all together.
 const readPageSplitSource = () => [
@@ -63,8 +65,8 @@ test('阅读器：样稿以外的功能已删除', () => {
 });
 
 test('阅读器：说话人标签与正文开头去重', () => {
-  assert.ok(source.includes('const speaker = line.speaker || speakerMatch?.[1];'));
-  assert.ok(source.includes('joined.startsWith(speaker)'));
+  assert.ok(line.includes('const speaker = line.speaker || speakerMatch?.[1];'));
+  assert.ok(line.includes('text.startsWith(speaker)'));
 });
 
 test('工作台：样稿工具条 + 导出选格式（含存入台本库）+ 右上角导入（文件 / 台本库）', () => {

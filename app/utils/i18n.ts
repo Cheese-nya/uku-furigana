@@ -371,6 +371,56 @@ export interface Translations {
   libPixivFetchBtn: string;
   libPixivFetching: string;
   libPixivImportSuccess: string;
+  importingFile: string;
+  importDone: string;
+  importChapters: string;
+  importImages: string;
+  importRubies: string;
+  importFailed: string;
+  importRead: string;
+  importOk: string;
+  lookupDialog: string;
+  lookupQuery: string;
+  lookupNotFound: string;
+  lookupCopy: string;
+  lookupCopied: string;
+  lookupPreparing: string;
+  lookupFailed: string;
+  bilingualLabel: string;
+  pretranslateTitle: string;
+  pretranslateStart: string;
+  pretranslatePause: string;
+  pretranslateResume: string;
+  pretranslateRunning: string;
+  pretranslateIdle: string;
+  pretranslateDone: string;
+  pretranslateDoneDetail: string;
+  pretranslateFailed: string;
+  translationLineFailed: string;
+  translationRetry: string;
+  engineMicrosoft: string;
+  engineLlm: string;
+  toolsTitle: string;
+  toolsMenuDetail: string;
+  toolsEngine: string;
+  toolsEngineMicrosoft: string;
+  toolsEngineLlm: string;
+  toolsMsNote: string;
+  toolsLlmUrl: string;
+  toolsLlmModel: string;
+  toolsLlmKey: string;
+  toolsLlmNote: string;
+  toolsTarget: string;
+  toolsDicts: string;
+  toolsDictBuiltin: string;
+  toolsDictImported: string;
+  toolsDictCount: string;
+  toolsImportDict: string;
+  toolsImportingDict: string;
+  toolsDictOrderNote: string;
+  toolsDeleteDict: string;
+  toolsDone: string;
+  libraryImportFormats: string;
   libPixivImportError: string;
 
   // Book Metadata Gear Modal
@@ -747,7 +797,7 @@ export const translations: Record<Locale, Translations> = {
     batchStatusFailed: '无法读取',
     batchRemove: '移除',
     batchEmptyTitle: '还没有文件',
-    batchEmptyBody: '添加 TXT、DOCX 或 SRT 文件，一次注音并导出。',
+    batchEmptyBody: '添加 TXT、DOCX、SRT、EPUB 或 PDF 文件，一次注音并导出。',
     libraryRead: '阅读',
     libraryOpenInEditor: '在工作台打开',
     libraryInfoAndCategory: '信息与分类',
@@ -756,7 +806,7 @@ export const translations: Record<Locale, Translations> = {
     libraryDefaultCover: '使用默认封面',
     libraryDelete: '删除',
     libraryEmptyTitle: '还没有台本',
-    libraryEmptyBody: '导入 TXT、DOCX 或 SRT，也可以粘贴 Pixiv 链接。',
+    libraryEmptyBody: '导入 TXT、DOCX、SRT、EPUB 或 PDF，也可以粘贴 Pixiv 链接。',
     libraryFilteredEmptyTitle: '这个分类里没有作品',
     libraryFilteredEmptyBody: '换个分类，或者取消“只看收藏”。',
     libraryUnread: '未读',
@@ -805,6 +855,56 @@ export const translations: Record<Locale, Translations> = {
     libPixivFetchBtn: '导入台本',
     libPixivFetching: '正在获取...',
     libPixivImportSuccess: '已从 Pixiv 导入',
+    importingFile: '正在导入 {name}',
+    importDone: '已导入《{title}》',
+    importChapters: '{count} 章',
+    importImages: '{count} 张插图',
+    importRubies: '自带注音 {count} 处',
+    importFailed: '无法导入 {name}',
+    importRead: '阅读',
+    importOk: '知道了',
+    lookupDialog: '查词',
+    lookupQuery: '查询',
+    lookupNotFound: '词典里没有找到这个词。可以长按选中更长或更短的一段再查。',
+    lookupCopy: '复制',
+    lookupCopied: '已复制',
+    lookupPreparing: '正在准备词典 {percent}%',
+    lookupFailed: '查词失败：{error}',
+    bilingualLabel: '对照翻译',
+    pretranslateTitle: '整本翻译',
+    pretranslateStart: '开始',
+    pretranslatePause: '暂停',
+    pretranslateResume: '继续',
+    pretranslateRunning: '正在后台翻译 · {percent}%',
+    pretranslateIdle: '已译 {done} / {total} 句',
+    pretranslateDone: '已完成',
+    pretranslateDoneDetail: '{total} 句全部译好，离线也能看对照',
+    pretranslateFailed: '翻译中断：{error}',
+    translationLineFailed: '这一句没有翻译成功',
+    translationRetry: '重试',
+    engineMicrosoft: '微软翻译',
+    engineLlm: '大模型',
+    toolsTitle: '翻译与查词',
+    toolsMenuDetail: '{engine} · {count} 部词典',
+    toolsEngine: '翻译引擎',
+    toolsEngineMicrosoft: '微软翻译（免费）',
+    toolsEngineLlm: '大模型 API',
+    toolsMsNote: '无需注册，国内可直接使用。译文按句缓存在本机，再次打开不重复请求。',
+    toolsLlmUrl: '接口地址',
+    toolsLlmModel: '模型',
+    toolsLlmKey: 'API Key',
+    toolsLlmNote: '兼容 OpenAI 格式的接口均可（DeepSeek、通义、Kimi、OpenAI…）。Key 只保存在本机。',
+    toolsTarget: '译文语言',
+    toolsDicts: '查词词典',
+    toolsDictBuiltin: '内置 · {count} · {license}',
+    toolsDictImported: '已导入 · {count}',
+    toolsDictCount: '{count} 万条',
+    toolsImportDict: '导入 Yomitan 词典（.zip）',
+    toolsImportingDict: '正在导入词典 {percent}%',
+    toolsDictOrderNote: '多部词典按此顺序依次显示，可拖动排序。',
+    toolsDeleteDict: '删除词典',
+    toolsDone: '完成',
+    libraryImportFormats: 'TXT · DOCX · SRT · EPUB · PDF',
     libPixivImportError: 'Pixiv 导入失败',
 
     // Book Metadata Gear Modal
@@ -1177,7 +1277,7 @@ export const translations: Record<Locale, Translations> = {
     batchStatusFailed: 'Failed',
     batchRemove: 'Remove',
     batchEmptyTitle: 'No files yet',
-    batchEmptyBody: 'Add TXT, DOCX or SRT files to annotate and export them together.',
+    batchEmptyBody: 'Add TXT, DOCX, SRT, EPUB or PDF files to annotate and export them together.',
     libraryRead: 'Read',
     libraryOpenInEditor: 'Open in Workbench',
     libraryInfoAndCategory: 'Info & Category',
@@ -1186,7 +1286,7 @@ export const translations: Record<Locale, Translations> = {
     libraryDefaultCover: 'Use Default Cover',
     libraryDelete: 'Delete',
     libraryEmptyTitle: 'No scripts yet',
-    libraryEmptyBody: 'Import TXT, DOCX or SRT, or paste a Pixiv link.',
+    libraryEmptyBody: 'Import TXT, DOCX, SRT, EPUB or PDF, or paste a Pixiv link.',
     libraryFilteredEmptyTitle: 'Nothing in this category',
     libraryFilteredEmptyBody: 'Try another category, or turn off favourites only.',
     libraryUnread: 'Unread',
@@ -1235,6 +1335,56 @@ export const translations: Record<Locale, Translations> = {
     libPixivFetchBtn: 'Import',
     libPixivFetching: 'Fetching...',
     libPixivImportSuccess: 'Imported from Pixiv',
+    importingFile: 'Importing {name}',
+    importDone: 'Imported “{title}”',
+    importChapters: '{count} chapters',
+    importImages: '{count} illustrations',
+    importRubies: '{count} built-in readings',
+    importFailed: 'Couldn’t import {name}',
+    importRead: 'Read',
+    importOk: 'OK',
+    lookupDialog: 'Look up',
+    lookupQuery: 'Looking up',
+    lookupNotFound: 'Not found in the dictionaries. Long-press to select a longer or shorter piece and try again.',
+    lookupCopy: 'Copy',
+    lookupCopied: 'Copied',
+    lookupPreparing: 'Preparing the dictionary {percent}%',
+    lookupFailed: 'Lookup failed: {error}',
+    bilingualLabel: 'Bilingual',
+    pretranslateTitle: 'Translate whole book',
+    pretranslateStart: 'Start',
+    pretranslatePause: 'Pause',
+    pretranslateResume: 'Resume',
+    pretranslateRunning: 'Translating in the background · {percent}%',
+    pretranslateIdle: '{done} / {total} sentences translated',
+    pretranslateDone: 'Done',
+    pretranslateDoneDetail: 'All {total} sentences are translated and work offline',
+    pretranslateFailed: 'Translation stopped: {error}',
+    translationLineFailed: 'This sentence wasn’t translated',
+    translationRetry: 'Retry',
+    engineMicrosoft: 'Microsoft',
+    engineLlm: 'LLM',
+    toolsTitle: 'Translation & Lookup',
+    toolsMenuDetail: '{engine} · {count} dictionaries',
+    toolsEngine: 'Translation engine',
+    toolsEngineMicrosoft: 'Microsoft (free)',
+    toolsEngineLlm: 'LLM API',
+    toolsMsNote: 'No sign-up needed. Translations are cached on this device per sentence, so nothing is requested twice.',
+    toolsLlmUrl: 'Endpoint',
+    toolsLlmModel: 'Model',
+    toolsLlmKey: 'API key',
+    toolsLlmNote: 'Any OpenAI-compatible endpoint works (DeepSeek, Qwen, Kimi, OpenAI…). The key stays on this device.',
+    toolsTarget: 'Translate into',
+    toolsDicts: 'Dictionaries',
+    toolsDictBuiltin: 'Built-in · {count} · {license}',
+    toolsDictImported: 'Imported · {count}',
+    toolsDictCount: '{count}k entries',
+    toolsImportDict: 'Import a Yomitan dictionary (.zip)',
+    toolsImportingDict: 'Importing dictionary {percent}%',
+    toolsDictOrderNote: 'Results follow this order; drag to reorder.',
+    toolsDeleteDict: 'Delete dictionary',
+    toolsDone: 'Done',
+    libraryImportFormats: 'TXT · DOCX · SRT · EPUB · PDF',
     libPixivImportError: 'Pixiv import failed',
 
     // Book Metadata Gear Modal

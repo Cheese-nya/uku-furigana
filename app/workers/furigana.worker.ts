@@ -24,6 +24,14 @@ onmessage = async (event: MessageEvent<WorkerRequest>) => {
         send({ type: 'READY', status: 'degraded', error: String(error) });
       }
     })();
+  } else if (request.type === 'ANALYZE') {
+    try {
+      await initialization;
+      const [{ getTokenizer }, { toAnalyzedTokens }] = await Promise.all([import('../utils/kuromojiEngine'), import('../utils/analyze')]);
+      send({ type: 'ANALYZED', taskId: request.taskId, tokens: toAnalyzedTokens(getTokenizer().tokenize(request.text)) });
+    } catch (error) {
+      send({ type: 'ERROR', taskId: request.taskId, error: String(error) });
+    }
   } else if (request.type === 'CANCEL') {
     const job = jobs.get(request.taskId);
     if (job) job.cancelled = true;

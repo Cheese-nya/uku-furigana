@@ -11,6 +11,8 @@ import type { RubyOverride } from '../utils/rubyOverrides';
 import { fingerprintText, resolveScript, type CorrectionDatabaseV2, type ProperNounEntry } from '../utils/correctionDatabase';
 import { upsertBook, type LibraryDatabaseV1 } from '../utils/libraryDatabase';
 import { buildDocxBlob } from '../utils/docxExporter';
+import { isBookFile, parseBookFile } from '../utils/bookImport';
+import { withoutImageLines } from '../utils/bookAssets';
 import { buildBatchZipBlob, pickBatchDirectory, saveBlob, saveBlobToDirectory, type BatchSaveMode } from '../utils/fileSave';
 import type { Translations } from '../utils/i18n';
 
@@ -66,7 +68,7 @@ export function useBatchProcessing({
   };
 
   const addFilesToQueue = (files: File[]) => {
-    const validExts = ['.txt', '.srt', '.docx'];
+    const validExts = ['.txt', '.srt', '.docx', '.epub', '.pdf'];
     const newItems: BatchFileItem[] = files
       .filter(f => validExts.some(ext => f.name.toLowerCase().endsWith(ext)))
       .map(f => ({
@@ -129,7 +131,11 @@ export function useBatchProcessing({
         let textContent = '';
         let importedOverrides: RubyOverride[] = [];
         let importedCues: SrtCue[] = [];
-        if (item.name.toLowerCase().endsWith('.docx')) {
+        if (isBookFile(item.name)) {
+          const parsed = await parseBookFile(item.file);
+          textContent = withoutImageLines(parsed.content);
+          importedOverrides = parsed.sourceOverrides;
+        } else if (item.name.toLowerCase().endsWith('.docx')) {
           const arrayBuffer = await item.file.arrayBuffer();
           const imported = await importDocx(arrayBuffer);
           textContent = imported.text;

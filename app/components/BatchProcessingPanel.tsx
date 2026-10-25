@@ -46,7 +46,7 @@ export function BatchProcessingPanel({
 
   return (
     <section className="relative flex min-h-0 flex-1 flex-col" onDragOver={event => event.preventDefault()} onDrop={handleDrop}>
-      <input ref={fileInputRef} type="file" multiple accept=".txt,.srt,.docx" className="hidden" onChange={event => { handleFileSelect(event); event.target.value = ''; }} />
+      <input ref={fileInputRef} type="file" multiple accept=".txt,.srt,.docx,.epub,.pdf" className="hidden" onChange={event => { handleFileSelect(event); event.target.value = ''; }} />
 
       <div className="pointer-events-none relative z-20 mb-3 flex items-center gap-2.5 [&>*]:pointer-events-auto">
         <GlassCapsule>

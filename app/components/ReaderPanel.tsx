@@ -7,7 +7,11 @@ import type { BookItem } from '../utils/libraryDatabase';
 import { TypographyPopover } from './TypographyPopover';
 import { GlassButton } from './glass/GlassButton';
 import { useGlass } from './glass/hooks';
-import { IconChevronLeft, IconRead, IconRuby, IconTextFormat } from './glass/icons';
+import { IconChevronLeft, IconRead, IconRuby, IconTextFormat, IconTranslate } from './glass/icons';
+import { LookupCard, type LookupState } from './LookupCard';
+import { ReaderLine } from './ReaderLine';
+import { useBilingual } from '../hooks/useBilingual';
+import type { ReaderTools } from '../utils/readingTools';
 
 type RubyMode = 'hiragana' | 'katakana' | 'romaji';
 export type ReaderFontFamily = 'serif' | 'sans';
@@ -22,6 +26,10 @@ export interface ReaderPanelProps {
   onRubyTypeChange: (mode: RubyMode) => void;
   onUpdateProgress: (chapterIndex: number, lineIndex: number, totalLines?: number) => void;
   onGoToLibrary: () => void;
+  /** Word lookup and translation; null until the engines are set up. */
+  tools: ReaderTools | null;
+  dictTitles: Record<string, string>;
+  locale: string;
 }
 
 interface ReaderPrefs {
@@ -29,15 +37,15 @@ interface ReaderPrefs {
   fontSize: number;
   showRuby: boolean;
   writingMode: ReaderWritingMode;
+  bilingual: boolean;
 }
 
 const PREFS_KEY = 'furigana_reader_prefs_v3';
-const DEFAULT_PREFS: ReaderPrefs = { fontFamily: 'serif', fontSize: 19, showRuby: true, writingMode: 'horizontal' };
+const DEFAULT_PREFS: ReaderPrefs = { fontFamily: 'serif', fontSize: 19, showRuby: true, writingMode: 'horizontal', bilingual: false };
 const FONT_STACK: Record<ReaderFontFamily, string> = {
   serif: 'var(--font-mincho)',
   sans: '-apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif',
 };
-const SPEAKER = /^([^：:]{1,16})[：:](.*)$/;
 
 function loadPrefs(): ReaderPrefs {
   if (typeof window === 'undefined') return DEFAULT_PREFS;
@@ -48,6 +56,7 @@ function loadPrefs(): ReaderPrefs {
       fontSize: typeof parsed.fontSize === 'number' ? Math.min(26, Math.max(14, parsed.fontSize)) : DEFAULT_PREFS.fontSize,
       showRuby: typeof parsed.showRuby === 'boolean' ? parsed.showRuby : true,
       writingMode: parsed.writingMode === 'vertical' ? 'vertical' : 'horizontal',
+      bilingual: parsed.bilingual === true,
     };
   } catch {
     return DEFAULT_PREFS;
@@ -64,7 +73,7 @@ const fill = (template: string, values: Record<string, string | number>) =>
  * and trackpads deliver many tiny deltas — and a 2px progress line takes its
  * place; scrolling up, reaching the top/bottom or tapping the page brings it back.
  */
-export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, onRubyTypeChange, onUpdateProgress, onGoToLibrary }: ReaderPanelProps) {
+export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, onRubyTypeChange, onUpdateProgress, onGoToLibrary, tools, dictTitles, locale }: ReaderPanelProps) {
   const [prefs, setPrefs] = useState<ReaderPrefs>(loadPrefs);
   const [hudVisible, setHudVisible] = useState(true);
   const [scrollPercent, setScrollPercent] = useState(0);
@@ -87,6 +96,21 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
   const frameRef = useRef<number | null>(null);
   const capsuleRef = useGlass<HTMLDivElement>();
   const isVertical = prefs.writingMode === 'vertical';
+  const [lookup, setLookup] = useState<{ state: LookupState; line: number; start: number; end: number; anchor: HTMLElement | null } | null>(null);
+  const lookupSeq = useRef(0);
+  const lookupClosedAt = useRef(0);
+  const [phone, setPhone] = useState(false);
+  useEffect(() => {
+    const query = window.matchMedia('(max-width: 767px)');
+    const update = () => setPhone(query.matches);
+    update();
+    query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  }, []);
+  const lineTexts = React.useMemo(() => annotatedLines.map(line => line.tokens.map(token => token.surface).join('')), [annotatedLines]);
+  const bilingual = useBilingual({
+    enabled: prefs.bilingual, wantCount: aaOpen, bookId: book?.bookId ?? null, content: book?.content ?? '', lineTexts, articleRef, tools,
+  });
 
   const updatePrefs = (patch: Partial<ReaderPrefs>) => {
     setPrefs(previous => {
@@ -242,11 +266,62 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
     placeLine(line);
   }, [isProcessing, placeLine]);
 
+  const closeLookup = useCallback(() => {
+    lookupSeq.current += 1;
+    lookupClosedAt.current = Date.now();
+    setLookup(null);
+  }, []);
+
+  const lookUp = (lineIndex: number, text: string, offset: number, anchor: HTMLElement) => {
+    if (!tools) return;
+    const seq = ++lookupSeq.current;
+    const query = text.slice(offset, offset + 1);
+    setLookup({ state: { status: 'loading', query }, line: lineIndex, start: offset, end: offset + 1, anchor });
+    const still = () => seq === lookupSeq.current;
+    tools.lookup(text, offset, progress => {
+      if (still()) setLookup(current => current && { ...current, state: { status: 'loading', query, progress } });
+    }).then(result => {
+      if (!still()) return;
+      if (!result) { setLookup(current => current && { ...current, state: { status: 'missing', query } }); return; }
+      setLookup(current => current && { ...current, start: result.start, end: result.end, state: { status: 'done', result } });
+    }).catch((error: unknown) => {
+      if (still()) setLookup(current => current && { ...current, state: { status: 'error', query, error: error instanceof Error ? error.message : String(error) } });
+    });
+  };
+
+  // A tap on a word looks it up; a tap elsewhere toggles the capsule — or only closes the dictionary when it was open.
   const handleCanvasClick = (event: React.MouseEvent) => {
     if (String(window.getSelection() || '')) return;
-    if ((event.target as HTMLElement).closest('button, a, input')) return;
+    const target = event.target as HTMLElement;
+    if (target.closest('button, a, input')) return;
+    const piece = target.closest<HTMLElement>('[data-o]');
+    const lineNode = piece?.closest<HTMLElement>('[data-line]');
+    if (piece && lineNode && tools && !target.closest('rt')) {
+      const lineIndex = Number(lineNode.dataset.line);
+      let offset = Number(piece.dataset.o);
+      // Find the character under the finger inside this piece (ruby words are looked up from their start).
+      const caret = (document as Document & { caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null })
+        .caretPositionFromPoint?.(event.clientX, event.clientY);
+      const range = caret ? null : document.caretRangeFromPoint?.(event.clientX, event.clientY);
+      const node = caret?.offsetNode ?? range?.startContainer;
+      const within = caret?.offset ?? range?.startOffset ?? 0;
+      if (node && node.nodeType === Node.TEXT_NODE && node.parentElement === piece && piece.tagName !== 'RUBY') {
+        offset += Math.min(within, Math.max(0, (node.textContent?.length ?? 1) - 1));
+      }
+      lookUp(lineIndex, lineTexts[lineIndex] ?? '', offset, piece);
+      return;
+    }
+    if (lookup || Date.now() - lookupClosedAt.current < 350) { if (lookup) closeLookup(); return; }
     setHudVisible(prev => !prev);
   };
+
+  // Keep the looked-up word visible above the phone card.
+  useEffect(() => {
+    if (!phone || !lookup?.anchor || !scrollerRef.current || isVertical) return;
+    const rect = lookup.anchor.getBoundingClientRect();
+    const cardTop = window.innerHeight * 0.54 - 8;
+    if (rect.bottom > cardTop - 16) scrollerRef.current.scrollBy({ top: rect.bottom - cardTop + 48, behavior: 'smooth' });
+  }, [phone, lookup?.anchor, isVertical]);
 
   if (!book) {
     return (
@@ -295,39 +370,19 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
 
           {isProcessing && <p className="mb-4 font-sans text-xs text-[var(--label-2)]">{t.annotatingProgress}</p>}
 
-          {annotatedLines.map((line, lineIndex) => {
-            const speakerMatch = (line.rawText || line.cleanText || '').match(SPEAKER);
-            const speaker = line.speaker || speakerMatch?.[1];
-            // Strip "名前：" from the token stream; the speaker is shown as a label instead.
-            let skip = 0;
-            if (speaker) {
-              const joined = line.tokens.map(token => token.surface).join('');
-              const afterName = joined.startsWith(speaker) ? joined.slice(speaker.length) : joined;
-              const delimiter = afterName.match(/^[：:]\s*/);
-              skip = (joined.startsWith(speaker) ? speaker.length : 0) + (delimiter ? delimiter[0].length : 0);
-            }
-            return (
-              <p key={`${line.id}-${lineIndex}`} data-line={lineIndex} className={isVertical ? 'ml-4' : 'mb-[0.6em]'}>
-                {speaker && <span className="mr-[0.4em] font-sans text-[0.72em] font-semibold tracking-normal text-[var(--label-2)]">{speaker}</span>}
-                {line.tokens.length === 0 && <br />}
-                {line.tokens.map((token, tokenIndex) => {
-                  let surface = token.surface;
-                  if (skip > 0) {
-                    if (surface.length <= skip) { skip -= surface.length; return null; }
-                    surface = surface.slice(skip);
-                    skip = 0;
-                  }
-                  if (!token.ruby) return <span key={tokenIndex}>{surface}</span>;
-                  return (
-                    <ruby key={tokenIndex}>
-                      {surface}
-                      <rt className="text-[0.5em]" style={{ color: 'var(--ruby)', visibility: prefs.showRuby ? 'visible' : 'hidden' }}>{token.ruby}</rt>
-                    </ruby>
-                  );
-                })}
-              </p>
-            );
-          })}
+          {annotatedLines.map((line, lineIndex) => (
+            <ReaderLine
+              key={`${line.id}-${lineIndex}`}
+              line={line}
+              lineIndex={lineIndex}
+              bookId={book.bookId}
+              vertical={isVertical}
+              showRuby={prefs.showRuby}
+              bilingual={prefs.bilingual ? bilingual.retryBundle : undefined}
+              hit={lookup?.line === lineIndex ? lookup : null}
+              t={t}
+            />
+          ))}
         </article>
       </div>
 
@@ -349,6 +404,15 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
         </div>
         <GlassButton icon aria-label={t.showRubyLabel} aria-pressed={prefs.showRuby} onClick={() => updatePrefs({ showRuby: !prefs.showRuby })}>
           <IconRuby />
+        </GlassButton>
+        <GlassButton
+          icon
+          aria-label={t.bilingualLabel}
+          aria-pressed={prefs.bilingual}
+          className={prefs.bilingual ? 'gbtn-on' : ''}
+          onClick={() => updatePrefs({ bilingual: !prefs.bilingual })}
+        >
+          <IconTranslate />
         </GlassButton>
         <GlassButton ref={setAaAnchor} icon aria-label={t.typographyShort} aria-expanded={aaOpen} onClick={() => setAaOpen(open => !open)}>
           <IconTextFormat />
@@ -380,6 +444,24 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
         onFontSizeChange={fontSize => updatePrefs({ fontSize })}
         showRuby={prefs.showRuby}
         onShowRubyChange={showRuby => updatePrefs({ showRuby })}
+        bilingual={tools ? {
+          on: prefs.bilingual,
+          onChange: value => updatePrefs({ bilingual: value }),
+          pretranslate: bilingual.pretranslate,
+          engineLabel: tools.engineLabel,
+          onStart: bilingual.startPretranslate,
+          onPause: bilingual.pausePretranslate,
+        } : undefined}
+        t={t}
+      />
+
+      <LookupCard
+        state={lookup?.state ?? null}
+        anchor={lookup?.anchor ?? null}
+        phone={phone}
+        onClose={closeLookup}
+        dictTitles={dictTitles}
+        locale={locale}
         t={t}
       />
     </section>

@@ -3,7 +3,7 @@
 import React from 'react';
 import { GlassPopover, PopoverItem, PopoverSeparator } from './glass/GlassPopover';
 import { LiquidSelector } from './glass/LiquidSelector';
-import { IconBug, IconCheck, IconDictionary, IconDownload, IconMessage, IconUsers } from './glass/icons';
+import { IconBug, IconCheck, IconDictionary, IconDownload, IconMessage, IconUsers, IconTranslate } from './glass/icons';
 import { UpdateDot } from './UpdateDot';
 import { getPlatform } from '../utils/appInfo';
 import { QQ_GROUP, type UpdateState } from '../utils/updateTypes';
@@ -23,6 +23,9 @@ export interface SettingsMenuProps {
   glossaryCount: number;
   onOpenLearned: () => void;
   onOpenGlossary: () => void;
+  /** Translation & lookup sheet; the row shows the engine and how many dictionaries there are. */
+  onOpenReadingTools?: () => void;
+  readingToolsDetail?: string;
   dictionaryStatus: 'loading' | 'ready' | 'degraded';
   dictionaryLabel: string;
   /** Extra controls shown above the settings (the phone workbench puts ruby mode and typography here). */
@@ -57,6 +60,8 @@ export function SettingsMenu({
   glossaryCount,
   onOpenLearned,
   onOpenGlossary,
+  onOpenReadingTools,
+  readingToolsDetail,
   dictionaryStatus,
   dictionaryLabel,
   extra,
@@ -177,6 +182,9 @@ export function SettingsMenu({
       <PopoverSeparator />
       <PopoverItem icon={<IconCheck size={17} />} detail={learnedCount} onClick={() => { onClose(); onOpenLearned(); }}>{t.learnedReadingsMenu}</PopoverItem>
       <PopoverItem icon={<IconDictionary size={17} />} detail={glossaryCount} onClick={() => { onClose(); onOpenGlossary(); }}>{t.properNounGlossary}</PopoverItem>
+      {onOpenReadingTools && (
+        <PopoverItem icon={<IconTranslate size={17} />} detail={readingToolsDetail} onClick={() => { onClose(); onOpenReadingTools(); }}>{t.toolsTitle}</PopoverItem>
+      )}
       {hasFeedbackGroup && (
         <>
           <PopoverSeparator />

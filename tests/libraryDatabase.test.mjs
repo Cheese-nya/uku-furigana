@@ -426,3 +426,23 @@ test('native Pixiv bridge rejects an empty native payload instead of importing a
     delete globalThis.window;
   }
 });
+
+test('EPUB/PDF books keep their table of contents through save and reload; other formats stay one chapter', async () => {
+  const content = '序\n一行\n第一章\n二行\n第二章\n三行';
+  const toc = [{ title: '第二章', startLine: 4 }, { title: '序', startLine: 0 }, { title: '第一章', startLine: 2 }, { title: '重复', startLine: 2 }, { title: '越界', startLine: 99 }];
+  let db = await upsertBook(emptyLibraryDatabase(), { title: 'こころ', content, format: 'epub', category: 'novel', chapters: toc, now: 1 });
+  const [book] = Object.values(db.books);
+  assert.deepEqual(book.chapters, [
+    { id: 'chapter:1', title: '序', startLine: 0, endLine: 1 },
+    { id: 'chapter:2', title: '第一章', startLine: 2, endLine: 3 },
+    { id: 'chapter:3', title: '第二章', startLine: 4, endLine: 5 },
+  ]);
+  const reloaded = validateLibraryDatabase(JSON.parse(JSON.stringify(db)));
+  assert.deepEqual(reloaded.books[book.bookId].chapters, book.chapters);
+  // Updating metadata or re-saving the same text keeps the chapters.
+  db = await upsertBook(db, { bookId: book.bookId, title: 'こころ', content, now: 2 });
+  assert.equal(db.books[book.bookId].chapters.length, 3);
+
+  const script = await upsertBook(emptyLibraryDatabase(), { title: '台本', content, format: 'txt', chapters: toc, now: 1 });
+  assert.equal(Object.values(script.books)[0].chapters.length, 1);
+});

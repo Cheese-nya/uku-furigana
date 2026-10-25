@@ -637,3 +637,26 @@ ruby {
   width: 0;
   height: 0;
 }
+
+/* ---------- reading tools v3: lookup, bilingual, illustrations (mockup reading-tools-v3) ---------- */
+[data-testid="reader-script-canvas"] [data-o] { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.lookup-hit { border-radius: 4px; background: var(--fill); box-shadow: 0 0 0 2px var(--fill); }
+
+/* bilingual is per sentence: each sentence on its own, its translation right under it (left of it when vertical) */
+.reader-bilingual { margin-bottom: 1.6em; }
+.reader-bilingual .reader-sentence { display: block; }
+.reader-tr { display: block; font-family: var(--font-ui); font-size: .8em; line-height: 1.7; color: var(--label-2); letter-spacing: 0; margin: -.35em 0 .75em; -webkit-user-select: text; user-select: text; }
+.reader-tr-skel { height: .9em; width: 82%; margin-top: .2em; border-radius: 6px; background: linear-gradient(90deg, var(--fill-2), var(--fill), var(--fill-2)); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; }
+.reader-tr-err { display: flex; align-items: center; gap: 6px; color: var(--danger); font-size: .7em; }
+.reader-tr-err button { border: 0; background: none; padding: 0; color: var(--label); font-weight: 600; text-decoration: underline; cursor: pointer; font-size: inherit; }
+.vertical-script-flow .reader-bilingual { margin: 0 0 0 1.1em; }
+.vertical-script-flow .reader-tr { margin: 0 0 0 .9em; }
+.vertical-script-flow .reader-tr-skel { width: .9em; height: 82%; margin: 0 0 0 .9em; }
+@keyframes shimmer { to { background-position: -200% 0; } }
+
+.reader-figure-wrap { margin: 1.6em 0 2em; text-align: center; }
+.reader-figure { display: block; max-width: 100%; max-height: 80vh; margin: 0 auto; border-radius: 12px; box-shadow: var(--card-shadow); background: var(--surface-2); }
+.vertical-script-flow .reader-figure-wrap { margin: 0 1.6em; height: 100%; display: flex; align-items: center; justify-content: center; }
+.vertical-script-flow .reader-figure { max-height: 80%; max-width: 80vw; }
+/* a toggle in a glass capsule shows "on" with a dot under its icon */
+.gbtn.gbtn-on::after { content: ""; position: absolute; bottom: 4px; left: 50%; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: currentColor; z-index: 2; }

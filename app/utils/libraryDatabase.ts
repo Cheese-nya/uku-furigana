@@ -5,7 +5,7 @@ import { validateRubyOverrides } from './rubyOverrides';
 import type { SrtCue } from './srt';
 
 export type BookCategory = 'script' | 'novel' | 'subtitle' | 'other';
-export type BookFormat = 'txt' | 'srt' | 'docx';
+export type BookFormat = 'txt' | 'srt' | 'docx' | 'epub' | 'pdf';
 export type BookCoverTheme = 'indigo' | 'emerald' | 'amber' | 'rose' | 'slate';
 
 export interface BookChapter {
@@ -70,7 +70,7 @@ export interface LibraryDatabase {
 export type LibraryDatabaseV1 = LibraryDatabase;
 
 const CATEGORIES: readonly BookCategory[] = ['script', 'novel', 'subtitle', 'other'];
-const FORMATS: readonly BookFormat[] = ['txt', 'srt', 'docx'];
+const FORMATS: readonly BookFormat[] = ['txt', 'srt', 'docx', 'epub', 'pdf'];
 const THEMES: readonly BookCoverTheme[] = ['indigo', 'emerald', 'amber', 'rose', 'slate'];
 const VALID_THEMES = THEMES;
 const FINGERPRINT = /^sha256:[a-f0-9]{64}$/;
@@ -99,6 +99,26 @@ export function extractChapters(text: string, fallbackTitle = '全文'): BookCha
   }];
 }
 
+/** EPUB and PDF bring their own table of contents; every other format stays one piece. */
+function hasOwnChapters(format: BookFormat): boolean {
+  return format === 'epub' || format === 'pdf';
+}
+
+function toBookChapters(text: string, chapters: { title: string; startLine: number }[], fallbackTitle: string): BookChapter[] {
+  const lastLine = Math.max(0, textLines(text).length - 1);
+  const starts = chapters
+    .filter(chapter => Number.isInteger(chapter.startLine) && chapter.startLine >= 0 && chapter.startLine <= lastLine)
+    .sort((a, b) => a.startLine - b.startLine)
+    .filter((chapter, index, list) => index === 0 || chapter.startLine !== list[index - 1].startLine);
+  if (!starts.length) return extractChapters(text, fallbackTitle);
+  return starts.map((chapter, index) => ({
+    id: `chapter:${index + 1}`,
+    title: chapter.title.trim() || `${index + 1}`,
+    startLine: chapter.startLine,
+    endLine: index + 1 < starts.length ? starts[index + 1].startLine - 1 : lastLine,
+  }));
+}
+
 function themeForIndex(index: number): BookCoverTheme {
   return THEMES[index % THEMES.length];
 }
@@ -125,6 +145,8 @@ export interface UpsertBookInput {
   fingerprint?: string;
   sourceOverrides?: RubyOverride[];
   srtCues?: SrtCue[];
+  /** Table of contents of an EPUB or PDF; ignored for other formats. */
+  chapters?: { title: string; startLine: number }[];
   favorite?: boolean;
   now?: number;
 }
@@ -163,7 +185,7 @@ export async function upsertBook(db: LibraryDatabase, input: UpsertBookInput): P
     fingerprint,
     sourceOverrides: input.sourceOverrides ?? existing?.sourceOverrides ?? [],
     ...(input.srtCues || existing?.srtCues ? { srtCues: input.srtCues ?? existing?.srtCues } : {}),
-    chapters: extractChapters(content, title),
+    chapters: chaptersFor(input.format ?? existing?.format ?? 'txt', content, title, input.chapters ?? (existing?.content === content ? existing.chapters : undefined)),
     readingProgress: { ...readingProgress, chapterIndex: 0 },
     bookmarks: existing?.bookmarks ?? [],
     favorite: input.favorite ?? existing?.favorite ?? false,
@@ -311,6 +333,14 @@ function validateCue(value: unknown): SrtCue {
   return { index: value.index, start: value.start, end: value.end, lines: value.lines as string[] };
 }
 
+function chaptersFor(format: BookFormat, text: string, title: string, chapters?: { title: string; startLine: number }[]): BookChapter[] {
+  return hasOwnChapters(format) && chapters?.length ? toBookChapters(text, chapters, title) : extractChapters(text, title);
+}
+
+function validChapter(value: unknown): value is { title: string; startLine: number } {
+  return object(value) && typeof value.title === 'string' && Number.isInteger(value.startLine) && (value.startLine as number) >= 0;
+}
+
 function validateBook(id: string, value: unknown, version: number): BookItem {
   if (!object(value) || value.bookId !== id || typeof value.title !== 'string' || typeof value.author !== 'string' ||
     typeof value.content !== 'string' || typeof value.fingerprint !== 'string' || !FINGERPRINT.test(value.fingerprint) ||
@@ -339,7 +369,7 @@ function validateBook(id: string, value: unknown, version: number): BookItem {
     content,
     fingerprint: value.fingerprint,
     sourceOverrides,
-    chapters: extractChapters(content, title),
+    chapters: chaptersFor(value.format as BookFormat, content, title, value.chapters.filter(validChapter)),
     readingProgress: { ...readingProgress, chapterIndex: 0 },
     bookmarks: value.bookmarks.map(validateBookmark),
     favorite: value.favorite,
