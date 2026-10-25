@@ -83,3 +83,11 @@ test('Jitendex layout: one gloss per sense, JMdict POS codes as labels, examples
   assert.deepEqual(entry[4], [['頭がいたい。', 'My head hurts.']]);
   assert.equal(entry[5], 200);
 });
+
+test('明鏡-style bilingual layout: Chinese translation with the Japanese definition, examples with the headword', () => {
+  const [entry] = convertTermBank([["静か", "しずか", "", "", 0, [{"type": "structured-content", "content": {"tag": "div", "content": [{"tag": "div", "content": [{"tag": "span", "content": ["しず‐か［静か］"], "data": {"class": "word"}}, {"tag": "span", "content": ["⟨", "形動", "⟩"], "data": {"class": "type"}}], "data": {"class": "head"}}, {"tag": "div", "content": [{"tag": "span", "content": ["① "], "data": {"class": "num"}}, {"tag": "span", "content": [{"tag": "span", "content": ["やかましい声や物音がしないさま。ひっそりしているさま。"]}, {"tag": "span", "lang": "zh", "content": ["/ ", "静，寂静，肃静，静悄悄，清静，平静。"], "data": {"class": "dfcn"}}], "data": {"class": "def2"}}, {"tag": "br"}, {"tag": "span", "content": [{"tag": "span", "data": {"class": "exjp"}, "content": "▲ "}, "「", {"tag": "span", "content": ["～な境内"], "data": {"class": "exjp"}}, "」", {"tag": "span", "data": {"class": "excn"}, "lang": "zh", "content": "清静的神社院内"}], "data": {"class": "exam"}}, {"tag": "br"}, {"tag": "span", "content": [{"tag": "span", "data": {"class": "exjp"}, "content": "▲ "}, "「", {"tag": "span", "content": ["～に廊下を歩く"], "data": {"class": "exjp"}}, "」", {"tag": "span", "data": {"class": "excn"}, "lang": "zh", "content": "轻声经过走廊"}], "data": {"class": "exam"}}], "data": {"class": "def1"}}], "data": {"class": "mjrhsjcd-entry"}}}], 20297, ""]]);
+  assert.equal(entry[1], 'しずか');
+  assert.deepEqual(entry[2], ['形容动词']);
+  assert.deepEqual(entry[3], ['静，寂静，肃静，静悄悄，清静，平静。（やかましい声や物音がしないさま。ひっそりしているさま。）']);
+  assert.deepEqual(entry[4][0], ['静かな境内', '清静的神社院内']);
+});

@@ -163,22 +163,80 @@ function update(el: HTMLElement): void {
   entry.image.setAttribute('height', String(h));
   entry.image.setAttribute('href', url);
   for (const [map, k] of entry.maps) map.setAttribute('scale', String(scale * k));
+  // First map ready: switch from the CSS blur fallback to the refraction filter.
+  const value = `url(#${entry.filter.id})`;
+  if (el.style.backdropFilter !== value) {
+    el.style.backdropFilter = value;
+    el.style.setProperty('-webkit-backdrop-filter', value);
+  }
+}
+
+// While anything moves (scrolling, a press, a CSS transition or a script animation), html[data-glass-busy]
+// swaps the refraction for plain blur (globals.css): the SVG displacement is rasterised on the CPU every
+// frame, which made scrolling and every animation stutter. Refraction comes back once all is still.
+let motionWatch = false;
+function watchMotion() {
+  if (motionWatch) return;
+  motionWatch = true;
+  const root = document.documentElement;
+  let until = 0;
+  let timer = 0;
+  const release = () => {
+    const left = until - performance.now();
+    if (left > 0) { timer = window.setTimeout(release, left); return; }
+    timer = 0;
+    delete root.dataset.glassBusy;
+  };
+  const hold = (ms: number) => {
+    until = Math.max(until, performance.now() + ms);
+    if (!timer) { root.dataset.glassBusy = ''; timer = window.setTimeout(release, ms); }
+  };
+  const options = { capture: true, passive: true } as const;
+  document.addEventListener('scroll', () => hold(180), options);
+  document.addEventListener('pointerdown', () => hold(800), options);
+  document.addEventListener('pointerup', () => hold(700), options);
+  document.addEventListener('transitionrun', event => hold(Math.min(900, parseFloat(getComputedStyle(event.target as Element).transitionDuration) * 1000 + 120 || 700)), options);
+  // Popovers and selectors animate with the Web Animations API, which fires no events: wrap it.
+  const animate = Element.prototype.animate;
+  Element.prototype.animate = function patched(this: Element, ...args: Parameters<Element['animate']>) {
+    const animation = animate.apply(this, args);
+    const timing = args[1];
+    const duration = typeof timing === 'number' ? timing : Number(timing?.duration) || 600;
+    if (Number.isFinite(duration) && (typeof timing !== 'object' || timing?.iterations !== Infinity)) hold(duration + 80);
+    return animation;
+  };
+}
+
+// Building a displacement map is a per-pixel loop; do it when the main thread is idle rather than in the
+// frame that opens a popover (the element shows the blur fallback until then).
+const pendingMaps = new Set<HTMLElement>();
+let idleHandle = 0;
+function scheduleUpdate(el: HTMLElement): void {
+  pendingMaps.add(el);
+  if (idleHandle) return;
+  const run = () => {
+    idleHandle = 0;
+    const list = [...pendingMaps];
+    pendingMaps.clear();
+    for (const item of list) update(item);
+  };
+  const idle = (window as Window & { requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number }).requestIdleCallback;
+  idleHandle = idle ? idle(run, { timeout: 800 }) : window.setTimeout(run, 120);
 }
 
 /** Register an element as refracting glass. Returns an unregister function. */
 export function registerGlass(el: HTMLElement, options: GlassOptions = {}): () => void {
   if (!refractionSupported()) return () => {};
+  watchMotion();
   const lens = !!options.lens;
   const { filter, image, maps } = createFilter(lens);
   entries.set(el, { filter, image, maps, lens, key: '' });
-  const value = `url(#${filter.id})`;
-  el.style.backdropFilter = value;
-  el.style.setProperty('-webkit-backdrop-filter', value);
-  observer ??= new ResizeObserver(list => { for (const item of list) update(item.target as HTMLElement); });
+  observer ??= new ResizeObserver(list => { for (const item of list) scheduleUpdate(item.target as HTMLElement); });
   observer.observe(el);
-  update(el);
+  scheduleUpdate(el);
   return () => {
     observer?.unobserve(el);
+    pendingMaps.delete(el);
     entries.delete(el);
     filter.remove();
     el.style.backdropFilter = '';

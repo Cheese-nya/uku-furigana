@@ -18,6 +18,9 @@ export interface ReaderLineProps {
   showRuby: boolean;
   /** Per-sentence translations under the text; undefined when bilingual reading is off. */
   bilingual?: { translations: Map<string, string>; failed: Set<string>; onRetry: (text: string) => void };
+  /** What this line's sentences currently show (see bilingualSignature): the bundle is shared by every line,
+   * so the line re-renders when its own translations change, not whenever any translation arrives. */
+  bilingualSig?: string;
   /** Highlighted lookup range within this line. */
   hit?: { start: number; end: number } | null;
   t: Translations;
@@ -53,6 +56,18 @@ function Figure({ bookId, id }: { bookId: string; id: string }) {
   }, [bookId, id]);
   if (!url) return null;
   return <img src={url} alt="" className="reader-figure" draggable={false} />;
+}
+
+/** Translation state of one line, as a string: changes exactly when the line would render differently. */
+export function bilingualSignature(text: string, translations: Map<string, string>, failed: Set<string>): string {
+  return splitSentences(text).map(sentence => translations.get(sentence.text) ?? (failed.has(sentence.text) ? '\u0001' : '')).join('\u0002');
+}
+
+function sameLine(previous: ReaderLineProps, next: ReaderLineProps): boolean {
+  return previous.line === next.line && previous.lineIndex === next.lineIndex && previous.bookId === next.bookId
+    && previous.vertical === next.vertical && previous.showRuby === next.showRuby && previous.t === next.t
+    && Boolean(previous.bilingual) === Boolean(next.bilingual) && previous.bilingualSig === next.bilingualSig
+    && previous.hit?.start === next.hit?.start && previous.hit?.end === next.hit?.end;
 }
 
 /** One line of the immersive reader. Every text piece carries `data-o`, its offset in the line, for word lookup. */
@@ -118,4 +133,4 @@ export const ReaderLine = memo(function ReaderLine({ line, lineIndex, bookId, ve
         : render(0, text.length)}
     </p>
   );
-});
+}, sameLine);

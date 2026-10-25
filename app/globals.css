@@ -660,3 +660,14 @@ ruby {
 .vertical-script-flow .reader-figure { max-height: 80%; max-width: 80vw; }
 /* a toggle in a glass capsule shows "on" with a dot under its icon */
 .gbtn.gbtn-on::after { content: ""; position: absolute; bottom: 4px; left: 50%; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: currentColor; z-index: 2; }
+
+/* ---------- reading tools v3.1: chapters, performance ---------- */
+.reader-chapnav { display: flex; justify-content: center; gap: 10px; margin: 2.4em 0 1em; font-family: var(--font-ui); font-size: 15px; letter-spacing: 0; line-height: 1.2; }
+.reader-chapnav .btn { height: 44px; padding: 0 18px; }
+.reader-chapnav .btn small { margin-left: 6px; font-size: 12px; font-weight: 500; opacity: .7; }
+.reader-chapnav .btn:disabled { opacity: .35; }
+.vertical-script-flow .reader-chapnav { flex-direction: column; margin: 0 2.4em; justify-content: center; text-orientation: mixed; }
+/* long chapters and scripts: the browser skips layout and paint of lines far off screen */
+[data-testid="reader-script-canvas"]:not(.vertical-script-flow) > p[data-line] { content-visibility: auto; contain-intrinsic-size: auto 2.4em; }
+/* Chromium's SVG refraction is rasterised on the CPU every frame; while anything moves, glass falls back to blur */
+html[data-glass-busy] .glass { -webkit-backdrop-filter: blur(12px) saturate(180%) !important; backdrop-filter: blur(12px) saturate(180%) !important; }

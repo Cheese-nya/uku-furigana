@@ -10,7 +10,8 @@ const target = join(root, 'public', 'vendor', 'pdfjs');
 
 rmSync(target, { recursive: true, force: true });
 mkdirSync(target, { recursive: true });
-cpSync(join(pdfjs, 'legacy', 'build', 'pdf.worker.min.mjs'), join(target, 'pdf.worker.min.mjs'));
+// Saved as .js: a server without an .mjs MIME type (nginx's default list) plus nosniff would refuse the module worker.
+cpSync(join(pdfjs, 'legacy', 'build', 'pdf.worker.min.mjs'), join(target, 'pdf.worker.min.js'));
 cpSync(join(pdfjs, 'cmaps'), join(target, 'cmaps'), { recursive: true });
 cpSync(join(pdfjs, 'standard_fonts'), join(target, 'standard_fonts'), { recursive: true });
 console.log('==> pdf.js runtime copied to public/vendor/pdfjs');

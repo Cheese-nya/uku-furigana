@@ -482,6 +482,31 @@ input[type=range] { width: 100%; accent-color: var(--label); }
   .reader-body .tr { font-size: .78em; }
 }
 
+/* v3.1: chapters — the reader renders one chapter at a time; a TOC opens from ☰ or the capsule title */
+.capsule .ctitle-btn { border: 0; background: transparent; font: inherit; color: inherit; cursor: pointer; border-radius: 14px; padding: 4px 6px; transition: background-color 140ms; }
+.capsule .ctitle-btn:hover { background: var(--item-hover); }
+.pop.toc { width: 320px; padding: 0; overflow: hidden; }
+.app[data-refract="on"] .pop.toc.glass, .pop.toc.glass { background: color-mix(in srgb, var(--surface) 80%, transparent); }
+.toc-head { display: flex; align-items: baseline; justify-content: space-between; padding: 14px 16px 8px; }
+.toc-head b { font-size: 15px; }
+.toc-head span { font-size: 12px; color: var(--label-2); font-variant-numeric: tabular-nums; }
+.toc-list { max-height: min(420px, 56vh); overflow-y: auto; padding: 0 6px 8px; }
+.dcard .toc-list { max-height: none; flex: 1; }
+.toc-row { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 0 12px; border: 0; background: transparent; border-radius: 12px; text-align: left; font: inherit; color: var(--label); cursor: pointer; }
+.toc-row:hover { background: var(--item-hover); }
+.toc-row .t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mincho); font-size: 15px; }
+.toc-row .p { font-size: 12px; color: var(--label-3); font-variant-numeric: tabular-nums; }
+.toc-row.read .t { color: var(--label-2); }
+.toc-row.cur { background: var(--fill); font-weight: 600; }
+.toc-row.cur .p { color: var(--label); }
+.toc-row .dot { width: 6px; height: 6px; border-radius: 50%; background: transparent; flex: none; }
+.toc-row.cur .dot { background: var(--label); }
+.chapnav { display: flex; justify-content: center; gap: 10px; margin: 2.4em 0 1em; font-family: var(--font-ui); }
+.chapnav .btn { height: 44px; padding: 0 18px; }
+.chapnav .btn small { font-size: 12px; font-weight: 500; opacity: .7; margin-left: 4px; }
+.chapnav .btn:disabled { opacity: .35; }
+.reader-scroll.vert .chapnav { flex-direction: column; margin: 0 2.4em; justify-content: center; }
+
 /* ---------- reduced motion ---------- */
 .app.rm *, .app.rm *::before, .app.rm *::after { transition-duration: 1ms !important; animation-duration: 1ms !important; }
 </style>
@@ -502,6 +527,8 @@ input[type=range] { width: 100%; accent-color: var(--label); }
     <button class="demo" data-demo="import">导入 EPUB</button>
     <button class="demo" data-demo="pdf">扫描版 PDF</button>
     <button class="demo" data-demo="settings">翻译与词典设置</button>
+    <button class="demo" data-demo="toc">目录</button>
+    <button class="demo" data-demo="chapterEnd">章末翻章</button>
   </label>
 </div>
 
@@ -530,6 +557,7 @@ input[type=range] { width: 100%; accent-color: var(--label); }
   <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6.5 7l1 13h9l1-13"/></symbol>
   <symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 4 2.5 20h19L12 4Z"/><path d="M12 10v4.5M12 17.5v.01"/></symbol>
   <symbol id="i-translate" viewBox="0 0 24 24"><path d="M3.5 5.5h9M8 3.5v2M5.5 5.5c.6 3.2 2.8 5.8 6 7"/><path d="M10.5 5.5c-.6 3.4-2.8 6-6.5 7.5"/><path d="m12.5 20.5 4-10 4 10M14 17h5"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6.5h11M9 12h11M9 17.5h11"/><circle cx="4.5" cy="6.5" r="1" fill="currentColor"/><circle cx="4.5" cy="12" r="1" fill="currentColor"/><circle cx="4.5" cy="17.5" r="1" fill="currentColor"/></symbol>
   <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></symbol>
   <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
   <symbol id="i-ruby" viewBox="0 0 24 24"><path d="M5 20h14M8 20V11h8v9M12 11v9"/><path d="M7 5.5h2.5M11 5.5h2M15 5.5h2"/></symbol>
@@ -638,7 +666,8 @@ input[type=range] { width: 100%; accent-color: var(--label); }
       <div class="capsule glass" data-glass id="capsule">
         <div class="full">
           <button class="gbtn icon" data-press id="readerBack" aria-label="返回台本库"><svg class="i"><use href="#i-back"/></svg></button>
-          <div class="ctitle"><b>夢十夜（第一夜）</b><span id="pct1">已读 0%</span></div>
+          <button class="gbtn icon" data-press id="tocBtn" aria-label="目录"><svg class="i"><use href="#i-list"/></svg></button>
+          <button class="ctitle ctitle-btn" id="tocTitle" aria-label="目录"><b>夢十夜 · 第一夜</b><span id="pct1">第 1 / 10 章 · 0%</span></button>
           <button class="gbtn icon" data-press id="rubyToggle" aria-label="注音开关"><svg class="i"><use href="#i-ruby"/></svg></button>
           <button class="gbtn icon" data-press id="biToggle" aria-label="对照翻译" aria-pressed="false"><svg class="i"><use href="#i-translate"/></svg></button>
           <button class="gbtn icon" data-press data-pop="type" aria-label="排版"><svg class="i"><use href="#i-aa"/></svg></button>
@@ -733,6 +762,10 @@ input[type=range] { width: 100%; accent-color: var(--label); }
   <!-- ============ v3: LOOKUP ============ -->
   <div class="pop glass dict" data-glass id="pop-dict"><div id="dictDesk"></div></div>
   <div class="dcard glass" id="dcard" role="dialog" aria-label="查词"><div class="grabber" id="dgrab"></div><div id="dictPhone" style="display:contents"></div></div>
+
+  <!-- ============ v3: TABLE OF CONTENTS ============ -->
+  <div class="pop glass toc" data-glass id="pop-toc"><div id="tocDesk"></div></div>
+  <div class="dcard glass toc-card" id="tocCard" role="dialog" aria-label="目录"><div class="grabber" id="tgrab"></div><div id="tocPhone" style="display:contents"></div></div>
 
   <!-- ============ v3: TOAST ============ -->
   <div class="toast glass" data-glass id="toast" role="status"></div>
@@ -1163,7 +1196,7 @@ $('#readerBody').innerHTML = '<h2>' + rubify('夢') + '十夜</h2><div class="by
   const sents = p.split(/(?<=。)/);
   return '<p>' + sents.map((t, si) => '<span class="s">' + wrapWords(t) + '</span><span class="tr skel-t" data-p="' + pi + '" data-s="' + si + '"></span>').join('') + '</p>' +
     (i === 4 ? '<figure><span class="ill">' + ILL() + '</span><figcaption>挿絵 · 星の破片</figcaption></figure>' : '');
-}).join('');
+}).join('') + '<nav class="chapnav" id="chapNav"><button class="btn" disabled>上一章</button><button class="btn ink" id="nextChap"><span>下一章</span><small>第二夜</small></button></nav>';
 
 /* reader: collapse the capsule while reading */
 (function readerChrome() {
@@ -1173,7 +1206,7 @@ $('#readerBody').innerHTML = '<h2>' + rubify('夢') + '十夜</h2><div class="by
   sc.addEventListener('scroll', () => {
     const y = sc.scrollTop, max = sc.scrollHeight - sc.clientHeight;
     const p = Math.round(y / Math.max(1, max) * 100);
-    $('#pct1').textContent = '已读 ' + p + '%'; $('#rbar').style.width = (y / Math.max(1, max) * 100) + '%';
+    $('#pct1').textContent = '第 1 / 10 章 · ' + p + '%'; $('#rbar').style.width = (y / Math.max(1, max) * 100) + '%';
     const dy = y - last; last = y;
     if (!dy) return;
     travel = Math.sign(dy) === Math.sign(travel) ? travel + dy : dy;
@@ -1339,6 +1372,30 @@ function openTools() {
   $('#sheetScrim').classList.add('open'); $('#toolsSheet').classList.add('open');
   requestAnimationFrame(() => ['engSeg', 'tgtSeg'].forEach((k) => selectors[k].relayout()));
 }
+
+/* =========================================================
+   v3.1 Table of contents — popover above the capsule (desktop), bottom card (phone)
+   ========================================================= */
+const CHAPTERS = ['第一夜', '第二夜', '第三夜', '第四夜', '第五夜', '第六夜', '第七夜', '第八夜', '第九夜', '第十夜'];
+const CH_PROGRESS = [0, null, null, null, null, null, null, null, null, null];
+function tocHTML() {
+  return `<div class="toc-head"><b>目录</b><span>第 1 / ${CHAPTERS.length} 章</span></div><div class="toc-list">` +
+    CHAPTERS.map((c, i) => `<button class="toc-row ${i === 0 ? 'cur' : ''} ${i < 0 ? 'read' : ''}" data-ch="${i}"><span class="dot"></span><span class="t">${c}</span><span class="p">${i === 0 ? (CH_PROGRESS[0] || 0) + '%' : ''}</span></button>`).join('') + '</div>';
+}
+function openToc(anchor) {
+  if (isPhone()) {
+    $('#tocPhone').innerHTML = tocHTML();
+    $('#tocCard').classList.remove('tall'); $('#tocCard').classList.add('open');
+  } else {
+    $('#tocDesk').innerHTML = tocHTML();
+    openPopover('toc', $('#capsule'));
+  }
+}
+function closeToc() { $('#tocCard').classList.remove('open'); if (openPop && openPop.id === 'pop-toc') closePopover(); }
+$('#tocBtn').onclick = (e) => { e.stopPropagation(); openToc($('#tocBtn')); };
+$('#tocTitle').onclick = (e) => { e.stopPropagation(); openToc($('#tocTitle')); };
+document.addEventListener('click', (e) => { const r = e.target.closest('.toc-row'); if (!r) return; closeToc(); $('#readerScroll').scrollTop = 0; $('#pct1').textContent = `第 ${+r.dataset.ch + 1} / ${CHAPTERS.length} 章 · 0%`; $('#tocTitle b').textContent = '夢十夜 · ' + CHAPTERS[+r.dataset.ch]; });
+$('#tgrab').addEventListener('pointerup', () => $('#tocCard').classList.toggle('tall'));
 $('#openTools').onclick = openTools;
 $('#toolsDone').onclick = closeSheet;
 $$('#toolsSheet .switch').forEach((s) => s.onclick = () => s.setAttribute('aria-checked', s.getAttribute('aria-checked') !== 'true'));
@@ -1380,13 +1437,15 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeLooku
 $('#stage').addEventListener('click', (e) => {
   const b = e.target.closest('.demo'); if (!b) return;
   const d = b.dataset.demo;
-  closeLookup(); closeSheet();
+  closeLookup(); closeSheet(); closeToc();
   if (d === 'lookup') { goView('reader'); setTimeout(() => lookup($('#readerBody .w[data-k="死にます"]')), 60); }
   if (d === 'bi' || d === 'vert') { goView('reader'); selectors.wmSeg.select(d === 'vert' ? 'v' : 'h', false, false); setBi(true); }
   if (d === 'ill') { goView('reader'); selectors.wmSeg.select('h', false, false); setTimeout(() => $('#readerBody figure').scrollIntoView({ block: 'center', behavior: 'smooth' }), 60); }
   if (d === 'import') demoImport();
   if (d === 'pdf') demoPdf();
   if (d === 'settings') openTools();
+  if (d === 'toc') { goView('reader'); setTimeout(() => openToc(), 60); }
+  if (d === 'chapterEnd') { goView('reader'); selectors.wmSeg.select('h', false, false); setTimeout(() => { const sc = $('#readerScroll'); sc.scrollTop = sc.scrollHeight; }, 60); }
 });
 selectors.paneSeg.select('src', false, false);
 

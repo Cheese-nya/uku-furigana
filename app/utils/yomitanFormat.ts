@@ -71,6 +71,18 @@ function getDataContent(node: StructuredNode): string {
   return typeof raw === 'string' ? raw : '';
 }
 
+function getDataClass(node: StructuredNode): string {
+  const raw = node.data?.class;
+  return typeof raw === 'string' ? raw : '';
+}
+
+// Part-of-speech labels of Japanese bilingual dictionaries (⟨形動⟩, ⟨動五(自)⟩ …) in the shared Chinese labels.
+const JA_POS: Record<string, string> = {
+  名: '名词', 形: '形容词', 形動: '形容动词', 副: '副词', 動五: '五段', 動上一: '一段', 動下一: '一段', 動サ変: 'サ变',
+  動カ変: 'カ变', 他: '他动', 自: '自动', 連体: '连体词', 接: '接续词', 感: '感叹词', 代: '代词', 助: '助词',
+  助動: '助动词', 造: '造语', 接頭: '前缀', 接尾: '后缀',
+};
+
 function isExcludedFromGloss(node: StructuredNode): boolean {
   const dc = getDataContent(node);
   if (!dc) return false;
@@ -403,6 +415,45 @@ export function convertTermBank(
       }
 
       const contentRoot = type === 'structured-content' ? def.content : def;
+      const defs = findNodes(contentRoot, (n) => getDataClass(n) === 'def1');
+      if (defs.length > 0) {
+        // 明鏡-style bilingual layout: per sense a Japanese definition with its Chinese translation (dfcn)
+        // and example pairs (exjp / excn), where ～ stands for the headword.
+        jitendex = true;
+        const textOf = (node: unknown) => cleanGlossText(renderNodeText(node, false)).replace(/\s+/g, ' ').trim();
+        const byClass = (root: unknown, name: string) => findNodes(root, (n) => getDataClass(n) === name);
+        const type = byClass(contentRoot, 'type')[0];
+        if (type) {
+          for (const raw of textOf(type).replace(/[⟨⟩]/g, '').split(/[・()（）]/)) {
+            const part = raw.trim();
+            if (!part) continue;
+            // 自五 / 他下一: transitivity first, then the conjugation (as 動五, 動下一 …).
+            const split = part.match(/^([自他])(.+)$/);
+            const labels = split ? [JA_POS[split[1]], JA_POS[`動${split[2]}`] ?? JA_POS[split[2]] ?? split[2]] : [JA_POS[part] ?? part];
+            for (const label of labels) if (label && !fallbackTags.includes(label)) fallbackTags.push(label);
+          }
+        }
+        if (!reading) {
+          const word = byClass(contentRoot, 'word')[0];
+          if (word) reading = textOf(word).split('［')[0].replace(/[‐・\s]/g, '');
+        }
+        for (const def of defs.slice(0, MAX_SENSES)) {
+          const def2 = byClass(def.content, 'def2')[0];
+          const zh = byClass(def2?.content, 'dfcn').map(textOf).join(' ').replace(/^\/\s*/, '').trim();
+          const ja = def2 && Array.isArray(def2.content)
+            ? (def2.content as unknown[]).filter((c) => !(isRecord(c) && getDataClass(c as StructuredNode) === 'dfcn')).map(textOf).join('').trim()
+            : '';
+          const gloss = zh && ja ? `${zh}（${ja}）` : zh || ja;
+          if (gloss) glosses.push(gloss);
+          for (const exam of byClass(def.content, 'exam')) {
+            if (examples.length >= MAX_EXAMPLES) break;
+            const jp = byClass(exam.content, 'exjp').map(textOf).join('').replace(/▲/g, '').trim().replace(/^「|」$/g, '').replace(/～/g, term);
+            const cn = byClass(exam.content, 'excn').map(textOf).join('').trim();
+            if (jp && cn) examples.push([jp, cn]);
+          }
+        }
+        continue;
+      }
       const senses = findNodes(contentRoot, (n) => getDataContent(n) === 'sense');
       if (senses.length > 0) {
         // Jitendex layout: sense-groups carry part-of-speech tags, each sense a glossary list and examples.
@@ -471,6 +522,7 @@ export async function readYomitanZip(data: ArrayBuffer): Promise<{
   title: string;
   revision: string;
   attribution: string;
+  targetLanguage: string;
   entries: CompactEntry[];
 }> {
   let zip: JSZip;
@@ -531,6 +583,7 @@ export async function readYomitanZip(data: ArrayBuffer): Promise<{
     title: typeof indexJson.title === 'string' ? indexJson.title : '',
     revision: typeof indexJson.revision === 'string' ? indexJson.revision : '',
     attribution: typeof indexJson.attribution === 'string' ? indexJson.attribution : '',
+    targetLanguage: typeof indexJson.targetLanguage === 'string' ? indexJson.targetLanguage : '',
     entries,
   };
 }

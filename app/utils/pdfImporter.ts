@@ -68,7 +68,7 @@ async function defaultLoadPdf(data: ArrayBuffer): Promise<PdfDocumentLike> {
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
   // Copied next to the page by scripts/vendor-assets.mjs; relative, so a build served under a sub-path works too.
   const base = new URL('./vendor/pdfjs/', window.location.href.split('?')[0]).href;
-  pdfjs.GlobalWorkerOptions.workerSrc = `${base}pdf.worker.min.mjs`;
+  pdfjs.GlobalWorkerOptions.workerSrc = `${base}pdf.worker.min.js`;
   const params: Record<string, unknown> = {
     data: new Uint8Array(data),
     cMapUrl: `${base}cmaps/`,
