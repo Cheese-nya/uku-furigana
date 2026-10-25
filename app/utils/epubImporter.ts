@@ -593,7 +593,7 @@ export async function importEpub(
   }
 
   const tocTargets = await extractTocTargets(zip, parser, manifestById, spineEl);
-  let chapters: { title: string; startLine: number }[] = [];
+  const chapters: { title: string; startLine: number }[] = [];
 
   if (tocTargets.length > 0) {
     const seenLines = new Set<number>();

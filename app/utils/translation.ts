@@ -88,11 +88,10 @@ export function needsTranslation(value: string): boolean {
 function abortError(): Error {
   // `DOMException` carries the name the callers check for; where it is missing (older
   // environments) a plain Error with the same name is enough.
-  const error: { name: string; message: string } = typeof DOMException === 'function'
-    ? new DOMException('翻译已中止', 'AbortError')
-    : new Error('翻译已中止');
+  if (typeof DOMException === 'function') return new DOMException('翻译已中止', 'AbortError');
+  const error = new Error('翻译已中止');
   error.name = 'AbortError';
-  return error as Error;
+  return error;
 }
 
 function throwIfAborted(signal?: AbortSignal): void {
@@ -102,13 +101,12 @@ function throwIfAborted(signal?: AbortSignal): void {
 function delay(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) { reject(abortError()); return; }
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timer = setTimeout(() => { cleanup(); resolve(); }, ms);
     const onAbort = () => { cleanup(); reject(abortError()); };
     const cleanup = () => {
-      if (timer !== undefined) clearTimeout(timer);
+      clearTimeout(timer);
       signal?.removeEventListener('abort', onAbort);
     };
-    timer = setTimeout(() => { cleanup(); resolve(); }, ms);
     signal?.addEventListener('abort', onAbort);
   });
 }

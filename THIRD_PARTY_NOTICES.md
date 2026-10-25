@@ -15,11 +15,31 @@ This software includes or bundles the following third-party components, each und
 | docx | MIT | <https://github.com/dolanmiu/docx> |
 | JSZip | MIT（双许可 MIT / GPL-3.0，本项目选用 MIT） | <https://github.com/Stuk/jszip> |
 | FileSaver.js | MIT | <https://github.com/eligrey/FileSaver.js> |
+| PDF.js（`pdfjs-dist`，含 CMap 与标准字体数据） | Apache-2.0 | <https://github.com/mozilla/pdf.js> |
+| 日中词典（`public/lookup/ja-zh/`，由 wty 从维基词典 / kaikki.org 数据生成） | CC BY-SA 4.0（见下文） | <https://github.com/yomidevs/wiktionary-to-yomitan> |
 | Capacitor（iOS 版） | MIT | <https://github.com/ionic-team/capacitor> |
 | pywebview（Windows 版） | BSD-3-Clause | <https://github.com/r0x0r/pywebview> |
 | PyInstaller bootloader（Windows 版） | GPL-2.0 with bootloader exception | <https://github.com/pyinstaller/pyinstaller> |
 
 完整的 Apache-2.0 许可证文本见 <https://www.apache.org/licenses/LICENSE-2.0>。MIT 与 BSD 许可证全文随各组件源码分发，也可在上述来源仓库中查阅。
+
+---
+
+## 日中词典 / Japanese–Chinese dictionary（`public/lookup/ja-zh/`）
+
+内置查词词典的数据来自维基词典（Wiktionary）的中文版，经 [kaikki.org](https://kaikki.org/)（wiktextract）提取、
+[wty / wiktionary-to-yomitan](https://github.com/yomidevs/wiktionary-to-yomitan) 转换为 Yomitan 格式，
+再由本项目的 `scripts/build-dictionary.mjs` 压缩成内置格式（只保留释义与例句，内容未作其他改动）。
+
+The bundled lookup dictionary is derived from the Chinese edition of Wiktionary, extracted by kaikki.org (wiktextract)
+and converted by wty; `scripts/build-dictionary.mjs` repacks it (glosses and examples only).
+
+许可 / License: [Creative Commons Attribution-ShareAlike 4.0](https://creativecommons.org/licenses/by-sa/4.0/)（CC BY-SA 4.0）。
+署名 / Attribution: Wiktionary contributors。该数据（及其改编版本）须以同样的许可证分发；它不受本项目 PolyForm 许可证约束。
+This data (and adaptations of it) is shared under the same license and is not covered by this project's PolyForm license.
+
+查词引擎为本项目自行实现，读取 Yomitan 词典格式，但不包含 Yomitan（GPL-3.0）的任何代码。
+The lookup engine is our own; it reads the Yomitan dictionary format but contains no Yomitan (GPL-3.0) code.
 
 ---
 

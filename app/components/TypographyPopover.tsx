@@ -4,6 +4,8 @@ import React from 'react';
 import { GlassPopover } from './glass/GlassPopover';
 import { LiquidSelector } from './glass/LiquidSelector';
 import type { Translations } from '../utils/i18n';
+import type { PretranslateState } from '../hooks/useBilingual';
+import { IconCheck } from './glass/icons';
 
 type RubyMode = 'hiragana' | 'katakana' | 'romaji';
 
@@ -24,7 +26,54 @@ export interface TypographyPopoverProps {
   /** Writing direction row (reader only). */
   writingMode?: 'horizontal' | 'vertical';
   onWritingModeChange?: (value: 'horizontal' | 'vertical') => void;
+  /** Bilingual reading (reader only): the switch plus the whole-book translation row. */
+  bilingual?: {
+    on: boolean;
+    onChange: (value: boolean) => void;
+    pretranslate: PretranslateState;
+    engineLabel: string;
+    onStart: () => void;
+    onPause: () => void;
+  };
   t: Translations;
+}
+
+const fill = (template: string, values: Record<string, string | number>) =>
+  template.replace(/\{(\w+)\}/g, (_, key: string) => String(values[key] ?? ''));
+
+function PretranslateRow({ state, engineLabel, onStart, onPause, t }: { state: PretranslateState; engineLabel: string; onStart: () => void; onPause: () => void; t: Translations }) {
+  if (state.status === 'done') {
+    return (
+      <div className="px-3 pb-2.5 pt-2">
+        <div className="flex items-center justify-between font-medium">
+          {t.pretranslateTitle}
+          <span className="flex items-center gap-1 text-[13px] text-[var(--ok)]"><IconCheck size={15} />{t.pretranslateDone}</span>
+        </div>
+        <div className="mt-0.5 text-xs text-[var(--label-2)]">{fill(t.pretranslateDoneDetail, { total: state.total })}</div>
+      </div>
+    );
+  }
+  const running = state.status === 'running';
+  const percent = state.total ? Math.round((state.done / state.total) * 100) : 0;
+  const started = state.done > 0;
+  return (
+    <div className="px-3 pb-2.5 pt-2">
+      <div className="flex items-center justify-between font-medium">
+        {t.pretranslateTitle}
+        <button type="button" className="btn h-7 px-3 text-xs" onClick={running ? onPause : onStart}>
+          {running ? t.pretranslatePause : started ? t.pretranslateResume : t.pretranslateStart}
+        </button>
+      </div>
+      <div className={`mt-0.5 text-xs ${state.status === 'error' ? 'text-[var(--danger)]' : 'text-[var(--label-2)]'}`}>
+        {state.status === 'error'
+          ? fill(t.pretranslateFailed, { error: state.error ?? '' })
+          : `${running ? fill(t.pretranslateRunning, { percent }) : fill(t.pretranslateIdle, { done: state.done, total: state.total })} · ${engineLabel}`}
+      </div>
+      {(running || started) && (
+        <span className="mt-2 block h-1 w-full overflow-hidden rounded-sm bg-[var(--fill)]"><i className="block h-full rounded-sm bg-[var(--label)]" style={{ width: `${percent}%` }} /></span>
+      )}
+    </div>
+  );
 }
 
 const SEG = 'flex w-full [&>[data-opt]]:h-7 [&>[data-opt]]:flex-1 [&>[data-opt]]:px-2 [&>[data-opt]]:text-[13px]';
@@ -41,7 +90,7 @@ function Group({ label, children }: { label: string; children: React.ReactNode }
 /** Mockup "排版" popover: ruby mode (phones), font, size, show-ruby switch. */
 export function TypographyPopover({
   open, onClose, anchor, placement, fontFamily, onFontFamilyChange, fontSize, onFontSizeChange, showRuby, onShowRubyChange,
-  rubyType, onRubyTypeChange, writingMode, onWritingModeChange, t,
+  rubyType, onRubyTypeChange, writingMode, onWritingModeChange, bilingual, t,
 }: TypographyPopoverProps) {
   return (
     <GlassPopover open={open} onClose={onClose} anchor={anchor} placement={placement} ariaLabel={t.typographySettings} className="w-[280px]">
@@ -110,6 +159,18 @@ export function TypographyPopover({
           <i />
         </button>
       </div>
+      {bilingual && (
+        <>
+          <hr className="mx-2.5 my-1 h-px border-0 bg-[var(--sep)]" />
+          <div className="flex items-center justify-between px-3 py-2 font-medium">
+            {t.bilingualLabel}
+            <button type="button" role="switch" aria-checked={bilingual.on} aria-label={t.bilingualLabel} className="switch" onClick={() => bilingual.onChange(!bilingual.on)}>
+              <i />
+            </button>
+          </div>
+          <PretranslateRow state={bilingual.pretranslate} engineLabel={bilingual.engineLabel} onStart={bilingual.onStart} onPause={bilingual.onPause} t={t} />
+        </>
+      )}
     </GlassPopover>
   );
 }

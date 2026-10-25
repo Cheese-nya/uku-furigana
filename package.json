@@ -4,7 +4,9 @@
   "license": "PolyForm-Noncommercial-1.0.0",
   "private": true,
   "scripts": {
+    "predev": "node scripts/vendor-assets.mjs",
     "dev": "next dev",
+    "prebuild": "node scripts/vendor-assets.mjs",
     "build": "next build",
     "start": "next start",
     "app": "cmd /c launch_window.bat",

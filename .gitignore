@@ -43,3 +43,4 @@ __pycache__/
 /tools/dict-src/
 # Copied from node_modules by scripts/vendor-assets.mjs
 /public/vendor/
+/tests/.tmp/

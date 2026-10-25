@@ -23,6 +23,7 @@ import {
   IconStarFill,
   IconTrash,
 } from './glass/icons';
+import { downscaleCover } from '../utils/assetStore';
 import type { BookCategory, BookItem, BookMetadataPatch } from '../utils/libraryDatabase';
 import type { Translations } from '../utils/i18n';
 
@@ -56,35 +57,6 @@ function coverColour(book: BookItem): string {
 
 function countLines(content: string): number {
   return content ? content.replace(/\r\n?/g, '\n').split('\n').length : 0;
-}
-
-function downscaleCover(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('Failed to read image'));
-    reader.onload = () => {
-      const dataUrl = String(reader.result ?? '');
-      const img = new Image();
-      img.onerror = () => reject(new Error('Failed to decode image'));
-      img.onload = () => {
-        const w = img.naturalWidth || img.width || 600;
-        const h = img.naturalHeight || img.height || 600;
-        const scale = Math.min(1, 600 / Math.max(w, h));
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.max(1, Math.round(w * scale));
-        canvas.height = Math.max(1, Math.round(h * scale));
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          resolve(dataUrl);
-          return;
-        }
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL('image/jpeg', 0.85));
-      };
-      img.src = dataUrl;
-    };
-    reader.readAsDataURL(file);
-  });
 }
 
 const fill = (template: string, values: Record<string, string | number>) =>
@@ -190,7 +162,7 @@ export function LibraryPanel({
         ref={fileRef}
         type="file"
         multiple
-        accept=".txt,.md,.srt,.vtt,.docx,text/plain,text/markdown,application/x-subrip,text/vtt,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        accept=".txt,.md,.srt,.vtt,.docx,.epub,.pdf,application/epub+zip,application/pdf,text/plain,text/markdown,application/x-subrip,text/vtt,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         className="hidden"
         onChange={event => {
           if (event.target.files?.length) void onImportFiles(event.target.files);
@@ -302,7 +274,7 @@ export function LibraryPanel({
       </GlassPopover>
 
       <GlassPopover open={newOpen} onClose={() => setNewOpen(false)} anchor={newAnchor} ariaLabel={t.libraryNewShort}>
-        <PopoverItem icon={<IconImport size={17} />} detail="TXT · DOCX · SRT" onClick={() => { setNewOpen(false); fileRef.current?.click(); }}>{t.libraryImportBook}</PopoverItem>
+        <PopoverItem icon={<IconImport size={17} />} detail={t.libraryImportFormats} onClick={() => { setNewOpen(false); fileRef.current?.click(); }}>{t.libraryImportBook}</PopoverItem>
         <PopoverItem icon={<IconLink size={17} />} data-testid="pixiv-import-toggle-btn" onClick={() => { setNewOpen(false); setPixivError(''); setPixivOpen(true); }}>{t.libPixivImportBtn}</PopoverItem>
         <PopoverItem icon={<IconPaste size={17} />} onClick={() => { setNewOpen(false); setComposerOpen(true); }}>{t.libraryNewBook}</PopoverItem>
       </GlassPopover>
@@ -592,7 +564,9 @@ function BookCover({ book, t, categoryText, lifted, onOpen, onMenu }: {
       <div className="mt-0.5 flex items-center gap-1 text-xs text-[var(--label-2)]" title={book.format.toUpperCase()}>
         {book.favorite && <IconStarFill size={12} className="shrink-0 text-[var(--review)]" />}
         <span className="truncate">
-          {categoryText} · {fill(t.libraryBookLines, { count: lines })} · {started ? fill(t.libraryBookProgress, { percent }) : t.libraryUnread}
+          {categoryText} · {book.format === 'epub' || book.format === 'pdf'
+            ? `${book.format.toUpperCase()} · ${fill(t.importChapters, { count: book.chapters.length })}`
+            : fill(t.libraryBookLines, { count: lines })} · {started ? fill(t.libraryBookProgress, { percent }) : t.libraryUnread}
         </span>
       </div>
     </div>

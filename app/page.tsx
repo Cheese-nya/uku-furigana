@@ -1,6 +1,11 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { GlassToast } from './components/GlassToast';
+import { ReadingToolsSheet } from './components/ReadingToolsSheet';
+import { useReadingTools } from './hooks/useReadingTools';
+import { isBookFile, parseBookFile } from './utils/bookImport';
+import { withoutImageLines } from './utils/bookAssets';
 import { Sidebar } from './components/Sidebar';
 import { SettingsMenu } from './components/SettingsMenu';
 import { MobileNavBar, type AppTab } from './components/MobileNavBar';
@@ -36,6 +41,9 @@ import { buildFeedbackPayload, submitFeedback } from './utils/feedback';
 import { DISTRIBUTION } from './utils/appInfo';
 import { QQ_GROUP, RELEASES_URL, type AndroidUpdateBridge, type FeedbackKind } from './utils/updateTypes';
 import { translations, type Locale } from './utils/i18n';
+
+const fillTemplate = (template: string, values: Record<string, string | number>) =>
+  template.replace(/\{(\w+)\}/g, (_, key: string) => String(values[key] ?? ''));
 
 export default function DubbingStudioApp() {
   // Locale & Theme State
@@ -132,7 +140,7 @@ export default function DubbingStudioApp() {
   // position (after the tab/orientation effects, before the correction-database effects).
   const {
     libraryDb, setLibraryDb, libraryDbRef, activeBook, setEditorBookId, markEditorSource, libraryBooks,
-    libraryToast, setLibraryToast,
+    libraryToast, setLibraryToast, importToast, setImportToast,
     loadBookIntoWorkspace, handleSaveToLibrary, importLibraryFiles, createOrUpdateBook,
     handleToggleFavorite, handleUpdateBookMetadata,
     handleImportPixivNovel, handleDeleteBook, handleReaderProgress,
@@ -160,8 +168,9 @@ export default function DubbingStudioApp() {
   const annotationInput = useMemo(() => ({ text: rawText, rubyType, glossary: glossaryEntries, sourceOverrides, overrides: documentCorrections, learned: learnedReadings }),
     [rawText, rubyType, glossaryEntries, sourceOverrides, documentCorrections, learnedReadings]);
   const { lines: annotatedLines, busy: isAnnotating, engine, error: annotationError,
-    annotate, retry: retryEngine } = useFuriganaWorker(annotationInput);
+    annotate, analyze, retry: retryEngine } = useFuriganaWorker(annotationInput);
   const dictionaryStatus = engine.status;
+  const readingTools = useReadingTools({ analyze, t, engineReady: engine.status !== 'loading', readerOpen: activeTab === 'reader' });
   const isKuromojiLoading = dictionaryStatus === 'loading';
 
   const reviewTargets = annotatedLines.flatMap(line => {
@@ -372,7 +381,11 @@ export default function DubbingStudioApp() {
       let content = '';
       let importedRuby: RubyOverride[] = [];
       let importedCues: SrtCue[] = [];
-      if (file.name.toLowerCase().endsWith('.docx')) {
+      if (isBookFile(file.name)) {
+        const parsed = await parseBookFile(file);
+        content = withoutImageLines(parsed.content);
+        importedRuby = parsed.sourceOverrides;
+      } else if (file.name.toLowerCase().endsWith('.docx')) {
         const arrayBuffer = await file.arrayBuffer();
         const imported = await importDocx(arrayBuffer);
         content = imported.text;
@@ -447,6 +460,8 @@ export default function DubbingStudioApp() {
       glossaryCount={glossaryEntries.length}
       onOpenLearned={() => setIsLearnedModalOpen(true)}
       onOpenGlossary={() => { advanceControllerRef.current?.abort(); setIsGlossaryOpen(true); }}
+      onOpenReadingTools={() => readingTools.setSheetOpen(true)}
+      readingToolsDetail={fillTemplate(t.toolsMenuDetail, { engine: readingTools.settings.engine === 'llm' ? t.engineLlm : t.engineMicrosoft, count: readingTools.dictionaries.length })}
       dictionaryStatus={dictionaryStatus}
       dictionaryLabel={dictionaryLabel}
       extra={extra}
@@ -464,11 +479,25 @@ export default function DubbingStudioApp() {
 
   return (
     <main className="fixed inset-0 overflow-hidden text-[var(--label)] transition-colors">
-      {libraryToast && (
-        <div role="status" className="fixed left-1/2 top-4 z-50 -translate-x-1/2 rounded-full bg-slate-900/90 dark:bg-slate-800/95 backdrop-blur-xl px-4 py-2 text-xs font-medium text-white shadow-[0_12px_30px_-8px_rgba(15,23,42,0.35)] border border-white/20">
-          {libraryToast}
-        </div>
-      )}
+      <ReadingToolsSheet
+        open={readingTools.sheetOpen}
+        onClose={() => readingTools.setSheetOpen(false)}
+        t={t}
+        locale={locale}
+        settings={readingTools.settings}
+        onSettingsChange={readingTools.changeSettings}
+        dictionaries={readingTools.dictionaries}
+        onToggleDictionary={(id, enabled) => { void readingTools.toggleDictionary(id, enabled); }}
+        onReorderDictionaries={ids => { void readingTools.reorderDictionaries(ids); }}
+        onRemoveDictionary={id => { void readingTools.removeDictionary(id); }}
+        onImportDictionary={file => { void readingTools.importDictionary(file); }}
+        importProgress={readingTools.importProgress}
+        importError={readingTools.importError}
+      />
+      <GlassToast
+        toast={importToast ?? (libraryToast ? { kind: 'info', title: libraryToast } : null)}
+        onDismiss={() => { setImportToast(null); setLibraryToast(null); }}
+      />
       <Sidebar
         activeTab={activeTab}
         onSelectTab={handleSelectTab}
@@ -533,6 +562,9 @@ export default function DubbingStudioApp() {
             onRubyTypeChange={setRubyType}
             onUpdateProgress={handleReaderProgress}
             onGoToLibrary={() => setActiveTab('library')}
+            tools={readingTools.tools}
+            dictTitles={readingTools.dictTitles}
+            locale={locale}
           />
         )}
 

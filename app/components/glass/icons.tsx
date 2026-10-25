@@ -62,6 +62,8 @@ export const IconFolder = make(<path d="M3.5 7A1.5 1.5 0 0 1 5 5.5h4.4l2 2H19A1.
 export const IconBug = make(<><rect x="8" y="8" width="8" height="10" rx="4" /><path d="M9.5 5 8 3.2M14.5 5l1.5-1.8" /><path d="M8 11.5H4.5M16 11.5h3.5M8 15l-3.2 1.8M16 15l3.2 1.8M8.4 8.6 4.8 7.4M15.6 8.6l3.6-1.2" /></>);
 export const IconMessage = make(<path d="M20.5 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.6A8 8 0 1 1 20.5 12Z" />);
 export const IconUsers = make(<><circle cx="9" cy="8.5" r="3.2" /><path d="M3.5 19.5c0-3 2.5-5.2 5.5-5.2s5.5 2.2 5.5 5.2" /><path d="M15.8 5.7a3.2 3.2 0 0 1 0 6.1" /><path d="M17.4 14.5c2.1.6 3.6 2.4 3.6 5" /></>);
+export const IconTranslate = make(<><path d="M3.5 5.5h9M8 3.5v2M5.5 5.5c.6 3.2 2.8 5.8 6 7" /><path d="M10.5 5.5c-.6 3.4-2.8 6-6.5 7.5" /><path d="m12.5 20.5 4-10 4 10M14 17h5" /></>);
+export const IconCopy = make(<><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></>);
 export const IconDownload = make(<><path d="M12 4v10" /><path d="m7.5 10 4.5 4.5L16.5 10" /><path d="M5 19h14" /></>);
 
 export function IconXLogo({ size = 16, className = '' }: IconProps) {

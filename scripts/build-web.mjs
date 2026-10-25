@@ -31,6 +31,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
 let status = 1;
 try {
   rmSync(outDir, { recursive: true, force: true });
+  spawnSync(process.execPath, [join(root, 'scripts', 'vendor-assets.mjs')], { cwd: root, stdio: 'inherit' });
   if (existsSync(apiDir)) {
     backupDir = mkdtempSync(join(tmpdir(), 'uku-web-api-backup-'));
     cpSync(apiDir, join(backupDir, 'api'), { recursive: true });

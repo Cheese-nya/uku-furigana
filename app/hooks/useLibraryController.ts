@@ -4,8 +4,10 @@ import { useEffect, useMemo, useRef, useState, type Dispatch, type RefObject, ty
 import type { AppTab } from '../components/MobileNavBar';
 import type { EditingTokenState } from '../components/RubyCorrectionModal';
 import type { SrtCue } from '../utils/srt';
-import { importTextScript, scriptSourceFormat, withLfLineKeys } from '../utils/inlineRuby';
-import { importDocx } from '../utils/docxImporter';
+import { withLfLineKeys } from '../utils/inlineRuby';
+import { parseBookFile } from '../utils/bookImport';
+import { deleteBookAssets, downscaleCover, putBookAssets } from '../utils/assetStore';
+import type { ToastState } from '../components/GlassToast';
 import { upsertRubyOverride, type RubyOverride } from '../utils/rubyOverrides';
 import { saveCorrections } from '../utils/correctionStorage';
 import { fingerprintText, resolveScript, type CorrectionDatabaseV2 } from '../utils/correctionDatabase';
@@ -63,27 +65,8 @@ function buildPixivRubyOverrides(
   return overrides;
 }
 
-interface ParsedImportFile {
-  title: string;
-  content: string;
-  format: BookFormat;
-  sourceOverrides: RubyOverride[];
-  srtCues: SrtCue[];
-}
-
-/** Parse a user-picked file into a library-ready book payload. */
-async function parseImportedFile(file: File): Promise<ParsedImportFile> {
-  const title = file.name.replace(/\.[^/.]+$/, '') || 'Untitled';
-  const lower = file.name.toLowerCase();
-  if (lower.endsWith('.docx')) {
-    const imported = await importDocx(await file.arrayBuffer());
-    return { title, content: imported.text, format: 'docx', sourceOverrides: imported.overrides, srtCues: [] };
-  }
-  // SRT via parseSRT, VTT via parseVTT; a subtitle file without valid cues is kept as plain text.
-  // Books store LF-only text, so key the inline readings by LF lines from the start.
-  const imported = importTextScript(file.name, (await file.text()).replace(/\r\n?/g, '\n'));
-  return { title, content: imported.text, format: scriptSourceFormat(file.name), sourceOverrides: imported.overrides, srtCues: imported.cues };
-}
+const fill = (template: string, values: Record<string, string | number>) =>
+  template.replace(/\{(\w+)\}/g, (_, key: string) => String(values[key] ?? ''));
 
 type Setter<T> = Dispatch<SetStateAction<T>>;
 
@@ -130,6 +113,7 @@ export function useLibraryController({
   const [activeBookId, setActiveBookId] = useState<string | null>(null);
   const [editorBookId, setEditorBookId] = useState<string | null>(null);
   const [libraryToast, setLibraryToast] = useState<string | null>(null);
+  const [importToast, setImportToast] = useState<ToastState | null>(null);
   // Source format of the script in the Editor, recorded on import / load for that script id. Any
   // other script (the default demo, a cleared or pasted one) is plain text.
   const [editorSource, setEditorSource] = useState<{ documentId: string; format: BookFormat } | null>(null);
@@ -165,6 +149,12 @@ export function useLibraryController({
     const timer = setTimeout(() => setLibraryToast(null), 2600);
     return () => clearTimeout(timer);
   }, [libraryToast]);
+
+  useEffect(() => {
+    if (!importToast || importToast.kind === 'progress') return;
+    const timer = setTimeout(() => setImportToast(null), importToast.kind === 'error' ? 8000 : 5000);
+    return () => clearTimeout(timer);
+  }, [importToast]);
 
   const locateBook = (db: LibraryDatabaseV1, bookId: string | null, fingerprint: string): BookItem | null => {
     if (bookId && db.books[bookId]) return db.books[bookId];
@@ -230,24 +220,57 @@ export function useLibraryController({
   };
 
   const importLibraryFiles = async (files: FileList) => {
-    const parsedList = await Promise.all(Array.from(files).map(parseImportedFile));
-    let next = libraryDbRef.current;
+    const list = Array.from(files);
     let lastBook: BookItem | null = null;
-    for (const parsed of parsedList) {
-      const fingerprint = await fingerprintText(parsed.content);
-      next = await upsertBook(next, {
-        title: parsed.title,
-        content: parsed.content,
-        fingerprint,
-        category: 'script',
-        format: parsed.format,
-        sourceOverrides: parsed.sourceOverrides,
-        srtCues: parsed.srtCues,
-      });
-      lastBook = locateBook(next, null, fingerprint);
+    let lastDetail = '';
+    for (const file of list) {
+      setImportToast({ kind: 'progress', title: fill(t.importingFile, { name: file.name }) });
+      try {
+        const parsed = await parseBookFile(file);
+        const fingerprint = await fingerprintText(parsed.content);
+        const coverUrl = parsed.cover ? await downscaleCover(parsed.cover).catch(() => undefined) : undefined;
+        const next = await upsertBook(libraryDbRef.current, {
+          title: parsed.title,
+          author: parsed.author,
+          content: parsed.content,
+          fingerprint,
+          category: parsed.category,
+          format: parsed.format,
+          sourceOverrides: parsed.sourceOverrides,
+          srtCues: parsed.srtCues,
+          chapters: parsed.chapters,
+          ...(coverUrl ? { coverUrl } : {}),
+        });
+        const book = locateBook(next, null, fingerprint);
+        if (book && parsed.images.length) await putBookAssets(book.bookId, parsed.images);
+        libraryDbRef.current = next;
+        setLibraryDb(next);
+        if (book) lastBook = book;
+        lastDetail = [
+          parsed.chapters && parsed.chapters.length > 1 ? fill(t.importChapters, { count: parsed.chapters.length }) : '',
+          parsed.images.length ? fill(t.importImages, { count: parsed.images.length }) : '',
+          parsed.format === 'epub' && parsed.sourceOverrides.length ? fill(t.importRubies, { count: parsed.sourceOverrides.length }) : '',
+        ].filter(Boolean).join(' · ');
+      } catch (error) {
+        console.error('[library] import failed', error);
+        setImportToast({
+          kind: 'error',
+          title: fill(t.importFailed, { name: file.name }),
+          detail: error instanceof Error ? error.message : String(error),
+          action: { label: t.importOk, onClick: () => undefined },
+        });
+        return;
+      }
     }
-    setLibraryDb(next);
-    if (lastBook) setActiveBookId(lastBook.bookId);
+    if (!lastBook) { setImportToast(null); return; }
+    const book = lastBook;
+    setActiveBookId(book.bookId);
+    setImportToast({
+      kind: 'done',
+      title: fill(t.importDone, { title: book.title }),
+      detail: lastDetail || undefined,
+      action: { label: t.importRead, onClick: () => loadBookIntoWorkspace(book, 'reader') },
+    });
   };
 
   const createOrUpdateBook = async (input: { bookId?: string; title: string; author?: string; category?: BookCategory; coverTheme?: BookCoverTheme; content: string }) => {
@@ -366,6 +389,7 @@ export function useLibraryController({
   };
 
   const handleDeleteBook = (bookId: string) => {
+    void deleteBookAssets(bookId).catch(() => undefined);
     setLibraryDb(previous => deleteBook(previous, bookId));
     if (activeBookId === bookId) setActiveBookId(null);
     if (editorBookId === bookId) setEditorBookId(null);
@@ -400,7 +424,7 @@ export function useLibraryController({
 
   return {
     libraryDb, setLibraryDb, libraryDbRef, activeBookId, activeBook, editorBook, setEditorBookId, markEditorSource, libraryBooks,
-    libraryToast, setLibraryToast, showImportMenu, setShowImportMenu, editorPixivUrl, setEditorPixivUrl, isPixivImporting,
+    libraryToast, setLibraryToast, importToast, setImportToast, showImportMenu, setShowImportMenu, editorPixivUrl, setEditorPixivUrl, isPixivImporting,
     loadBookIntoWorkspace, handleSaveToLibrary, handleOpenInReader, importLibraryFiles, createOrUpdateBook,
     exportLibraryJson, importLibraryJson, restoreStarterBooks, handleToggleFavorite, handleUpdateBookMetadata,
     handleImportPixivNovel, handleDeleteBook, handleReaderProgress, handleAddBookmark, handleRemoveBookmark,

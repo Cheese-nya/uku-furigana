@@ -153,6 +153,17 @@ def get_bundle_dir():
 def start_http_server(web_dir, port, ready_event):
     """Start HTTP server and signal when ready."""
     class QuietHandler(SimpleHTTPRequestHandler):
+        # The Windows registry can map .js/.mjs to text/plain, and module workers (pdf.js) refuse
+        # anything but a JavaScript type; the dictionary shards must arrive as plain bytes.
+        extensions_map = {
+            **SimpleHTTPRequestHandler.extensions_map,
+            '.js': 'text/javascript',
+            '.mjs': 'text/javascript',
+            '.json': 'application/json',
+            '.gz': 'application/octet-stream',
+            '.wasm': 'application/wasm',
+        }
+
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=web_dir, **kwargs)
 
