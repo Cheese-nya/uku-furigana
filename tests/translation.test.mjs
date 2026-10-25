@@ -326,3 +326,11 @@ test('switching engine or model translates again; switching back reuses what tha
   // Microsoft keeps the plain target, so translations cached by earlier versions still count.
   assert.equal(translationCacheKey({ engine: 'microsoft', target: 'en', llm: settings.llm }), 'en');
 });
+
+test('an LLM refusal carries the platform explanation, not just the status code', async () => {
+  const { translateLlm } = loadTypescript('../app/utils/translation.ts');
+  const reply = (status, body) => async () => ({ ok: false, status, json: async () => body });
+  await assert.rejects(translateLlm(['あ'], 'zh-Hans', { baseUrl: 'https://x', model: 'm', apiKey: 'k' }, reply(402, { code: 30011, message: 'Account not verified' })), /HTTP 402）：Account not verified/);
+  await assert.rejects(translateLlm(['あ'], 'zh-Hans', { baseUrl: 'https://x', model: 'm', apiKey: 'k' }, reply(429, { error: { message: 'Rate limit' } })), /HTTP 429）：Rate limit/);
+  await assert.rejects(translateLlm(['あ'], 'zh-Hans', { baseUrl: 'https://x', model: 'm', apiKey: 'k' }, async () => ({ ok: false, status: 500, json: async () => { throw new Error('not json'); } })), /HTTP 500）$/);
+});

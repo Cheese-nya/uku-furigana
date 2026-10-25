@@ -249,7 +249,17 @@ export async function translateLlm(
     }),
     signal,
   });
-  if (!response.ok) throw httpError(response.status, '模型翻译');
+  if (!response.ok) {
+    // Platforms explain refusals in the body (balance, real-name verification, unknown model…): show that.
+    const detail = await response.json().then(
+      (body: { error?: { message?: unknown } | string; message?: unknown }) =>
+        typeof body.error === 'string' ? body.error : body.error?.message ?? body.message,
+      () => undefined,
+    );
+    const error = httpError(response.status, '模型翻译');
+    if (typeof detail === 'string' && detail.trim()) error.message += `：${detail.trim().slice(0, 160)}`;
+    throw error;
+  }
   let payload: unknown;
   try {
     payload = await response.json();

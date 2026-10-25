@@ -97,6 +97,7 @@ export function LlmFields({ settings, onSettingsChange, locale, t, loginNotice }
     free: models.filter(model => model.price === 'free' || model.price === 'quota').length,
     ok: Object.values(probes).filter(result => result !== 'running' && result.state === 'ok').length,
   };
+  const failure = Object.values(probes).map(result => (result !== 'running' && result.state === 'bad' ? result.detail.replace(/^\w*Error /, '') : '')).find(Boolean);
   const reasonText = (result: ProbeResult) => result.state === 'ok' ? '' : ({
     key: t.toolsProbeKey, limit: t.toolsProbeLimit, missing: t.toolsProbeMissing, paid: t.toolsProbePaid, timeout: t.toolsProbeTimeout, other: t.toolsProbeOther,
   })[result.reason];
@@ -108,7 +109,7 @@ export function LlmFields({ settings, onSettingsChange, locale, t, loginNotice }
       setTest({ state: 'ok', text: fill(t.toolsTestOk, { text }) });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setTest({ state: 'fail', text: fill(t.toolsTestFail, { error: /HTTP 40[13]/.test(message) ? t.toolsBadKey : message }) });
+      setTest({ state: 'fail', text: fill(t.toolsTestFail, { error: /HTTP 40[13]）$/.test(message) ? t.toolsBadKey : message }) });
     }
   };
 
@@ -161,6 +162,8 @@ export function LlmFields({ settings, onSettingsChange, locale, t, loginNotice }
             <span>{fill(apiKey ? t.toolsModelSummary : t.toolsModelSummaryNoKey, counts)}</span>
             {apiKey && <button type="button" className="shrink-0 font-semibold text-[var(--label)]" onClick={() => setDetectRound(round => round + 1)}>{t.toolsRedetect}</button>}
           </div>
+          {/* Nothing works: the platform's own reason (balance, real-name verification…) says why. */}
+          {counts.ok === 0 && failure && <p className="mx-2.5 mb-1.5 break-all text-[11px] leading-snug text-[var(--danger)]">{failure}</p>}
           {models.map(model => {
             const probe = probes[model.id];
             return (

@@ -23,7 +23,7 @@ export const AI_PROVIDERS: AiProvider[] = [
   {
     id: 'siliconflow', name: '硅基流动', nameEn: 'SiliconFlow', baseUrl: 'https://api.siliconflow.cn/v1', model: 'Qwen/Qwen3-8B',
     keyUrl: 'https://cloud.siliconflow.cn/account/ak', direct: true,
-    note: { zh: '部分开源模型免费（Qwen、GLM 等）', en: 'Several open models are free (Qwen, GLM…)' },
+    note: { zh: '部分开源模型免费（Qwen、GLM 等）；账号需先完成实名认证才能调用', en: 'Several open models are free (Qwen, GLM…); the account must pass real-name verification first' },
   },
   {
     id: 'dashscope', name: '通义', nameEn: 'Qwen (DashScope)', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-turbo',
