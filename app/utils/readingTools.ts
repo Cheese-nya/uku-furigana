@@ -1,7 +1,7 @@
 import type { AnalyzedToken } from './analyze';
 import { DictionaryStore } from './dictionaryStore';
 import { lookupAt, type LookupResult } from './lookup';
-import { Translator, loadTranslationSettings, type TranslationSettings } from './translation';
+import { Translator, loadTranslationSettings, translationCacheKey, type TranslationSettings } from './translation';
 import { defaultTranslationStore } from './translationStore';
 
 export interface DictionaryInfo {
@@ -22,7 +22,7 @@ export interface ReaderTools {
   translate(bookId: string, texts: string[], signal?: AbortSignal): Promise<Map<string, string>>;
   countTranslated(bookId: string, texts: string[]): Promise<number>;
   pretranslate(bookId: string, texts: string[], onProgress: (done: number, total: number) => void, signal?: AbortSignal): Promise<void>;
-  /** Changes whenever the engine or target language does, so cached state in the reader resets. */
+  /** Changes with the engine, model or target language: the reader then shows (and fetches) that slot's translations. */
   settingsKey: string;
   engineLabel: string;
 }
@@ -78,7 +78,6 @@ export function createReaderTools(options: {
 }): ReaderTools {
   const store = defaultTranslationStore();
   const translator = new Translator({ store, settings: () => options.settings });
-  const target = options.settings.target;
   return {
     async lookup(text, offset, onPreparing) {
       await ensureBuiltinDictionary(onPreparing);
@@ -87,9 +86,9 @@ export function createReaderTools(options: {
       return lookupAt(text, offset, tokens, terms => dictionaries.find(terms));
     },
     translate: (bookId, texts, signal) => translator.translate(bookId, texts, signal),
-    countTranslated: (bookId, texts) => store.count(bookId, target, texts),
+    countTranslated: (bookId, texts) => store.count(bookId, translationCacheKey(options.settings), texts),
     pretranslate: (bookId, texts, onProgress, signal) => translator.pretranslate(bookId, texts, onProgress, signal),
-    settingsKey: `${options.settings.engine}|${target}|${options.settings.llm.baseUrl}|${options.settings.llm.model}`,
+    settingsKey: translationCacheKey(options.settings),
     engineLabel: options.engineLabel,
   };
 }
