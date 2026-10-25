@@ -1,4 +1,5 @@
 import { logEvent } from './appLog';
+import { RELAY_BASE } from './updateTypes';
 import {
   fetchNativePixivNovel,
   getNativePixivBridge,
@@ -227,6 +228,30 @@ export async function fetchPixivNovel(urlOrId: string): Promise<PixivNovelResult
     }
   }
 
+  // Last resort when this device cannot reach pixiv (mainland China without a proxy): our relay
+  // fetches it from Singapore. Skipped when pixiv itself answered, and on the online build, whose
+  // own /api/pixiv above already is the relay.
+  let relayErrorMessage: string | null = null;
+  const sameOrigin = typeof window !== 'undefined' && window.location?.origin === RELAY_BASE;
+  if (!cascadePixivMessage && !sameOrigin) {
+    const controller = typeof AbortController === 'undefined' ? null : new AbortController();
+    const timer = controller ? setTimeout(() => controller.abort(), RELAY_TIMEOUT_MS) : undefined;
+    try {
+      const relayRes = await fetch(`${RELAY_BASE}/api/pixiv?id=${encodeURIComponent(id)}`, { signal: controller?.signal });
+      const data = (await relayRes.json().catch(() => null)) as (PixivNovelResult & { error?: unknown }) | null;
+      if (relayRes.ok && data && typeof data.content === 'string') {
+        logEvent('info', 'pixiv', `fetched through the relay after: ${attempts.join(' | ')}`);
+        return data;
+      }
+      if (typeof data?.error === 'string' && data.error.trim()) relayErrorMessage = data.error.trim();
+      attempts.push(`relay: HTTP ${relayRes.status}${relayErrorMessage ? ` ${relayErrorMessage}` : ''}`);
+    } catch (error) {
+      attempts.push(`relay: ${describe(error)}`);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   logEvent('warn', 'pixiv', `import failed: ${attempts.join(' | ')}`);
   // Precedence: the native bridge reason (the only real transport in the shells), then
   // the local /api/pixiv reason, then Pixiv's own cascade message, then the native proxy's
@@ -240,6 +265,10 @@ export async function fetchPixivNovel(urlOrId: string): Promise<PixivNovelResult
   if (cascadePixivMessage) {
     throw new Error(cascadePixivMessage);
   }
+  // The relay reached pixiv and pixiv said no (deleted, private…): that is the real answer.
+  if (relayErrorMessage) {
+    throw new Error(relayErrorMessage);
+  }
   if (proxyNetworkMessage) {
     throw new Error(`${PIXIV_UNREACHABLE}（${proxyNetworkMessage}）`);
   }
@@ -249,5 +278,7 @@ export async function fetchPixivNovel(urlOrId: string): Promise<PixivNovelResult
   }
   throw lastError instanceof Error ? lastError : new Error('获取 Pixiv 小说失败');
 }
+
+const RELAY_TIMEOUT_MS = 30_000;
 
 export const PIXIV_UNREACHABLE = '无法连接 pixiv.net，请检查网络（中国大陆需要能访问 pixiv 才能导入）';

@@ -608,3 +608,75 @@ test('fetchPixivNovel keeps pixiv\'s own reason from a failed proxy response', a
     stub.restore();
   }
 });
+
+const RELAY = 'https://uku.saiaino.xyz/api/pixiv?id=';
+const notJson = { ok: false, status: 404, json: async () => { throw new SyntaxError('not json'); } };
+
+test('fetchPixivNovel falls back to the relay when the native proxy cannot reach pixiv', async () => {
+  const novel = { id: '123456', title: 'T', author: 'A', description: '', content: '本文', rubyOverrides: {}, coverUrl: '', sourceUrl: 'https://www.pixiv.net/novel/show.php?id=123456' };
+  const stub = stubFetch(url => {
+    if (url.startsWith('/api/pixiv?')) return notJson;
+    if (url.startsWith('/api/pixiv-ajax')) return jsonResponse({ error: true, message: 'connect timed out' }, { ok: false, status: 502 });
+    if (url.startsWith('https://www.pixiv.net/ajax/novel/')) throw new TypeError('Failed to fetch');
+    if (url === `${RELAY}123456`) return jsonResponse(novel);
+    throw new Error(`unexpected request: ${url}`);
+  });
+  try {
+    assert.deepEqual(await fetchPixivNovel('123456'), novel);
+    assert.equal(stub.calls.at(-1), `${RELAY}123456`);
+  } finally {
+    stub.restore();
+  }
+});
+
+test('fetchPixivNovel shows the relay\'s pixiv answer, and the local reason when the relay is down too', async () => {
+  let relay = () => jsonResponse({ error: '无法从 Pixiv 获取小说 (HTTP 404)' }, { ok: false, status: 404 });
+  const stub = stubFetch(url => {
+    if (url.startsWith('/api/pixiv?')) return notJson;
+    if (url.startsWith('/api/pixiv-ajax')) return jsonResponse({ error: true, message: 'connect timed out' }, { ok: false, status: 502 });
+    if (url.startsWith('https://www.pixiv.net/ajax/novel/')) throw new TypeError('Failed to fetch');
+    if (url.startsWith(RELAY)) return relay();
+    throw new Error(`unexpected request: ${url}`);
+  });
+  try {
+    await assert.rejects(() => fetchPixivNovel('123456'), /无法从 Pixiv 获取小说 \(HTTP 404\)/);
+    relay = () => { throw new TypeError('Failed to fetch'); };
+    await assert.rejects(() => fetchPixivNovel('123456'), error => {
+      assert.equal(error.message, `${PIXIV_UNREACHABLE}（connect timed out）`);
+      return true;
+    });
+  } finally {
+    stub.restore();
+  }
+});
+
+test('fetchPixivNovel skips the relay when pixiv already answered or the page is the relay itself', async () => {
+  const stub = stubFetch(url => {
+    if (url.startsWith('/api/pixiv?')) return notJson;
+    if (url.startsWith('/api/pixiv-ajax')) return jsonResponse({ error: true, message: '作品已删除' });
+    if (url.startsWith('https://www.pixiv.net/ajax/novel/')) throw new TypeError('Failed to fetch');
+    throw new Error(`unexpected request: ${url}`);
+  });
+  try {
+    await assert.rejects(() => fetchPixivNovel('123456'), /作品已删除/);
+    assert.equal(stub.calls.some(url => url.startsWith(RELAY)), false);
+  } finally {
+    stub.restore();
+  }
+  const hadWindow = Object.prototype.hasOwnProperty.call(globalThis, 'window');
+  const originalWindow = globalThis.window;
+  globalThis.window = { location: { origin: 'https://uku.saiaino.xyz' } };
+  const online = stubFetch(url => {
+    if (url.startsWith('/api/pixiv')) return notJson;
+    if (url.startsWith('https://www.pixiv.net/ajax/novel/')) throw new TypeError('Failed to fetch');
+    throw new Error(`unexpected request: ${url}`);
+  });
+  try {
+    await assert.rejects(() => fetchPixivNovel('123456'), error => error.message === PIXIV_UNREACHABLE);
+    assert.equal(online.calls.some(url => url.startsWith(RELAY)), false);
+  } finally {
+    online.restore();
+    if (hadWindow) globalThis.window = originalWindow;
+    else delete globalThis.window;
+  }
+});
