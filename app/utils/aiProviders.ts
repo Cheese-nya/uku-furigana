@@ -22,9 +22,9 @@ export interface AiProvider {
 // the page. Checked 2026-10-25; Zhipu does not, so it is left out.
 export const AI_PROVIDERS: AiProvider[] = [
   {
-    id: 'siliconflow', name: '硅基流动', nameEn: 'SiliconFlow', baseUrl: 'https://api.siliconflow.cn/v1', model: 'Qwen/Qwen3-8B',
+    id: 'siliconflow', name: '硅基流动', nameEn: 'SiliconFlow', baseUrl: 'https://api.siliconflow.cn/v1', model: 'tencent/Hunyuan-MT-7B',
     keyUrl: 'https://cloud.siliconflow.cn/account/ak', direct: true,
-    note: { zh: '部分开源模型免费（Qwen、GLM 等）；账号需先完成实名认证才能调用', en: 'Several open models are free (Qwen, GLM…); the account must pass real-name verification first' },
+    note: { zh: '翻译专用的 Hunyuan-MT-7B 免费；账号需先完成实名认证才能调用', en: 'Hunyuan-MT-7B, a translation model, is free; the account must pass real-name verification first' },
   },
   {
     id: 'dashscope', name: '通义', nameEn: 'Qwen (DashScope)', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-turbo',
@@ -66,10 +66,11 @@ const trimSlash = (url: string) => url.replace(/\/+$/, '');
 export type ModelPrice = 'free' | 'quota' | 'paid' | 'unknown';
 export interface ModelInfo { id: string; price: ModelPrice }
 
-// Free models SiliconFlow publishes (its /models list carries no prices); Pro/ variants are always paid.
-const SILICONFLOW_FREE = /(?:^|\/)(?:Qwen2\.5-7B-Instruct|Qwen2\.5-Coder-7B-Instruct|Qwen3-8B|Qwen2-7B-Instruct|glm-4-9b-chat|GLM-4-9B-0414|GLM-Z1-9B-0414|DeepSeek-R1-0528-Qwen3-8B|DeepSeek-R1-Distill-Qwen-7B|internlm2_5-7b-chat|Hunyuan-MT-7B)$/i;
-// Not chat models: embeddings, speech, images, rerankers, moderation.
-const NOT_CHAT = /embed|whisper|tts|speech|audio|rerank|image|imagen|veo|lyria|orpheus|guard|safeguard|moderation|bge-|sdxl|flux|kolors|aqa/i;
+// Free chat models on SiliconFlow's pricing page (siliconflow.cn/pricing, checked 2026-10-25); its /models list
+// carries no prices. Pro/ and LoRA/ variants are separate paid deployments.
+const SILICONFLOW_FREE = /^(?:tencent\/Hunyuan-MT-7B|XingChenAGI\/Xing4\.0-29B)$/i;
+// Not chat models: embeddings, speech in or out, OCR, images and video, rerankers, moderation.
+const NOT_CHAT = /embed|whisper|tts|speech|audio|asr|gsr|ocr|captioner|rerank|image|imagen|veo|lyria|orpheus|guard|safeguard|moderation|bge-|sdxl|flux|kolors|aqa|wan2|i2v|t2v/i;
 
 /** Whether a model costs nothing: from the price list where the platform has one, else from what it publishes. */
 export function modelPrice(providerId: string, id: string, pricing?: { prompt?: unknown; completion?: unknown }): ModelPrice {
@@ -80,7 +81,7 @@ export function modelPrice(providerId: string, id: string, pricing?: { prompt?: 
   }
   if (id.endsWith(':free')) return 'free';
   switch (providerId) {
-    case 'siliconflow': return id.startsWith('Pro/') ? 'paid' : SILICONFLOW_FREE.test(id) ? 'free' : 'unknown';
+    case 'siliconflow': return /^(?:Pro|LoRA)\//.test(id) ? 'paid' : SILICONFLOW_FREE.test(id) ? 'free' : 'unknown';
     case 'groq': return 'quota';
     case 'gemini': return /flash/i.test(id) ? 'quota' : 'paid';
     case 'deepseek': return 'paid';

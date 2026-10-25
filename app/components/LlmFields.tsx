@@ -110,6 +110,8 @@ export function LlmFields({ settings, onSettingsChange, locale, t, loginNotice }
     ok: Object.values(probes).filter(result => result !== 'running' && result.state === 'ok').length,
   };
   const failure = Object.values(probes).map(result => (result !== 'running' && result.state === 'bad' ? result.detail.replace(/^\w*Error /, '') : '')).find(Boolean);
+  // SiliconFlow answers unverified accounts with 402 "balance insufficient", even for its free models.
+  const accountHint = (message: string) => (provider.id === 'siliconflow' && /HTTP 402/.test(message) ? ` ${t.toolsSiliconflowVerify}` : '');
   const reasonText = (result: ProbeResult) => result.state === 'ok' ? '' : ({
     key: t.toolsProbeKey, limit: t.toolsProbeLimit, missing: t.toolsProbeMissing, account: t.toolsProbeAccount, language: t.toolsProbeLanguage, timeout: t.toolsProbeTimeout, other: t.toolsProbeOther,
   })[result.reason];
@@ -122,7 +124,7 @@ export function LlmFields({ settings, onSettingsChange, locale, t, loginNotice }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logEvent('error', 'translate', `test ${settings.llm.provider ?? 'custom'} ${settings.llm.model}: ${message}`);
-      setTest({ state: 'fail', text: fill(t.toolsTestFail, { error: /HTTP 40[13]）$/.test(message) ? t.toolsBadKey : message }) });
+      setTest({ state: 'fail', text: fill(t.toolsTestFail, { error: /HTTP 40[13]）$/.test(message) ? t.toolsBadKey : message }) + accountHint(message) });
     }
   };
 
@@ -176,7 +178,7 @@ export function LlmFields({ settings, onSettingsChange, locale, t, loginNotice }
             {apiKey && <button type="button" className="shrink-0 font-semibold text-[var(--label)]" onClick={() => setDetectRound(round => round + 1)}>{t.toolsRedetect}</button>}
           </div>
           {/* Nothing works: the platform's own reason (balance, real-name verification…) says why. */}
-          {counts.ok === 0 && failure && <p className="mx-2.5 mb-1.5 break-all text-[11px] leading-snug text-[var(--danger)]">{failure}</p>}
+          {counts.ok === 0 && failure && <p className="mx-2.5 mb-1.5 break-all text-[11px] leading-snug text-[var(--danger)]">{failure}{accountHint(failure)}</p>}
           {models.map(model => {
             const probe = probes[model.id];
             return (

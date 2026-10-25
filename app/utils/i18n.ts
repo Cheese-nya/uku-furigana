@@ -382,6 +382,7 @@ export interface Translations {
   toolsProbeMissing: string;
   toolsProbeAccount: string;
   toolsProbeLanguage: string;
+  toolsSiliconflowVerify: string;
   toolsProbeTimeout: string;
   toolsProbeOther: string;
   toolsDirect: string;
@@ -897,6 +898,7 @@ export const translations: Record<Locale, Translations> = {
     toolsProbeMissing: '不存在',
     toolsProbeAccount: '账户受限',
     toolsProbeLanguage: '翻译不了',
+    toolsSiliconflowVerify: '硅基流动对未实名认证的账号会这样拒绝（免费模型也一样）：请先在硅基流动控制台完成实名认证。',
     toolsProbeTimeout: '超时',
     toolsProbeOther: '不可用',
     toolsDirect: '国内直连',
@@ -1408,6 +1410,7 @@ export const translations: Record<Locale, Translations> = {
     toolsProbeMissing: 'not found',
     toolsProbeAccount: 'account restricted',
     toolsProbeLanguage: 'does not translate',
+    toolsSiliconflowVerify: 'SiliconFlow refuses accounts without real-name verification this way (free models too): verify the account in the SiliconFlow console first.',
     toolsProbeTimeout: 'timed out',
     toolsProbeOther: 'unavailable',
     toolsDirect: 'Works in mainland China',
