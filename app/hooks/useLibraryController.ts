@@ -393,6 +393,7 @@ export function useLibraryController({
       setShowImportMenu(false);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      logEvent('error', 'import', `pixiv import failed: ${err instanceof Error ? `${err.name} ${message}` : message}`);
       setImportError(`${t.libPixivImportError}：${message}`);
       throw err;
     } finally {

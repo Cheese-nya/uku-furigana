@@ -1,3 +1,4 @@
+import { logEvent } from './appLog';
 import {
   fetchNativePixivNovel,
   getNativePixivBridge,
@@ -106,12 +107,16 @@ export async function fetchPixivNovel(urlOrId: string): Promise<PixivNovelResult
   // Native shells have no /api routes and cannot call pixiv.net cross-origin, so the
   // injected bridge is the only working transport there. Keep its error so a network
   // failure is reported as such instead of as a misleading 404 from the cascade below.
+  // What each transport answered, for the bug-report log (no novel text, only reasons and status codes).
+  const attempts: string[] = [];
+  const describe = (error: unknown) => error instanceof Error ? `${error.name}: ${error.message}` : String(error);
   let nativeErrorMessage: string | null = null;
   if (getNativePixivBridge()) {
     try {
       return await fetchNativePixivNovel(id);
     } catch (error) {
       nativeErrorMessage = error instanceof Error ? error.message : String(error);
+      attempts.push(`native bridge: ${describe(error)}`);
     }
   }
 
@@ -130,9 +135,11 @@ export async function fetchPixivNovel(urlOrId: string): Promise<PixivNovelResult
       } catch {
         // Ignore non-JSON error body
       }
+      attempts.push(`/api/pixiv: HTTP ${apiRes.status}`);
     }
-  } catch {
+  } catch (error) {
     // Ignore local route network errors and try direct fallback
+    attempts.push(`/api/pixiv: ${describe(error)}`);
   }
 
   const ajaxEndpoints = [
@@ -144,7 +151,12 @@ export async function fetchPixivNovel(urlOrId: string): Promise<PixivNovelResult
   // Pixiv's own explanation (e.g. 作品已删除) is more useful than a generic HTTP failure
   // from a later endpoint, so remember it even when the cascade ends on a transport error.
   let cascadePixivMessage: string | null = null;
+  // The Android shell answers /api/pixiv-ajax itself and fetches pixiv.net natively; when that cannot
+  // reach pixiv it says why (timeout, DNS…). The direct request after it always fails on CORS with a
+  // bare "Failed to fetch", so this reason is the one worth showing.
+  let proxyNetworkMessage: string | null = null;
   for (const endpoint of ajaxEndpoints) {
+    const label = endpoint.startsWith('/') ? '/api/pixiv-ajax' : 'pixiv.net direct';
     try {
       const directRes = await fetch(endpoint, {
         headers: {
@@ -152,6 +164,13 @@ export async function fetchPixivNovel(urlOrId: string): Promise<PixivNovelResult
         },
       });
       if (!directRes.ok) {
+        const reason = await directRes.json().then(
+          (body: { message?: unknown }) => (typeof body?.message === 'string' ? body.message.trim() : ''),
+          () => '',
+        );
+        attempts.push(`${label}: HTTP ${directRes.status}${reason ? ` ${reason}` : ''}`);
+        if (reason && label === '/api/pixiv-ajax' && directRes.status === 502) proxyNetworkMessage = reason;
+        else if (reason) cascadePixivMessage = reason;
         throw new Error(`Pixiv 请求失败 (HTTP ${directRes.status})`);
       }
       const json = (await directRes.json()) as {
@@ -203,12 +222,15 @@ export async function fetchPixivNovel(urlOrId: string): Promise<PixivNovelResult
         sourceUrl: `https://www.pixiv.net/novel/show.php?id=${id}`,
       };
     } catch (err) {
+      if (!(err instanceof Error && err.message.startsWith('Pixiv 请求失败'))) attempts.push(`${label}: ${describe(err)}`);
       lastError = err;
     }
   }
 
+  logEvent('warn', 'pixiv', `import failed: ${attempts.join(' | ')}`);
   // Precedence: the native bridge reason (the only real transport in the shells), then
-  // the local /api/pixiv reason, then Pixiv's own cascade message, then the last failure.
+  // the local /api/pixiv reason, then Pixiv's own cascade message, then the native proxy's
+  // network reason, then the last failure.
   if (nativeErrorMessage) {
     throw new Error(nativeErrorMessage);
   }
@@ -218,5 +240,14 @@ export async function fetchPixivNovel(urlOrId: string): Promise<PixivNovelResult
   if (cascadePixivMessage) {
     throw new Error(cascadePixivMessage);
   }
+  if (proxyNetworkMessage) {
+    throw new Error(`${PIXIV_UNREACHABLE}（${proxyNetworkMessage}）`);
+  }
+  // fetch() rejects with a TypeError for network and CORS failures ("Failed to fetch", "Load failed").
+  if (lastError instanceof TypeError) {
+    throw new Error(PIXIV_UNREACHABLE);
+  }
   throw lastError instanceof Error ? lastError : new Error('获取 Pixiv 小说失败');
 }
+
+export const PIXIV_UNREACHABLE = '无法连接 pixiv.net，请检查网络（中国大陆需要能访问 pixiv 才能导入）';
