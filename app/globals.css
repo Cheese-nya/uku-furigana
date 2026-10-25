@@ -669,5 +669,5 @@ ruby {
 .vertical-script-flow .reader-chapnav { flex-direction: column; margin: 0 2.4em; justify-content: center; text-orientation: mixed; }
 /* long chapters and scripts: the browser skips layout and paint of lines far off screen */
 [data-testid="reader-script-canvas"]:not(.vertical-script-flow) > p[data-line] { content-visibility: auto; contain-intrinsic-size: auto 2.4em; }
-/* Chromium's SVG refraction is rasterised on the CPU every frame; while anything scrolls, glass falls back to blur */
-html[data-scrolling] .glass { -webkit-backdrop-filter: blur(12px) saturate(180%) !important; backdrop-filter: blur(12px) saturate(180%) !important; }
+/* Chromium's SVG refraction is rasterised on the CPU every frame; while anything moves, glass falls back to blur */
+html[data-glass-busy] .glass { -webkit-backdrop-filter: blur(12px) saturate(180%) !important; backdrop-filter: blur(12px) saturate(180%) !important; }
