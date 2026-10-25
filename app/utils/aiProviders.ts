@@ -24,7 +24,7 @@ export const AI_PROVIDERS: AiProvider[] = [
   {
     id: 'siliconflow', name: '硅基流动', nameEn: 'SiliconFlow', baseUrl: 'https://api.siliconflow.cn/v1', model: 'tencent/Hunyuan-MT-7B',
     keyUrl: 'https://cloud.siliconflow.cn/account/ak', direct: true,
-    note: { zh: '翻译专用的 Hunyuan-MT-7B 免费；账号需先完成实名认证才能调用', en: 'Hunyuan-MT-7B, a translation model, is free; the account must pass real-name verification first' },
+    note: { zh: '翻译专用的 Hunyuan-MT-7B 免费；账号需实名认证且余额不为负', en: 'Hunyuan-MT-7B, a translation model, is free; the account must be verified and not overdue' },
   },
   {
     id: 'dashscope', name: '通义', nameEn: 'Qwen (DashScope)', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-turbo',
