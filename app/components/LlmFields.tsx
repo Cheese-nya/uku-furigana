@@ -201,7 +201,7 @@ export function LlmFields({ settings, onSettingsChange, locale, t, loginNotice }
                   {model.price === 'paid' && <span className="text-[var(--label-3)]">{t.toolsPaid}</span>}
                   {probe === 'running' && <span className="inline-block h-2.5 w-2.5 animate-spin rounded-full border-[1.5px] border-[var(--fill)] border-t-[var(--label)]" aria-hidden />}
                   {probe && probe !== 'running' && (probe.state === 'ok'
-                    ? <span className="text-[var(--ok)]">{t.toolsProbeOk}</span>
+                    ? <span className="text-[var(--ok)]">{probe.ms > 10000 ? fill(t.toolsProbeSlow, { s: Math.round(probe.ms / 1000) }) : t.toolsProbeOk}</span>
                     : <span className="text-[var(--danger)]" title={probe.detail}>✗ {reasonText(probe)}</span>)}
                 </span>
               </button>

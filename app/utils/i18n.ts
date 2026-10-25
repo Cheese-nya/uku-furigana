@@ -377,6 +377,7 @@ export interface Translations {
   toolsRedetect: string;
   toolsModelSummaryNoKey: string;
   toolsProbeOk: string;
+  toolsProbeSlow: string;
   toolsProbeKey: string;
   toolsProbeLimit: string;
   toolsProbeMissing: string;
@@ -893,6 +894,7 @@ export const translations: Record<Locale, Translations> = {
     toolsRedetect: '重新检测',
     toolsModelSummaryNoKey: '{total} 个模型 · {free} 个免费 · 填入 Key 后检测可用性',
     toolsProbeOk: '✓ 可用',
+    toolsProbeSlow: '✓ 可用 · 慢（约 {s} 秒）',
     toolsProbeKey: 'Key 无效',
     toolsProbeLimit: '限流',
     toolsProbeMissing: '不存在',
@@ -1405,6 +1407,7 @@ export const translations: Record<Locale, Translations> = {
     toolsRedetect: 'Check again',
     toolsModelSummaryNoKey: '{total} models · {free} free · add a key to check which work',
     toolsProbeOk: '✓ works',
+    toolsProbeSlow: '✓ works · slow (~{s} s)',
     toolsProbeKey: 'bad key',
     toolsProbeLimit: 'rate-limited',
     toolsProbeMissing: 'not found',

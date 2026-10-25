@@ -244,7 +244,12 @@ export function parseLlmTranslations(reply: string, expected: number): string[] 
       const close = Math.max(text.lastIndexOf('"]'), text.lastIndexOf("']"), text.search(/["']\s*,?\s*\]\s*$/));
       if (open < 0 || close <= open) return undefined;
       const inner = text.slice(text.indexOf(text.slice(open).match(/["']/)?.[0] ?? '"', open) + 1, close);
-      return inner.split(/["']\s*,\s*["']/).map(item => item.replace(/\\n/g, '\n').replace(/\\(["'\\])/g, '$1'));
+      return inner.split(/["']\s*,\s*["']/).map(item => item.replace(/\\n/g, '\n').replace(/\\(["'\\])/g, '$1').replace(/^["']+|["']+$/g, ''));
+    },
+    // One small array per line (["甲"]\n["乙""]), as translation models such as Hunyuan-MT answer.
+    () => {
+      const items = text.split('\n').map(line => line.match(/^\s*\[\s*["'](.*?)["']*\s*\]\s*,?\s*$/)?.[1]).filter((line): line is string => line !== undefined);
+      return items.length ? items.map(item => item.replace(/\\(["'\\])/g, '$1')) : undefined;
     },
     () => {
       const items = text.split('\n').map(line => line.match(/^\s*(?:\d+|[-*•])\s*[.)、:：]?\s+(.+)$/)?.[1]).filter((line): line is string => Boolean(line));

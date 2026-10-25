@@ -378,3 +378,14 @@ test('empty items are asked again one by one; failures land in the bug-report lo
   assert.match(log, /error translate groq m: 1 sentences failed: .*HTTP 402.*Organization has no credits/);
   assert.doesNotMatch(log, /secret-key-123/);
 });
+
+test('translation models that answer one small array per line (Hunyuan-MT) are read in one go', () => {
+  const reply = '需要翻译的句子（JSON数组）：  \n["我做了这样的梦。"]  \n["‘怎么了？’他问道。""]  \n["我也确信自己快要死了。"]';
+  const { parseLlmTranslations } = loadTypescript('../app/utils/translation.ts');
+  assert.deepEqual(parseLlmTranslations(reply, 3), ['我做了这样的梦。', '‘怎么了？’他问道。', '我也确信自己快要死了。']);
+});
+
+test('a one-sentence answer with a header line keeps only the translation', () => {
+  const { parseLlmTranslations } = loadTypescript('../app/utils/translation.ts');
+  assert.deepEqual(parseLlmTranslations('需要翻译的句子（JSON数组）：\n["她平静地说她快要死了。""]', 1), ['她平静地说她快要死了。']);
+});

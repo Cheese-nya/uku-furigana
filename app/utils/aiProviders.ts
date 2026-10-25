@@ -125,7 +125,7 @@ export async function testConnection(llm: LlmSettings, target: TranslationTarget
 
 const PROBE_SENTENCE = '彼女は静かな声で、もう死にますと言った。';
 
-export type ProbeResult = { state: 'ok' } | { state: 'bad'; reason: 'key' | 'limit' | 'missing' | 'account' | 'timeout' | 'language' | 'other'; detail: string };
+export type ProbeResult = { state: 'ok'; ms: number } | { state: 'bad'; reason: 'key' | 'limit' | 'missing' | 'account' | 'timeout' | 'language' | 'other'; detail: string };
 
 function probeReason(message: string): ProbeResult {
   if (/HTTP 40[13]/.test(message)) return { state: 'bad', reason: 'key', detail: message };
@@ -138,7 +138,7 @@ function probeReason(message: string): ProbeResult {
 }
 
 /**
- * Try each model with one tiny translation, two at a time, 20 s each, reporting as results come in.
+ * Try each model with one tiny translation, two at a time, up to 90 s each, reporting as results come in.
  * Only free models are probed by the app, so the check never costs the user anything.
  */
 export async function probeModels(
@@ -150,7 +150,9 @@ export async function probeModels(
     while (!signal.aborted && next < ids.length) {
       const id = ids[next++];
       const timeout = new AbortController();
-      const timer = setTimeout(() => timeout.abort(), 20000);
+      // Free tiers can be slow (SiliconFlow's Hunyuan-MT took 30–60 s and more a sentence), so allow 90 s.
+      const timer = setTimeout(() => timeout.abort(), 90000);
+      const started = Date.now();
       const stop = () => timeout.abort();
       signal.addEventListener('abort', stop);
       try {
@@ -161,7 +163,7 @@ export async function probeModels(
         if (/[\u3041-\u3096\u30a1-\u30fa]/.test(answer)) {
           logEvent('warn', 'models', `${llm.provider ?? 'custom'} ${id}: answered without translating`);
           onResult(id, { state: 'bad', reason: 'language', detail: answer.slice(0, 80) });
-        } else onResult(id, { state: 'ok' });
+        } else onResult(id, { state: 'ok', ms: Date.now() - started });
       } catch (error) {
         if (!signal.aborted) {
           const message = error instanceof Error ? `${error.name} ${error.message}` : String(error);
