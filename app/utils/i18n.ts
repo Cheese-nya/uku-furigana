@@ -371,6 +371,18 @@ export interface Translations {
   libPixivFetchBtn: string;
   libPixivFetching: string;
   libPixivImportSuccess: string;
+  toolsFreeQuota: string;
+  toolsPaid: string;
+  toolsModelSummary: string;
+  toolsRedetect: string;
+  toolsModelSummaryNoKey: string;
+  toolsProbeOk: string;
+  toolsProbeKey: string;
+  toolsProbeLimit: string;
+  toolsProbeMissing: string;
+  toolsProbePaid: string;
+  toolsProbeTimeout: string;
+  toolsProbeOther: string;
   toolsDirect: string;
   toolsProxy: string;
   toolsGetKey: string;
@@ -873,6 +885,18 @@ export const translations: Record<Locale, Translations> = {
     libPixivFetchBtn: '导入台本',
     libPixivFetching: '正在获取...',
     libPixivImportSuccess: '已从 Pixiv 导入',
+    toolsFreeQuota: '免费额度',
+    toolsPaid: '付费',
+    toolsModelSummary: '{total} 个模型 · {free} 个免费 · {ok} 个可用',
+    toolsRedetect: '重新检测',
+    toolsModelSummaryNoKey: '{total} 个模型 · {free} 个免费 · 填入 Key 后检测可用性',
+    toolsProbeOk: '✓ 可用',
+    toolsProbeKey: 'Key 无效',
+    toolsProbeLimit: '限流',
+    toolsProbeMissing: '不存在',
+    toolsProbePaid: '需付费',
+    toolsProbeTimeout: '超时',
+    toolsProbeOther: '不可用',
     toolsDirect: '国内直连',
     toolsProxy: '国内可能需要代理',
     toolsGetKey: '获取 Key ↗',
@@ -1371,6 +1395,18 @@ export const translations: Record<Locale, Translations> = {
     libPixivFetchBtn: 'Import',
     libPixivFetching: 'Fetching...',
     libPixivImportSuccess: 'Imported from Pixiv',
+    toolsFreeQuota: 'free tier',
+    toolsPaid: 'paid',
+    toolsModelSummary: '{total} models · {free} free · {ok} working',
+    toolsRedetect: 'Check again',
+    toolsModelSummaryNoKey: '{total} models · {free} free · add a key to check which work',
+    toolsProbeOk: '✓ works',
+    toolsProbeKey: 'bad key',
+    toolsProbeLimit: 'rate-limited',
+    toolsProbeMissing: 'not found',
+    toolsProbePaid: 'needs credit',
+    toolsProbeTimeout: 'timed out',
+    toolsProbeOther: 'unavailable',
     toolsDirect: 'Works in mainland China',
     toolsProxy: 'May need a proxy in mainland China',
     toolsGetKey: 'Get a key ↗',
