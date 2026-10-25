@@ -1,3 +1,4 @@
+import { logEvent } from './appLog';
 import { translateLlm, type LlmSettings, type TranslationTarget } from './translation';
 
 /** OpenAI-compatible translation platforms offered as presets (mockup v3.2). */
@@ -21,9 +22,9 @@ export interface AiProvider {
 // the page. Checked 2026-10-25; Zhipu does not, so it is left out.
 export const AI_PROVIDERS: AiProvider[] = [
   {
-    id: 'siliconflow', name: '硅基流动', nameEn: 'SiliconFlow', baseUrl: 'https://api.siliconflow.cn/v1', model: 'Qwen/Qwen3-8B',
+    id: 'siliconflow', name: '硅基流动', nameEn: 'SiliconFlow', baseUrl: 'https://api.siliconflow.cn/v1', model: 'tencent/Hunyuan-MT-7B',
     keyUrl: 'https://cloud.siliconflow.cn/account/ak', direct: true,
-    note: { zh: '部分开源模型免费（Qwen、GLM 等）', en: 'Several open models are free (Qwen, GLM…)' },
+    note: { zh: '翻译专用的 Hunyuan-MT-7B 免费；账号需实名认证且余额不为负', en: 'Hunyuan-MT-7B, a translation model, is free; the account must be verified and not overdue' },
   },
   {
     id: 'dashscope', name: '通义', nameEn: 'Qwen (DashScope)', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-turbo',
@@ -41,7 +42,7 @@ export const AI_PROVIDERS: AiProvider[] = [
     note: { zh: 'Flash 系列有免费额度', en: 'Free quota on the Flash models' },
   },
   {
-    id: 'groq', name: 'Groq', nameEn: 'Groq', baseUrl: 'https://api.groq.com/openai/v1', model: 'llama-3.3-70b-versatile',
+    id: 'groq', name: 'Groq', nameEn: 'Groq', baseUrl: 'https://api.groq.com/openai/v1', model: 'openai/gpt-oss-20b',
     keyUrl: 'https://console.groq.com/keys', direct: false,
     note: { zh: '免费额度，速度快', en: 'Free quota, very fast' },
   },
@@ -65,19 +66,22 @@ const trimSlash = (url: string) => url.replace(/\/+$/, '');
 export type ModelPrice = 'free' | 'quota' | 'paid' | 'unknown';
 export interface ModelInfo { id: string; price: ModelPrice }
 
-// Free models SiliconFlow publishes (its /models list carries no prices); Pro/ variants are always paid.
-const SILICONFLOW_FREE = /(?:^|\/)(?:Qwen2\.5-7B-Instruct|Qwen2\.5-Coder-7B-Instruct|Qwen3-8B|Qwen2-7B-Instruct|glm-4-9b-chat|GLM-4-9B-0414|GLM-Z1-9B-0414|DeepSeek-R1-0528-Qwen3-8B|DeepSeek-R1-Distill-Qwen-7B|internlm2_5-7b-chat|Hunyuan-MT-7B)$/i;
-// Not chat models: embeddings, speech, images, rerankers, moderation.
-const NOT_CHAT = /embed|whisper|tts|speech|audio|rerank|image|imagen|veo|lyria|guard|moderation|bge-|sdxl|flux|kolors|aqa/i;
+// Free chat models on SiliconFlow's pricing page (siliconflow.cn/pricing, checked 2026-10-25); its /models list
+// carries no prices. Pro/ and LoRA/ variants are separate paid deployments.
+const SILICONFLOW_FREE = /^(?:tencent\/Hunyuan-MT-7B|XingChenAGI\/Xing4\.0-29B)$/i;
+// Not chat models: embeddings, speech in or out, OCR, images and video, rerankers, moderation.
+const NOT_CHAT = /embed|whisper|tts|speech|audio|asr|gsr|ocr|captioner|rerank|image|imagen|veo|lyria|orpheus|guard|safeguard|moderation|bge-|sdxl|flux|kolors|aqa|wan2|i2v|t2v/i;
 
 /** Whether a model costs nothing: from the price list where the platform has one, else from what it publishes. */
 export function modelPrice(providerId: string, id: string, pricing?: { prompt?: unknown; completion?: unknown }): ModelPrice {
+  // Groq lists pay-as-you-go prices, yet its free tier covers every model (with rate limits).
+  if (providerId === 'groq') return 'quota';
   if (pricing && pricing.prompt !== undefined) {
     return Number(pricing.prompt) === 0 && Number(pricing.completion ?? 0) === 0 ? 'free' : 'paid';
   }
   if (id.endsWith(':free')) return 'free';
   switch (providerId) {
-    case 'siliconflow': return id.startsWith('Pro/') ? 'paid' : SILICONFLOW_FREE.test(id) ? 'free' : 'unknown';
+    case 'siliconflow': return /^(?:Pro|LoRA)\//.test(id) ? 'paid' : SILICONFLOW_FREE.test(id) ? 'free' : 'unknown';
     case 'groq': return 'quota';
     case 'gemini': return /flash/i.test(id) ? 'quota' : 'paid';
     case 'deepseek': return 'paid';
@@ -92,8 +96,11 @@ export async function listModels(llm: LlmSettings, fetchImpl: typeof fetch = fet
   const response = await fetchImpl(`${trimSlash(llm.baseUrl)}/models`, {
     headers: llm.apiKey ? { Authorization: `Bearer ${llm.apiKey}` } : {},
   });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  const body = await response.json() as { data?: { id?: unknown; pricing?: { prompt?: unknown; completion?: unknown }; architecture?: { output_modalities?: unknown } }[] };
+  if (!response.ok) {
+    logEvent('warn', 'models', `${llm.provider ?? 'custom'}: model list failed, HTTP ${response.status}`);
+    throw new Error(`HTTP ${response.status}`);
+  }
+  const body = await response.json() as { data?: { id?: unknown; pricing?: { prompt?: unknown; completion?: unknown }; architecture?: { output_modalities?: unknown }; output_modalities?: unknown; active?: unknown }[] };
   const provider = llm.provider ?? 'custom';
   const seen = new Set<string>();
   const models: ModelInfo[] = [];
@@ -101,8 +108,9 @@ export async function listModels(llm: LlmSettings, fetchImpl: typeof fetch = fet
     if (typeof model.id !== 'string') continue;
     // Gemini lists "models/gemini-…"; the chat endpoint takes the bare name.
     const id = model.id.replace(/^models\//, '');
-    const outputs = model.architecture?.output_modalities;
-    if (NOT_CHAT.test(id) || (Array.isArray(outputs) && !outputs.includes('text')) || seen.has(id)) continue;
+    // OpenRouter nests the output modalities under architecture, Groq puts them on the model.
+    const outputs = model.architecture?.output_modalities ?? model.output_modalities;
+    if (NOT_CHAT.test(id) || (Array.isArray(outputs) && !outputs.includes('text')) || model.active === false || seen.has(id)) continue;
     seen.add(id);
     models.push({ id, price: modelPrice(provider, id, model.pricing) });
   }
@@ -115,19 +123,22 @@ export async function testConnection(llm: LlmSettings, target: TranslationTarget
   return translation;
 }
 
-export type ProbeResult = { state: 'ok' } | { state: 'bad'; reason: 'key' | 'limit' | 'missing' | 'paid' | 'timeout' | 'other'; detail: string };
+const PROBE_SENTENCE = '彼女は静かな声で、もう死にますと言った。';
+
+export type ProbeResult = { state: 'ok'; ms: number } | { state: 'bad'; reason: 'key' | 'limit' | 'missing' | 'account' | 'timeout' | 'language' | 'other'; detail: string };
 
 function probeReason(message: string): ProbeResult {
   if (/HTTP 40[13]/.test(message)) return { state: 'bad', reason: 'key', detail: message };
   if (/HTTP 429/.test(message)) return { state: 'bad', reason: 'limit', detail: message };
   if (/HTTP 404/.test(message)) return { state: 'bad', reason: 'missing', detail: message };
-  if (/HTTP 402/.test(message)) return { state: 'bad', reason: 'paid', detail: message };
+  // 402 is the account (not verified, no balance) — even for free models, so it is not "paid".
+  if (/HTTP 402/.test(message)) return { state: 'bad', reason: 'account', detail: message };
   if (/abort|中止|timeout/i.test(message)) return { state: 'bad', reason: 'timeout', detail: message };
   return { state: 'bad', reason: 'other', detail: message };
 }
 
 /**
- * Try each model with one tiny translation, two at a time, 20 s each, reporting as results come in.
+ * Try each model with one tiny translation, two at a time, up to 90 s each, reporting as results come in.
  * Only free models are probed by the app, so the check never costs the user anything.
  */
 export async function probeModels(
@@ -139,14 +150,26 @@ export async function probeModels(
     while (!signal.aborted && next < ids.length) {
       const id = ids[next++];
       const timeout = new AbortController();
-      const timer = setTimeout(() => timeout.abort(), 20000);
+      // Free tiers can be slow (SiliconFlow's Hunyuan-MT took 30–60 s and more a sentence), so allow 90 s.
+      const timer = setTimeout(() => timeout.abort(), 90000);
+      const started = Date.now();
       const stop = () => timeout.abort();
       signal.addEventListener('abort', stop);
       try {
-        await testConnection({ ...llm, model: id }, target, fetchImpl, timeout.signal);
-        if (!signal.aborted) onResult(id, { state: 'ok' });
+        // A real sentence, and the answer must not still be Japanese: some listed models (Groq's allam, an
+        // Arabic model) answer, but do not translate.
+        const [answer] = await translateLlm([PROBE_SENTENCE], target, { ...llm, model: id }, fetchImpl, timeout.signal);
+        if (signal.aborted) continue;
+        if (/[\u3041-\u3096\u30a1-\u30fa]/.test(answer)) {
+          logEvent('warn', 'models', `${llm.provider ?? 'custom'} ${id}: answered without translating`);
+          onResult(id, { state: 'bad', reason: 'language', detail: answer.slice(0, 80) });
+        } else onResult(id, { state: 'ok', ms: Date.now() - started });
       } catch (error) {
-        if (!signal.aborted) onResult(id, probeReason(error instanceof Error ? `${error.name} ${error.message}` : String(error)));
+        if (!signal.aborted) {
+          const message = error instanceof Error ? `${error.name} ${error.message}` : String(error);
+          logEvent('warn', 'models', `${llm.provider ?? 'custom'} ${id}: check failed: ${message}`);
+          onResult(id, probeReason(message));
+        }
       } finally {
         clearTimeout(timer);
         signal.removeEventListener('abort', stop);

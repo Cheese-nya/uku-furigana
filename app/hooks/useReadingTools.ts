@@ -6,6 +6,7 @@ import type { Translations } from '../utils/i18n';
 import { createReaderTools, ensureBuiltinDictionary, getDictionaryStore, type DictionaryInfo } from '../utils/readingTools';
 import { loadTranslationSettings, saveTranslationSettings, type TranslationSettings } from '../utils/translation';
 import { completeOpenRouterLogin, providerById } from '../utils/aiProviders';
+import { logEvent } from '../utils/appLog';
 
 /** Translation settings, the dictionaries list and the reader's lookup/translation tools. */
 export function useReadingTools({ analyze, t, engineReady, readerOpen }: {
@@ -90,6 +91,7 @@ export function useReadingTools({ analyze, t, engineReady, readerOpen }: {
       await getDictionaryStore().importZip(await file.arrayBuffer(), setImportProgress);
       await refresh();
     } catch (error) {
+      logEvent('error', 'dictionary', `dictionary import failed: ${error instanceof Error ? error.message : String(error)}`);
       setImportError(error instanceof Error ? error.message : String(error));
     } finally {
       setImportProgress(null);

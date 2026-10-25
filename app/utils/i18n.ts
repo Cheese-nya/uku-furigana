@@ -377,10 +377,13 @@ export interface Translations {
   toolsRedetect: string;
   toolsModelSummaryNoKey: string;
   toolsProbeOk: string;
+  toolsProbeSlow: string;
   toolsProbeKey: string;
   toolsProbeLimit: string;
   toolsProbeMissing: string;
-  toolsProbePaid: string;
+  toolsProbeAccount: string;
+  toolsProbeLanguage: string;
+  toolsSiliconflowVerify: string;
   toolsProbeTimeout: string;
   toolsProbeOther: string;
   toolsDirect: string;
@@ -891,10 +894,13 @@ export const translations: Record<Locale, Translations> = {
     toolsRedetect: '重新检测',
     toolsModelSummaryNoKey: '{total} 个模型 · {free} 个免费 · 填入 Key 后检测可用性',
     toolsProbeOk: '✓ 可用',
+    toolsProbeSlow: '✓ 可用 · 慢（约 {s} 秒）',
     toolsProbeKey: 'Key 无效',
     toolsProbeLimit: '限流',
     toolsProbeMissing: '不存在',
-    toolsProbePaid: '需付费',
+    toolsProbeAccount: '账户受限',
+    toolsProbeLanguage: '翻译不了',
+    toolsSiliconflowVerify: '这是硅基流动拒绝了整个账号（免费模型也一样），不是模型的问题。请在硅基流动控制台检查：账户余额是否为负（欠费会停用所有模型，包括免费模型，充值到不为负即可恢复）、是否已实名认证、这个 Key 是否属于该账号。',
     toolsProbeTimeout: '超时',
     toolsProbeOther: '不可用',
     toolsDirect: '国内直连',
@@ -1401,10 +1407,13 @@ export const translations: Record<Locale, Translations> = {
     toolsRedetect: 'Check again',
     toolsModelSummaryNoKey: '{total} models · {free} free · add a key to check which work',
     toolsProbeOk: '✓ works',
+    toolsProbeSlow: '✓ works · slow (~{s} s)',
     toolsProbeKey: 'bad key',
     toolsProbeLimit: 'rate-limited',
     toolsProbeMissing: 'not found',
-    toolsProbePaid: 'needs credit',
+    toolsProbeAccount: 'account restricted',
+    toolsProbeLanguage: 'does not translate',
+    toolsSiliconflowVerify: 'SiliconFlow is refusing the whole account (free models too), not this model. In the SiliconFlow console check: a negative balance (an overdue account loses every model, free ones included, until topped back to zero or more), real-name verification, and that this key belongs to that account.',
     toolsProbeTimeout: 'timed out',
     toolsProbeOther: 'unavailable',
     toolsDirect: 'Works in mainland China',

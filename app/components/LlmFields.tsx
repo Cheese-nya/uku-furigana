@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { IconChevronDown, IconLink } from './glass/icons';
 import { AI_PROVIDERS, listModels, probeModels, providerById, startOpenRouterLogin, testConnection, type ModelInfo, type ProbeResult } from '../utils/aiProviders';
 import { getPlatform } from '../utils/appInfo';
+import { logEvent } from '../utils/appLog';
 import type { Translations } from '../utils/i18n';
 import type { LlmSettings, TranslationSettings } from '../utils/translation';
 
@@ -67,6 +68,9 @@ export function LlmFields({ settings, onSettingsChange, locale, t, loginNotice }
   // Paid models are never probed automatically: the check must not cost anything.
   const { provider: llmProvider, baseUrl, apiKey } = settings.llm;
   const target = settings.target;
+  // The newest settings for callbacks that outlive a render (probe results arrive later).
+  const latest = useRef({ settings, onSettingsChange });
+  useEffect(() => { latest.current = { settings, onSettingsChange }; });
   useEffect(() => {
     probeAbort.current?.abort();
     if (!baseUrl || (!apiKey && llmProvider !== 'openrouter')) return;
@@ -80,8 +84,16 @@ export function LlmFields({ settings, onSettingsChange, locale, t, loginNotice }
         if (!apiKey) { setProbes({}); return; }
         const candidates = list.filter(model => model.price === 'free' || model.price === 'quota').slice(0, 10).map(model => model.id);
         setProbes(Object.fromEntries(candidates.map(id => [id, 'running' as const])));
-        void probeModels({ provider: llmProvider, baseUrl, apiKey, model: '' }, candidates, target,
-          (id, result) => setProbes(previous => ({ ...previous, [id]: result })), controller.signal);
+        // A saved model the platform no longer offers (Groq retires models) moves to the first one that works.
+        let replace = !list.some(model => model.id === latest.current.settings.llm.model);
+        void probeModels({ provider: llmProvider, baseUrl, apiKey, model: '' }, candidates, target, (id, result) => {
+          setProbes(previous => ({ ...previous, [id]: result }));
+          if (replace && result.state === 'ok') {
+            replace = false;
+            const { settings: now, onSettingsChange: change } = latest.current;
+            change({ ...now, llm: { ...now.llm, model: id } });
+          }
+        }, controller.signal);
       }, (error: unknown) => {
         if (controller.signal.aborted) return;
         setModels(null);
@@ -97,8 +109,11 @@ export function LlmFields({ settings, onSettingsChange, locale, t, loginNotice }
     free: models.filter(model => model.price === 'free' || model.price === 'quota').length,
     ok: Object.values(probes).filter(result => result !== 'running' && result.state === 'ok').length,
   };
+  const failure = Object.values(probes).map(result => (result !== 'running' && result.state === 'bad' ? result.detail.replace(/^\w*Error /, '') : '')).find(Boolean);
+  // SiliconFlow answers unverified accounts with 402 "balance insufficient", even for its free models.
+  const accountHint = (message: string) => (provider.id === 'siliconflow' && /HTTP 402/.test(message) ? ` ${t.toolsSiliconflowVerify}` : '');
   const reasonText = (result: ProbeResult) => result.state === 'ok' ? '' : ({
-    key: t.toolsProbeKey, limit: t.toolsProbeLimit, missing: t.toolsProbeMissing, paid: t.toolsProbePaid, timeout: t.toolsProbeTimeout, other: t.toolsProbeOther,
+    key: t.toolsProbeKey, limit: t.toolsProbeLimit, missing: t.toolsProbeMissing, account: t.toolsProbeAccount, language: t.toolsProbeLanguage, timeout: t.toolsProbeTimeout, other: t.toolsProbeOther,
   })[result.reason];
 
   const runTest = async () => {
@@ -108,7 +123,8 @@ export function LlmFields({ settings, onSettingsChange, locale, t, loginNotice }
       setTest({ state: 'ok', text: fill(t.toolsTestOk, { text }) });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setTest({ state: 'fail', text: fill(t.toolsTestFail, { error: /HTTP 40[13]/.test(message) ? t.toolsBadKey : message }) });
+      logEvent('error', 'translate', `test ${settings.llm.provider ?? 'custom'} ${settings.llm.model}: ${message}`);
+      setTest({ state: 'fail', text: fill(t.toolsTestFail, { error: /HTTP 40[13]）$/.test(message) ? t.toolsBadKey : message }) + accountHint(message) });
     }
   };
 
@@ -161,6 +177,8 @@ export function LlmFields({ settings, onSettingsChange, locale, t, loginNotice }
             <span>{fill(apiKey ? t.toolsModelSummary : t.toolsModelSummaryNoKey, counts)}</span>
             {apiKey && <button type="button" className="shrink-0 font-semibold text-[var(--label)]" onClick={() => setDetectRound(round => round + 1)}>{t.toolsRedetect}</button>}
           </div>
+          {/* Nothing works: the platform's own reason (balance, real-name verification…) says why. */}
+          {counts.ok === 0 && failure && <p className="mx-2.5 mb-1.5 break-all text-[11px] leading-snug text-[var(--danger)]">{failure}{accountHint(failure)}</p>}
           {models.map(model => {
             const probe = probes[model.id];
             return (
@@ -170,14 +188,20 @@ export function LlmFields({ settings, onSettingsChange, locale, t, loginNotice }
                 className="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] text-[var(--label)] hover:bg-[var(--item-hover)]"
                 onClick={() => { setLlm({ model: model.id }); setListOpen(false); }}
               >
-                <span className="min-w-0 truncate">{model.id}</span>
+                <span className="min-w-0">
+                  <span className="block truncate">{model.id}</span>
+                  {/* Why it failed, in the platform's words (phones cannot hover a title). */}
+                  {probe && probe !== 'running' && probe.state === 'bad' && (
+                    <span className="block truncate text-[11px] text-[var(--label-3)]">{probe.detail.replace(/^\w*Error /, '')}</span>
+                  )}
+                </span>
                 <span className="flex shrink-0 items-center gap-1.5 text-[11px]">
                   {model.price === 'free' && <span className="font-semibold text-[var(--ok)]">{t.toolsFree}</span>}
                   {model.price === 'quota' && <span className="font-semibold text-[var(--ok)]">{t.toolsFreeQuota}</span>}
                   {model.price === 'paid' && <span className="text-[var(--label-3)]">{t.toolsPaid}</span>}
                   {probe === 'running' && <span className="inline-block h-2.5 w-2.5 animate-spin rounded-full border-[1.5px] border-[var(--fill)] border-t-[var(--label)]" aria-hidden />}
                   {probe && probe !== 'running' && (probe.state === 'ok'
-                    ? <span className="text-[var(--ok)]">{t.toolsProbeOk}</span>
+                    ? <span className="text-[var(--ok)]">{probe.ms > 10000 ? fill(t.toolsProbeSlow, { s: Math.round(probe.ms / 1000) }) : t.toolsProbeOk}</span>
                     : <span className="text-[var(--danger)]" title={probe.detail}>✗ {reasonText(probe)}</span>)}
                 </span>
               </button>

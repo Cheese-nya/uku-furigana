@@ -36,8 +36,11 @@ test('listModels sends the key to /models, drops non-chat models and lists free 
 });
 
 test('modelPrice follows each platform: price lists, published free models, free tiers', () => {
-  assert.equal(modelPrice('siliconflow', 'Qwen/Qwen3-8B'), 'free');
+  assert.equal(modelPrice('siliconflow', 'tencent/Hunyuan-MT-7B'), 'free');
+  assert.equal(modelPrice('siliconflow', 'XingChenAGI/Xing4.0-29B'), 'free');
+  assert.equal(modelPrice('siliconflow', 'Qwen/Qwen3-8B'), 'unknown', 'no longer on the free list');
   assert.equal(modelPrice('siliconflow', 'Pro/Qwen/Qwen3-8B'), 'paid');
+  assert.equal(modelPrice('siliconflow', 'LoRA/Qwen/Qwen2.5-7B-Instruct'), 'paid');
   assert.equal(modelPrice('siliconflow', 'deepseek-ai/DeepSeek-V4'), 'unknown');
   assert.equal(modelPrice('groq', 'llama-3.3-70b-versatile'), 'quota');
   assert.equal(modelPrice('deepseek', 'deepseek-chat'), 'paid');

@@ -244,22 +244,47 @@ test('a later LLM batch of the same call receives the previous sentences as cont
   assert.equal(result.get('文三。'), 'en:文三。');
 });
 
-test('LLM length mismatch and a missing API key are hard errors', async () => {
+test('a wrong count or an unreadable reply is recovered by splitting; a missing key stays a hard error', async () => {
   const store = new MemoryTranslationStore();
+  const bodies = [];
   const mismatch = new Translator({
-    store, fetchImpl: async () => llmReply('["only one"]'),
+    store, fetchImpl: async (_url, init) => { bodies.push(JSON.parse(init.body)); return llmReply('["only one"]'); },
     settings: () => settings({ engine: 'llm', llm: { baseUrl: 'https://x/v1', model: 'm', apiKey: 'k' } }),
   });
-  await assert.rejects(mismatch.translate('b1', ['文一。', '文二。']), (error) => error instanceof TranslationError && !error.retryable && error.message === '译文条数不一致');
+  const result = await mismatch.translate('b1', ['文一。', '文二。']);
+  assert.deepEqual([...result.values()], ['only one', 'only one']);
+  assert.equal(bodies.length, 3, 'the pair, then each sentence on its own');
   const noKey = new Translator({
     store, fetchImpl: async () => llmReply('[]'),
     settings: () => settings({ engine: 'llm', llm: { baseUrl: 'https://x/v1', model: 'm', apiKey: '' } }),
   });
-  await assert.rejects(noKey.translate('b1', ['文一。']), (error) => error instanceof TranslationError && !error.retryable && error.message === '请先在设置里填写 API Key');
-  await assert.rejects(
-    translateLlm(['文一。'], 'zh-Hans', { baseUrl: 'https://x/v1', model: 'm', apiKey: 'k' }, async () => llmReply('not json at all')),
-    TranslationError,
-  );
+  await assert.rejects(noKey.translate('b1', ['文三。']), (error) => error instanceof TranslationError && !error.retryable && error.message === '请先在设置里填写 API Key');
+  // A single sentence answered without the array is still the answer.
+  assert.deepEqual(await translateLlm(['文一。'], 'zh-Hans', { baseUrl: 'https://x/v1', model: 'm', apiKey: 'k' }, async () => llmReply('第一句。')), ['第一句。']);
+});
+
+test('reasoning models, broken JSON and plain-text fallback all end in translations', async () => {
+  const llm = { baseUrl: 'https://x/v1', model: 'm', apiKey: 'k' };
+  const think = await translateLlm(['あ。', 'い。'], 'zh-Hans', llm, async () => llmReply('<think>maybe ["x"] or [y]</think>\n["甲。","乙。"]'));
+  assert.deepEqual(think, ['甲。', '乙。']);
+  const quotes = await translateLlm(['あ。', 'い。'], 'zh-Hans', llm, async () => llmReply('["他说："你好"。", "乙。"]'));
+  assert.deepEqual(quotes, ['他说："你好"。', '乙。']);
+  // JSON never works for this model: each sentence ends up asked for plain text.
+  let calls = 0;
+  const plain = await translateLlm(['あ。', 'い。'], 'zh-Hans', llm, async (_url, init) => {
+    calls += 1;
+    const system = JSON.parse(init.body).messages[0].content;
+    return llmReply(system.startsWith('Translate the Japanese text') ? '"译文"' : '{{{ nonsense');
+  });
+  assert.deepEqual(plain, ['译文', '译文']);
+  assert.ok(calls <= 5, `bounded requests (${calls})`);
+});
+
+test('a rate limit waits as long as the platform asks (Retry-After)', async () => {
+  const { translateLlm: call } = loadTypescript('../app/utils/translation.ts');
+  const error = await call(['あ。'], 'zh-Hans', { baseUrl: 'https://x', model: 'm', apiKey: 'k' }, async () => ({ ok: false, status: 429, headers: new Headers({ 'retry-after': '7' }), json: async () => ({}) })).catch(e => e);
+  assert.equal(error.retryable, true);
+  assert.equal(error.retryAfterMs, 7000);
 });
 
 test('pretranslate reports progress in book order and resumes from the cache', async () => {
@@ -325,4 +350,42 @@ test('switching engine or model translates again; switching back reuses what tha
   assert.deepEqual(calls, ['ms', 'a', 'b'], 'switching back to Microsoft needed no request');
   // Microsoft keeps the plain target, so translations cached by earlier versions still count.
   assert.equal(translationCacheKey({ engine: 'microsoft', target: 'en', llm: settings.llm }), 'en');
+});
+
+test('an LLM refusal carries the platform explanation, not just the status code', async () => {
+  const { translateLlm } = loadTypescript('../app/utils/translation.ts');
+  const reply = (status, body) => async () => ({ ok: false, status, json: async () => body });
+  await assert.rejects(translateLlm(['あ'], 'zh-Hans', { baseUrl: 'https://x', model: 'm', apiKey: 'k' }, reply(402, { code: 30011, message: 'Account not verified' })), /HTTP 402）：Account not verified/);
+  await assert.rejects(translateLlm(['あ'], 'zh-Hans', { baseUrl: 'https://x', model: 'm', apiKey: 'k' }, reply(429, { error: { message: 'Rate limit' } })), /HTTP 429）：Rate limit/);
+  await assert.rejects(translateLlm(['あ'], 'zh-Hans', { baseUrl: 'https://x', model: 'm', apiKey: 'k' }, async () => ({ ok: false, status: 500, json: async () => { throw new Error('not json'); } })), /HTTP 500）$/);
+});
+
+test('empty items are asked again one by one; failures land in the bug-report log without the key', async () => {
+  const llm = { provider: 'groq', baseUrl: 'https://x/v1', model: 'm', apiKey: 'secret-key-123' };
+  const replies = ['["甲。", "", "丙。"]', '["乙。"]'];
+  const out = await translateLlm(['あ。', 'い。', 'う。'], 'zh-Hans', llm, async () => llmReply(replies.shift()));
+  assert.deepEqual(out, ['甲。', '乙。', '丙。']);
+
+  const { getEntries, clearEntries } = loadTypescript('../app/utils/appLog.ts');
+  clearEntries();
+  const translator = new Translator({
+    store: new MemoryTranslationStore(),
+    settings: () => settings({ engine: 'llm', llm }),
+    fetchImpl: async () => ({ ok: false, status: 402, json: async () => ({ error: { message: 'Organization has no credits' } }) }),
+  });
+  await assert.rejects(translator.translate('b', ['え。']));
+  const log = getEntries().map(entry => `${entry.level} ${entry.source} ${entry.message}`).join('\n');
+  assert.match(log, /error translate groq m: 1 sentences failed: .*HTTP 402.*Organization has no credits/);
+  assert.doesNotMatch(log, /secret-key-123/);
+});
+
+test('translation models that answer one small array per line (Hunyuan-MT) are read in one go', () => {
+  const reply = '需要翻译的句子（JSON数组）：  \n["我做了这样的梦。"]  \n["‘怎么了？’他问道。""]  \n["我也确信自己快要死了。"]';
+  const { parseLlmTranslations } = loadTypescript('../app/utils/translation.ts');
+  assert.deepEqual(parseLlmTranslations(reply, 3), ['我做了这样的梦。', '‘怎么了？’他问道。', '我也确信自己快要死了。']);
+});
+
+test('a one-sentence answer with a header line keeps only the translation', () => {
+  const { parseLlmTranslations } = loadTypescript('../app/utils/translation.ts');
+  assert.deepEqual(parseLlmTranslations('需要翻译的句子（JSON数组）：\n["她平静地说她快要死了。""]', 1), ['她平静地说她快要死了。']);
 });
