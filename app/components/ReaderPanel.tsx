@@ -9,6 +9,7 @@ import { GlassButton } from './glass/GlassButton';
 import { useGlass } from './glass/hooks';
 import { IconChevronLeft, IconList, IconRead, IconRuby, IconTextFormat, IconTranslate } from './glass/icons';
 import { TocCard } from './TocCard';
+import { logEvent } from '../utils/appLog';
 import { LookupCard, type LookupState } from './LookupCard';
 import { ReaderLine, bilingualSignature } from './ReaderLine';
 import { useBilingual } from '../hooks/useBilingual';
@@ -331,6 +332,7 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
       if (!result) { setLookup(current => current && { ...current, state: { status: 'missing', query } }); return; }
       setLookup(current => current && { ...current, start: result.start, end: result.end, state: { status: 'done', result } });
     }).catch((error: unknown) => {
+      logEvent('error', 'lookup', `lookup failed: ${error instanceof Error ? error.message : String(error)}`);
       if (still()) setLookup(current => current && { ...current, state: { status: 'error', query, error: error instanceof Error ? error.message : String(error) } });
     });
   };

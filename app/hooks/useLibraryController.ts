@@ -6,6 +6,7 @@ import type { EditingTokenState } from '../components/RubyCorrectionModal';
 import type { SrtCue } from '../utils/srt';
 import { withLfLineKeys } from '../utils/inlineRuby';
 import { parseBookFile } from '../utils/bookImport';
+import { logEvent } from '../utils/appLog';
 import { deleteBookAssets, downscaleCover, putBookAssets } from '../utils/assetStore';
 import type { ToastState } from '../components/GlassToast';
 import { upsertRubyOverride, type RubyOverride } from '../utils/rubyOverrides';
@@ -263,6 +264,7 @@ export function useLibraryController({
         ].filter(Boolean).join(' · ');
       } catch (error) {
         console.error('[library] import failed', error);
+        logEvent('error', 'import', `${file.name.split('.').pop()} import failed: ${error instanceof Error ? `${error.name} ${error.message}` : String(error)}`);
         setImportToast({
           kind: 'error',
           title: fill(t.importFailed, { name: file.name }),

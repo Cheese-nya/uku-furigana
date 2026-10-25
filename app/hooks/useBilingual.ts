@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { IMAGE_LINE } from '../utils/bookAssets';
+import { logEvent } from '../utils/appLog';
 import type { ReaderTools } from '../utils/readingTools';
 import { splitSentences } from '../utils/sentences';
 
@@ -128,6 +129,7 @@ export function useBilingual({ enabled, wantCount, bookId, content, lineTexts, a
       if (!controller.signal.aborted) setPretranslate({ status: 'done', done: all.length, total: all.length });
     }).catch((error: unknown) => {
       if (controller.signal.aborted) return;
+      logEvent('error', 'translate', `whole-book translation stopped: ${error instanceof Error ? error.message : String(error)}`);
       setPretranslate(previous => ({ ...previous, status: 'error', error: error instanceof Error ? error.message : String(error) }));
     });
   }, [tools, bookId, content]);

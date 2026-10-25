@@ -1,3 +1,4 @@
+import { logEvent } from './appLog';
 import type { TranslationCache } from './translationStore';
 
 export type TranslationEngine = 'microsoft' | 'llm';
@@ -320,7 +321,9 @@ export async function translateLlm(
         { role: 'user', content: userPrompt(texts, context) },
       ], fetchImpl, signal);
       try {
-        return parseLlmTranslations(reply, 1);
+        const [one] = parseLlmTranslations(reply, 1);
+        if (!one.trim()) throw new TranslationError('模型没有返回译文', false);
+        return [one];
       } catch (error) {
         // A one-sentence answer without the array around it is still the answer.
         const bare = cleanLlmReply(reply);
@@ -329,6 +332,7 @@ export async function translateLlm(
       }
     } catch (error) {
       if (!(error instanceof TranslationError) || !FORMAT_ERRORS.has(error.message)) throw error;
+      logEvent('info', 'translate', `${llm.model}: single sentence asked as plain text (${error.message.includes('JSON') ? 'unreadable reply' : 'empty reply'})`);
       const reply = cleanLlmReply(await chat(url, llm, [
         { role: 'system', content: `Translate the Japanese text into ${language}. Reply with the translation only, no quotes, notes or explanations.` },
         { role: 'user', content: texts[0] },
@@ -341,9 +345,17 @@ export async function translateLlm(
       { role: 'system', content: systemPrompt(target) },
       { role: 'user', content: userPrompt(texts, context) },
     ], fetchImpl, signal);
-    return parseLlmTranslations(reply, texts.length);
+    const list = parseLlmTranslations(reply, texts.length);
+    // Some models answer with the right number of items but leave some empty: ask those one by one.
+    const empty = list.map((item, index) => (item.trim() ? -1 : index)).filter(index => index >= 0);
+    if (empty.length) {
+      logEvent('info', 'translate', `${llm.model}: ${empty.length}/${texts.length} empty items, asked again one by one`);
+      for (const index of empty) [list[index]] = await translateLlm([texts[index]], target, llm, fetchImpl, signal, texts.slice(Math.max(0, index - 3), index));
+    }
+    return list;
   } catch (error) {
     if (!(error instanceof TranslationError) || !FORMAT_ERRORS.has(error.message)) throw error;
+    logEvent('info', 'translate', `${llm.model}: batch of ${texts.length} unreadable (${error.message === '译文条数不一致' ? 'wrong count' : 'not JSON'}), split in half`);
     const half = Math.ceil(texts.length / 2);
     const first = await translateLlm(texts.slice(0, half), target, llm, fetchImpl, signal, context);
     const second = await translateLlm(texts.slice(half), target, llm, fetchImpl, signal, [...context, ...texts.slice(0, half)].slice(-3));
@@ -474,7 +486,13 @@ export class Translator {
           : await translateMicrosoft(texts, target, this.fetchImpl, signal);
       } catch (error) {
         const retryable = error instanceof TranslationError && error.retryable;
-        if (!retryable || attempt >= RETRY_DELAYS.length) throw error;
+        const model = engine === 'llm' ? `${settings.llm.provider ?? 'custom'} ${settings.llm.model}` : 'microsoft';
+        const message = error instanceof Error ? error.message : String(error);
+        if (!retryable || attempt >= RETRY_DELAYS.length) {
+          if (!(error instanceof Error && error.name === 'AbortError')) logEvent('error', 'translate', `${model}: ${texts.length} sentences failed: ${message}`);
+          throw error;
+        }
+        logEvent('warn', 'translate', `${model}: attempt ${attempt + 1} failed, retrying: ${message}`);
         await delay(Math.max(RETRY_DELAYS[attempt], error instanceof TranslationError ? error.retryAfterMs ?? 0 : 0), signal);
       }
     }

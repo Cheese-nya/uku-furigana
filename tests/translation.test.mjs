@@ -359,3 +359,22 @@ test('an LLM refusal carries the platform explanation, not just the status code'
   await assert.rejects(translateLlm(['あ'], 'zh-Hans', { baseUrl: 'https://x', model: 'm', apiKey: 'k' }, reply(429, { error: { message: 'Rate limit' } })), /HTTP 429）：Rate limit/);
   await assert.rejects(translateLlm(['あ'], 'zh-Hans', { baseUrl: 'https://x', model: 'm', apiKey: 'k' }, async () => ({ ok: false, status: 500, json: async () => { throw new Error('not json'); } })), /HTTP 500）$/);
 });
+
+test('empty items are asked again one by one; failures land in the bug-report log without the key', async () => {
+  const llm = { provider: 'groq', baseUrl: 'https://x/v1', model: 'm', apiKey: 'secret-key-123' };
+  const replies = ['["甲。", "", "丙。"]', '["乙。"]'];
+  const out = await translateLlm(['あ。', 'い。', 'う。'], 'zh-Hans', llm, async () => llmReply(replies.shift()));
+  assert.deepEqual(out, ['甲。', '乙。', '丙。']);
+
+  const { getEntries, clearEntries } = loadTypescript('../app/utils/appLog.ts');
+  clearEntries();
+  const translator = new Translator({
+    store: new MemoryTranslationStore(),
+    settings: () => settings({ engine: 'llm', llm }),
+    fetchImpl: async () => ({ ok: false, status: 402, json: async () => ({ error: { message: 'Organization has no credits' } }) }),
+  });
+  await assert.rejects(translator.translate('b', ['え。']));
+  const log = getEntries().map(entry => `${entry.level} ${entry.source} ${entry.message}`).join('\n');
+  assert.match(log, /error translate groq m: 1 sentences failed: .*HTTP 402.*Organization has no credits/);
+  assert.doesNotMatch(log, /secret-key-123/);
+});

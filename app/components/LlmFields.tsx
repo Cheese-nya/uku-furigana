@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { IconChevronDown, IconLink } from './glass/icons';
 import { AI_PROVIDERS, listModels, probeModels, providerById, startOpenRouterLogin, testConnection, type ModelInfo, type ProbeResult } from '../utils/aiProviders';
 import { getPlatform } from '../utils/appInfo';
+import { logEvent } from '../utils/appLog';
 import type { Translations } from '../utils/i18n';
 import type { LlmSettings, TranslationSettings } from '../utils/translation';
 
@@ -67,6 +68,9 @@ export function LlmFields({ settings, onSettingsChange, locale, t, loginNotice }
   // Paid models are never probed automatically: the check must not cost anything.
   const { provider: llmProvider, baseUrl, apiKey } = settings.llm;
   const target = settings.target;
+  // The newest settings for callbacks that outlive a render (probe results arrive later).
+  const latest = useRef({ settings, onSettingsChange });
+  useEffect(() => { latest.current = { settings, onSettingsChange }; });
   useEffect(() => {
     probeAbort.current?.abort();
     if (!baseUrl || (!apiKey && llmProvider !== 'openrouter')) return;
@@ -80,8 +84,16 @@ export function LlmFields({ settings, onSettingsChange, locale, t, loginNotice }
         if (!apiKey) { setProbes({}); return; }
         const candidates = list.filter(model => model.price === 'free' || model.price === 'quota').slice(0, 10).map(model => model.id);
         setProbes(Object.fromEntries(candidates.map(id => [id, 'running' as const])));
-        void probeModels({ provider: llmProvider, baseUrl, apiKey, model: '' }, candidates, target,
-          (id, result) => setProbes(previous => ({ ...previous, [id]: result })), controller.signal);
+        // A saved model the platform no longer offers (Groq retires models) moves to the first one that works.
+        let replace = !list.some(model => model.id === latest.current.settings.llm.model);
+        void probeModels({ provider: llmProvider, baseUrl, apiKey, model: '' }, candidates, target, (id, result) => {
+          setProbes(previous => ({ ...previous, [id]: result }));
+          if (replace && result.state === 'ok') {
+            replace = false;
+            const { settings: now, onSettingsChange: change } = latest.current;
+            change({ ...now, llm: { ...now.llm, model: id } });
+          }
+        }, controller.signal);
       }, (error: unknown) => {
         if (controller.signal.aborted) return;
         setModels(null);
@@ -99,7 +111,7 @@ export function LlmFields({ settings, onSettingsChange, locale, t, loginNotice }
   };
   const failure = Object.values(probes).map(result => (result !== 'running' && result.state === 'bad' ? result.detail.replace(/^\w*Error /, '') : '')).find(Boolean);
   const reasonText = (result: ProbeResult) => result.state === 'ok' ? '' : ({
-    key: t.toolsProbeKey, limit: t.toolsProbeLimit, missing: t.toolsProbeMissing, account: t.toolsProbeAccount, timeout: t.toolsProbeTimeout, other: t.toolsProbeOther,
+    key: t.toolsProbeKey, limit: t.toolsProbeLimit, missing: t.toolsProbeMissing, account: t.toolsProbeAccount, language: t.toolsProbeLanguage, timeout: t.toolsProbeTimeout, other: t.toolsProbeOther,
   })[result.reason];
 
   const runTest = async () => {
@@ -109,6 +121,7 @@ export function LlmFields({ settings, onSettingsChange, locale, t, loginNotice }
       setTest({ state: 'ok', text: fill(t.toolsTestOk, { text }) });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      logEvent('error', 'translate', `test ${settings.llm.provider ?? 'custom'} ${settings.llm.model}: ${message}`);
       setTest({ state: 'fail', text: fill(t.toolsTestFail, { error: /HTTP 40[13]）$/.test(message) ? t.toolsBadKey : message }) });
     }
   };

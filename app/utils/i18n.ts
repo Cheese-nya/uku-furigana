@@ -381,6 +381,7 @@ export interface Translations {
   toolsProbeLimit: string;
   toolsProbeMissing: string;
   toolsProbeAccount: string;
+  toolsProbeLanguage: string;
   toolsProbeTimeout: string;
   toolsProbeOther: string;
   toolsDirect: string;
@@ -895,6 +896,7 @@ export const translations: Record<Locale, Translations> = {
     toolsProbeLimit: '限流',
     toolsProbeMissing: '不存在',
     toolsProbeAccount: '账户受限',
+    toolsProbeLanguage: '翻译不了',
     toolsProbeTimeout: '超时',
     toolsProbeOther: '不可用',
     toolsDirect: '国内直连',
@@ -1405,6 +1407,7 @@ export const translations: Record<Locale, Translations> = {
     toolsProbeLimit: 'rate-limited',
     toolsProbeMissing: 'not found',
     toolsProbeAccount: 'account restricted',
+    toolsProbeLanguage: 'does not translate',
     toolsProbeTimeout: 'timed out',
     toolsProbeOther: 'unavailable',
     toolsDirect: 'Works in mainland China',
