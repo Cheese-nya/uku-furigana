@@ -13,6 +13,15 @@ export interface PretranslateState {
   error?: string;
 }
 
+/** The nearest ancestor that scrolls, which is what "near the viewport" has to be measured against. */
+function scrollParent(node: HTMLElement | null): HTMLElement | null {
+  for (let current = node; current; current = current.parentElement) {
+    const { overflowY, overflowX } = getComputedStyle(current);
+    if (/(auto|scroll)/.test(overflowY + overflowX)) return current;
+  }
+  return null;
+}
+
 /** Every sentence of a book, in reading order: what the whole-book translation works through. */
 export function bookSentences(content: string): string[] {
   return content.replace(/\r\n?/g, '\n').split('\n')
@@ -57,28 +66,52 @@ export function useBilingual({ enabled, wantCount, bookId, content, lineTexts, a
     pretranslateAbort.current?.abort();
   }, [key]);
 
-  const request = useCallback((texts: string[]) => {
+  const request = useCallback((texts: string[], onScreen = texts.length) => {
     if (!tools || !bookId) return;
+    const leading = texts.slice(0, onScreen).filter(text => !requested.current.has(text)).length;
     const fresh = texts.filter(text => !requested.current.has(text));
     if (!fresh.length) return;
     fresh.forEach(text => requested.current.add(text));
-    tools.translate(bookId, fresh).then(found => {
-      setTranslations(previous => { const next = new Map(previous); found.forEach((value, key) => next.set(key, value)); return next; });
-      setFailed(previous => { const next = new Set(previous); fresh.forEach(text => { if (!found.has(text)) next.add(text); else next.delete(text); }); return next; });
-    }).catch(() => {
-      setFailed(previous => { const next = new Set(previous); fresh.forEach(text => next.add(text)); return next; });
+    // Lines appear batch by batch; only what never arrived is marked failed.
+    const arrived = new Set<string>();
+    const show = (found: Map<string, string>) => {
+      if (!found.size) return;
+      found.forEach((_, text) => arrived.add(text));
+      setTranslations(previous => { const next = new Map(previous); found.forEach((value, text) => next.set(text, value)); return next; });
+      setFailed(previous => {
+        if (![...found.keys()].some(text => previous.has(text))) return previous;
+        const next = new Set(previous); found.forEach((_, text) => next.delete(text)); return next;
+      });
+    };
+    const markMissing = () => setFailed(previous => {
+      const missing = fresh.filter(text => !arrived.has(text));
+      if (!missing.length) return previous;
+      const next = new Set(previous); missing.forEach(text => next.add(text)); return next;
     });
+    tools.translate(bookId, fresh, { onPartial: show, leading }).then(found => { show(found); markMissing(); }, markMissing);
   }, [tools, bookId]);
 
+  // What is on screen goes first, then the lines below (where reading goes next), then the ones above.
   const flush = useCallback(() => {
     timer.current = null;
-    const texts: string[] = [];
-    for (const index of visible.current) {
-      const line = lineTexts[index];
-      if (line && !IMAGE_LINE.test(line)) for (const sentence of splitSentences(line)) texts.push(sentence.text);
+    const article = articleRef.current;
+    const view = scrollParent(article)?.getBoundingClientRect();
+    const groups: number[][] = [[], [], []];
+    for (const index of [...visible.current].sort((a, b) => a - b)) {
+      const box = view && article?.querySelector(`[data-line="${index}"]`)?.getBoundingClientRect();
+      groups[!box || !view || (box.bottom > view.top && box.top < view.bottom) ? 0 : box.top >= view.bottom ? 1 : 2].push(index);
     }
-    request(texts);
-  }, [lineTexts, request]);
+    const texts: string[] = [];
+    let onScreen = 0;
+    groups.forEach((group, rank) => {
+      for (const index of group) {
+        const line = lineTexts[index];
+        if (line && !IMAGE_LINE.test(line)) for (const sentence of splitSentences(line)) texts.push(sentence.text);
+      }
+      if (rank === 0) onScreen = texts.length;
+    });
+    request(texts, onScreen);
+  }, [lineTexts, request, articleRef]);
 
   useEffect(() => {
     const article = articleRef.current;
@@ -88,8 +121,10 @@ export function useBilingual({ enabled, wantCount, bookId, content, lineTexts, a
         const index = Number((entry.target as HTMLElement).dataset.line);
         if (entry.isIntersecting) visible.current.add(index); else visible.current.delete(index);
       }
-      if (timer.current === null) timer.current = window.setTimeout(flush, 250);
-    }, { rootMargin: '800px' });
+      // Scrolling is debounced; the first screen after turning translation on goes out at once.
+      if (timer.current === null) timer.current = window.setTimeout(flush, requested.current.size ? 250 : 0);
+      // The reader scrolls inside its own box: with the page as root, the margin never reached past that box.
+    }, { root: scrollParent(article), rootMargin: '800px' });
     article.querySelectorAll('[data-line]').forEach(node => observer.observe(node));
     return () => {
       observer.disconnect();

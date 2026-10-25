@@ -371,13 +371,28 @@ export async function translateLlm(
 interface EngineLimits {
   batchSize: number;
   maxChars: number;
+  /** The first batch of a request is smaller: a model's reply time grows with its length, so the first lines show sooner. */
+  firstBatch: number;
 }
 
 const ENGINE_LIMITS: Record<TranslationEngine, EngineLimits> = {
-  microsoft: { batchSize: 50, maxChars: 8000 },
+  microsoft: { batchSize: 50, maxChars: 8000, firstBatch: 10 },
   // Small free models truncate long replies; a failed batch is split anyway, but smaller ones rarely fail.
-  llm: { batchSize: 12, maxChars: 2000 },
+  llm: { batchSize: 12, maxChars: 2000, firstBatch: 4 },
 };
+
+/**
+ * Requests in flight at once, per platform, across everything the reader asks for. Kept under each free
+ * tier's request-per-minute limit (Gemini and OpenRouter free allow about 10–20); a 429 still waits and retries.
+ */
+const LLM_CONCURRENCY: Record<string, number> = { siliconflow: 4, dashscope: 4, deepseek: 4, groq: 3, gemini: 2, openrouter: 2 };
+const MICROSOFT_CONCURRENCY = 3;
+const DEFAULT_LLM_CONCURRENCY = 2;
+
+export function translationConcurrency(settings: TranslationSettings): number {
+  if (settings.engine !== 'llm') return MICROSOFT_CONCURRENCY;
+  return LLM_CONCURRENCY[settings.llm.provider ?? 'custom'] ?? DEFAULT_LLM_CONCURRENCY;
+}
 
 // Context is sent only to make the model's sentence boundaries and pronouns coherent; the
 // neighbouring lines are never part of the returned array.
@@ -399,12 +414,15 @@ interface PendingText {
   order: number;
 }
 
-function buildBatches(pending: PendingText[], limits: EngineLimits): PendingText[][] {
+function buildBatches(pending: PendingText[], limits: EngineLimits, leading = 0): PendingText[][] {
   const batches: PendingText[][] = [];
   let batch: PendingText[] = [];
   let chars = 0;
   for (const item of pending) {
-    const overflow = batch.length >= limits.batchSize || (batch.length > 0 && chars + item.text.length > limits.maxChars);
+    const size = batches.length ? limits.batchSize : Math.min(limits.firstBatch, limits.batchSize);
+    // Never mix the leading (on-screen) texts into a batch with the rest: they would wait for the longer reply.
+    const boundary = batch.length > 0 && batch[batch.length - 1].order < leading && item.order >= leading;
+    const overflow = boundary || batch.length >= size || (batch.length > 0 && chars + item.text.length > limits.maxChars);
     if (overflow) {
       batches.push(batch);
       batch = [];
@@ -417,26 +435,39 @@ function buildBatches(pending: PendingText[], limits: EngineLimits): PendingText
   return batches;
 }
 
-async function runLimited<T>(items: T[], limit: number, worker: (item: T) => Promise<void>): Promise<void> {
-  let next = 0;
-  const errors: unknown[] = [];
-  const lanes = Math.max(1, Math.min(limit, items.length));
-  await Promise.all(Array.from({ length: lanes }, async () => {
-    for (;;) {
-      // The first failure stops new batches; ones already in flight finish and keep
-      // their results, which is why a retry resumes from the cache.
-      if (errors.length) return;
-      const index = next++;
-      if (index >= items.length) return;
-      try {
-        await worker(items[index]);
-      } catch (error) {
-        errors.push(error);
-        return;
+/**
+ * Request slots shared by every translate call, so scrolling never stacks up more requests than the platform
+ * allows. A free slot goes to the newest call first (what is on screen now), then in each call's own order;
+ * background whole-book work waits behind the reader.
+ */
+function compareRank(a: [number, number, number], b: [number, number, number]): number {
+  return a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+}
+
+class Lanes {
+  private running = 0;
+  private waiting: { rank: [number, number, number]; start: () => void }[] = [];
+
+  constructor(private readonly limit: () => number) {}
+
+  run(rank: [number, number, number], task: () => Promise<void>): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      this.waiting.push({ rank, start: () => { task().then(resolve, reject).finally(() => { this.running--; this.pump(); }); } });
+      this.pump();
+    });
+  }
+
+  private pump(): void {
+    while (this.running < Math.max(1, this.limit()) && this.waiting.length) {
+      let best = 0;
+      for (let index = 1; index < this.waiting.length; index++) {
+        if (compareRank(this.waiting[index].rank, this.waiting[best].rank) < 0) best = index;
       }
+      const [next] = this.waiting.splice(best, 1);
+      this.running++;
+      next.start();
     }
-  }));
-  if (errors.length) throw errors[0];
+  }
 }
 
 /** Batched, cached, retrying translator over the Microsoft endpoint or an OpenAI-compatible LLM. */
@@ -450,13 +481,23 @@ export function translationCacheKey(settings: TranslationSettings): string {
   return `${settings.target}|${settings.llm.baseUrl.replace(/\/+$/, '')}|${settings.llm.model}`;
 }
 
+export interface TranslateOptions {
+  onPartial?: (found: Map<string, string>) => void;
+  /** Whole-book work: its batches only take slots the reader is not waiting for. */
+  background?: boolean;
+  /** How many of the texts are on screen: they get batches of their own. */
+  leading?: number;
+}
+
 export class Translator {
   private readonly store: TranslationCache;
   private readonly settings: () => TranslationSettings;
   private readonly fetchImpl: typeof fetch;
   private readonly batchSize?: number;
   private readonly maxChars?: number;
-  private readonly concurrency: number;
+  private readonly concurrency?: number;
+  private readonly lanes: Lanes;
+  private calls = 0;
 
   constructor(options: TranslatorOptions) {
     this.store = options.store;
@@ -464,7 +505,8 @@ export class Translator {
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.batchSize = options.batchSize;
     this.maxChars = options.maxChars;
-    this.concurrency = Math.max(1, options.concurrency ?? 2);
+    this.concurrency = options.concurrency;
+    this.lanes = new Lanes(() => this.concurrency ?? translationConcurrency(this.settings()));
   }
 
   private limits(engine: TranslationEngine): EngineLimits {
@@ -472,6 +514,7 @@ export class Translator {
     return {
       batchSize: Math.max(1, this.batchSize ?? defaults.batchSize),
       maxChars: Math.max(1, this.maxChars ?? defaults.maxChars),
+      firstBatch: Math.max(1, this.batchSize ?? defaults.firstBatch),
     };
   }
 
@@ -503,7 +546,11 @@ export class Translator {
     }
   }
 
-  async translate(bookId: string, texts: string[], signal?: AbortSignal): Promise<Map<string, string>> {
+  /**
+   * Translations for `texts`, from the cache or the engine. `onPartial` gets what is ready as it arrives (the
+   * cached part first, then each batch), so the reader shows lines without waiting for the slowest batch.
+   */
+  async translate(bookId: string, texts: string[], signal?: AbortSignal, options: TranslateOptions = {}): Promise<Map<string, string>> {
     const settings = this.settings();
     const target = settings.target;
     const slot = translationCacheKey(settings);
@@ -517,7 +564,10 @@ export class Translator {
       if (needsTranslation(value)) pending.push({ text: value, order });
       else result.set(value, value);
     });
-    if (!pending.length) return result;
+    if (!pending.length) {
+      options.onPartial?.(new Map(result));
+      return result;
+    }
 
     const cached = await this.store.get(bookId, slot, pending.map(item => item.text));
     const misses = pending.filter(item => {
@@ -525,10 +575,10 @@ export class Translator {
       result.set(item.text, cached.get(item.text) as string);
       return false;
     });
+    options.onPartial?.(new Map(result));
     if (!misses.length) return result;
 
-    const batches = buildBatches(misses, this.limits(engine));
-    await runLimited(batches, this.concurrency, async batch => {
+    const runBatch = async (batch: PendingText[]) => {
       const list = batch.map(item => item.text);
       const context = engine === 'llm'
         ? texts.slice(Math.max(0, batch[0].order - CONTEXT_LINES), batch[0].order)
@@ -541,8 +591,24 @@ export class Translator {
         result.set(source, value);
         pairs.push([source, value]);
       });
+      options.onPartial?.(new Map(pairs));
       await this.store.put(bookId, slot, engine, pairs);
-    });
+    };
+
+    const batches = buildBatches(misses, this.limits(engine), options.leading);
+    const call = ++this.calls;
+    // The first failure stops this call's batches that have not started; ones already in flight finish and
+    // keep their results, which is why a retry resumes from the cache.
+    let failure: { error: unknown } | null = null;
+    await Promise.all(batches.map((batch, index) => this.lanes.run([options.background ? 1 : 0, -call, index], async () => {
+      if (failure) return;
+      try {
+        await runBatch(batch);
+      } catch (error) {
+        failure ??= { error };
+      }
+    })));
+    if (failure) throw (failure as { error: unknown }).error;
     return result;
   }
 
@@ -572,7 +638,7 @@ export class Translator {
     for (let start = 0; start < total; start += PRETRANSLATE_CHUNK) {
       throwIfAborted(signal);
       const chunk = texts.slice(start, start + PRETRANSLATE_CHUNK);
-      await this.translate(bookId, chunk, signal);
+      await this.translate(bookId, chunk, signal, { background: true });
       throwIfAborted(signal);
       done.fill(true, start, start + chunk.length);
       report();
