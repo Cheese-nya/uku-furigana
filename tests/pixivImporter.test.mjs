@@ -8,6 +8,7 @@ const {
   cleanPixivContent,
   toPixivMirrorCoverUrl,
   fetchPixivNovel,
+  PIXIV_UNREACHABLE,
 } = loadTypescript('../app/utils/pixivImporter.ts');
 
 const jsonResponse = (body, { ok = true, status = ok ? 200 : 500 } = {}) => ({ ok, status, json: async () => body });
@@ -556,5 +557,54 @@ test('fetchPixivNovel orders failures: native, then /api/pixiv, then Pixiv messa
     await assert.rejects(() => fetchPixivNovel('123456'), /本地接口错误/);
   } finally {
     noBridge.restore();
+  }
+});
+
+test('fetchPixivNovel shows the Android proxy reason instead of the CORS "Failed to fetch"', async () => {
+  const stub = stubFetch(url => {
+    if (url.startsWith('/api/pixiv?')) return { ok: false, status: 404, json: async () => { throw new SyntaxError('not json'); } };
+    if (url.startsWith('/api/pixiv-ajax')) return jsonResponse({ error: true, message: 'connect timed out' }, { ok: false, status: 502 });
+    if (url.startsWith('https://www.pixiv.net/ajax/novel/')) throw new TypeError('Failed to fetch');
+    throw new Error(`unexpected request: ${url}`);
+  });
+  try {
+    await assert.rejects(() => fetchPixivNovel('123456'), error => {
+      assert.equal(error.message, `${PIXIV_UNREACHABLE}（connect timed out）`);
+      return true;
+    });
+  } finally {
+    stub.restore();
+  }
+});
+
+test('fetchPixivNovel turns a bare network failure into a readable reason', async () => {
+  const stub = stubFetch(url => {
+    if (url.startsWith('/api/pixiv?')) throw new TypeError('Failed to fetch');
+    if (url.startsWith('/api/pixiv-ajax')) return { ok: false, status: 404, json: async () => { throw new SyntaxError('not json'); } };
+    if (url.startsWith('https://www.pixiv.net/ajax/novel/')) throw new TypeError('Failed to fetch');
+    throw new Error(`unexpected request: ${url}`);
+  });
+  try {
+    await assert.rejects(() => fetchPixivNovel('123456'), error => {
+      assert.equal(error.message, PIXIV_UNREACHABLE);
+      assert.doesNotMatch(error.message, /Failed to fetch/);
+      return true;
+    });
+  } finally {
+    stub.restore();
+  }
+});
+
+test('fetchPixivNovel keeps pixiv\'s own reason from a failed proxy response', async () => {
+  const stub = stubFetch(url => {
+    if (url.startsWith('/api/pixiv?')) return { ok: false, status: 404, json: async () => { throw new SyntaxError('not json'); } };
+    if (url.startsWith('/api/pixiv-ajax')) return jsonResponse({ error: true, message: '該当作品は削除されたか、存在しない作品IDです。' }, { ok: false, status: 404 });
+    if (url.startsWith('https://www.pixiv.net/ajax/novel/')) throw new TypeError('Failed to fetch');
+    throw new Error(`unexpected request: ${url}`);
+  });
+  try {
+    await assert.rejects(() => fetchPixivNovel('123456'), /該当作品は削除された/);
+  } finally {
+    stub.restore();
   }
 });
