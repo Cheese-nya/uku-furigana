@@ -17,6 +17,7 @@ This software includes or bundles the following third-party components, each und
 | FileSaver.js | MIT | <https://github.com/eligrey/FileSaver.js> |
 | PDF.js（`pdfjs-dist`，含 CMap 与标准字体数据） | Apache-2.0 | <https://github.com/mozilla/pdf.js> |
 | 日中词典（`public/lookup/ja-zh/`，由 wty 从维基词典 / kaikki.org 数据生成） | CC BY-SA 4.0（见下文） | <https://github.com/yomidevs/wiktionary-to-yomitan> |
+| 日英词典 Jitendex（`public/lookup/ja-en/`，基于 JMdict 与 Tatoeba） | CC BY-SA 4.0（见下文） | <https://jitendex.org> |
 | Capacitor（iOS 版） | MIT | <https://github.com/ionic-team/capacitor> |
 | pywebview（Windows 版） | BSD-3-Clause | <https://github.com/r0x0r/pywebview> |
 | PyInstaller bootloader（Windows 版） | GPL-2.0 with bootloader exception | <https://github.com/pyinstaller/pyinstaller> |
@@ -37,6 +38,21 @@ and converted by wty; `scripts/build-dictionary.mjs` repacks it (glosses and exa
 许可 / License: [Creative Commons Attribution-ShareAlike 4.0](https://creativecommons.org/licenses/by-sa/4.0/)（CC BY-SA 4.0）。
 署名 / Attribution: Wiktionary contributors。该数据（及其改编版本）须以同样的许可证分发；它不受本项目 PolyForm 许可证约束。
 This data (and adaptations of it) is shared under the same license and is not covered by this project's PolyForm license.
+
+## 日英词典 Jitendex / Japanese–English dictionary（`public/lookup/ja-en/`）
+
+内置的日英词典是 [Jitendex](https://jitendex.org)（© Stephen Kraus），以
+[JMdict](https://www.edrdg.org/jmdict/j_jmdict.html)（Electronic Dictionary Research and Development Group，
+按 [EDRDG 许可](https://www.edrdg.org/edrdg/licence.html) 使用）与 [Tatoeba](https://tatoeba.org) 例句为基础编成。
+本项目的 `scripts/build-dictionary.mjs` 只保留了释义、词性与部分例句，未作其他改动。
+
+Jitendex © Stephen Kraus, built on JMdict (EDRDG) and Tatoeba example sentences; repacked by
+`scripts/build-dictionary.mjs` (glosses, parts of speech and some examples only).
+
+许可 / License: [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/)。Jitendex 的生成代码为 AGPL-3.0，本项目只使用其发布的词典数据，不包含其代码。
+This project uses only the published dictionary data, not Jitendex's AGPL-3.0 code.
+
+---
 
 查词引擎为本项目自行实现，读取 Yomitan 词典格式，但不包含 Yomitan（GPL-3.0）的任何代码。
 The lookup engine is our own; it reads the Yomitan dictionary format but contains no Yomitan (GPL-3.0) code.

@@ -94,6 +94,8 @@ function renderNodeText(node: unknown, excludeDetails: boolean): string {
   if (excludeDetails && isExcludedFromGloss(sc)) return '';
   const tag = typeof sc.tag === 'string' ? sc.tag.toLowerCase() : '';
   if (tag === 'br') return '\n';
+  // Readings in examples (<ruby>頭<rt>あたま</rt></ruby>) are not part of the text.
+  if (tag === 'rt' || tag === 'rp') return '';
   const inner = renderNodeText(sc.content, excludeDetails);
   if (BLOCK_TAGS.has(tag)) {
     return inner.endsWith('\n') ? inner : `${inner}\n`;
@@ -332,6 +334,18 @@ function mapTags(
   return out;
 }
 
+// JMdict part-of-speech codes (as Jitendex tags them) shown as the same Chinese labels as the other dictionary.
+const JMDICT_POS: Record<string, string> = {
+  n: '名词', pn: '代词', 'adj-i': '形容词', 'adj-ix': '形容词', 'adj-na': '形容动词', 'adj-no': '名词', 'adj-t': '形容动词',
+  adv: '副词', 'adv-to': '副词', 'aux-v': '助动词', 'aux-adj': '助动词', conj: '接续词', int: '感叹词', prt: '助词',
+  exp: '惯用语', ctr: '量词', num: '数词', pref: '前缀', suf: '后缀', 'n-suf': '后缀', 'n-pref': '前缀',
+  v1: '一段', 'v1-s': '一段', vk: 'カ变', vs: 'サ变', 'vs-i': 'サ变', 'vs-s': 'サ变', vz: 'サ变',
+  v5u: '五段', 'v5u-s': '五段', v5k: '五段', 'v5k-s': '五段', v5g: '五段', v5s: '五段', v5t: '五段', v5n: '五段',
+  v5b: '五段', v5m: '五段', v5r: '五段', 'v5r-i': '五段', v5aru: '五段', vt: '他动', vi: '自动',
+};
+const MAX_SENSES = 8;
+const MAX_EXAMPLES = 3;
+
 export function convertTermBank(
   rows: unknown[],
   tagNames?: Record<string, string>,
@@ -354,6 +368,7 @@ export function convertTermBank(
     const glosses: string[] = [];
     const examples: [string, string][] = [];
     const fallbackTags: string[] = [];
+    let jitendex = false;
 
     const consumeParsed = (parsed: ReturnType<typeof parseTextGlossBlock>) => {
       if (!reading && parsed.extractedReading) reading = parsed.extractedReading;
@@ -388,6 +403,32 @@ export function convertTermBank(
       }
 
       const contentRoot = type === 'structured-content' ? def.content : def;
+      const senses = findNodes(contentRoot, (n) => getDataContent(n) === 'sense');
+      if (senses.length > 0) {
+        // Jitendex layout: sense-groups carry part-of-speech tags, each sense a glossary list and examples.
+        jitendex = true;
+        for (const code of findNodes(contentRoot, (n) => getDataContent(n) === 'part-of-speech-info')) {
+          const label = JMDICT_POS[String(code.data?.code ?? '')];
+          if (label && !fallbackTags.includes(label)) fallbackTags.push(label);
+        }
+        for (const sense of senses.slice(0, MAX_SENSES)) {
+          const items = findNodes(sense.content, (n) => getDataContent(n) === 'glossary')
+            .flatMap((list) => collectDirectLiChildren(list.content))
+            .map((li) => cleanGlossText(renderNodeText(li, true)))
+            .filter(Boolean);
+          if (items.length) glosses.push(items.join('; '));
+          const example = findNodes(sense.content, (n) => getDataContent(n) === 'example-sentence')[0];
+          if (example && examples.length < MAX_EXAMPLES) {
+            const side = (key: string) => cleanGlossText(renderNodeText(
+              findNodes(example.content, (n) => getDataContent(n) === key)[0]?.content ?? '', true,
+            ).replace(/\[\d+\]$/, ''));
+            const ja = side('example-sentence-a');
+            const translation = side('example-sentence-b');
+            if (ja && translation) examples.push([ja, translation]);
+          }
+        }
+        continue;
+      }
       const glossLists = findNodes(contentRoot, (n) => getDataContent(n) === 'glosses');
 
       if (glossLists.length > 0) {
@@ -412,7 +453,8 @@ export function convertTermBank(
     }
 
     if (glosses.length === 0) continue;
-    const mappedTags = mapTags(defTags, termTags, tagNames);
+    // Jitendex's term tags are popularity marks (★ priority form), not parts of speech.
+    const mappedTags = jitendex ? [] : mapTags(defTags, termTags, tagNames);
     const tags = mappedTags.length > 0 ? mappedTags : fallbackTags;
     entries.push([term, reading, tags, glosses, examples, score]);
   }

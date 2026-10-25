@@ -49,6 +49,8 @@ function Entries({ state, dictTitles, locale, t }: { state: LookupState; dictTit
   }
   const { result } = state;
   const lang = locale === 'en' ? 'en' : 'zh';
+  // Answers from more than one dictionary get a small heading per dictionary.
+  const grouped = new Set(result.entries.map(entry => entry.dict)).size > 1;
   const inflection = result.inflections.map(code => INFLECTION_LABELS[code]?.[lang]).filter(Boolean).join(' · ');
   return (
     <div className="px-4 pb-1.5 pt-3.5">
@@ -60,6 +62,9 @@ function Entries({ state, dictTitles, locale, t }: { state: LookupState; dictTit
       </div>
       {result.entries.map((entry, index) => (
         <div key={`${entry.dict}-${entry.term}-${entry.reading}-${index}`} className={index ? 'mt-3 border-t border-[var(--sep)] pt-3' : ''}>
+          {grouped && entry.dict !== result.entries[index - 1]?.dict && (
+            <div className="mb-1 text-[11px] font-semibold text-[var(--label-3)]">{dictTitles[entry.dict] ?? entry.dict}</div>
+          )}
           <div className="flex flex-wrap items-baseline gap-2.5">
             <span lang="ja" className="font-[family-name:var(--font-mincho)] text-[26px] font-semibold tracking-[.02em]">
               {entry.reading && entry.reading !== entry.term
@@ -78,9 +83,6 @@ function Entries({ state, dictTitles, locale, t }: { state: LookupState; dictTit
               <span lang="ja" className="font-[family-name:var(--font-mincho)] text-[var(--label)]">{ja}</span>　{zh}
             </div>
           ))}
-          {result.entries.length > 1 && entry.dict !== result.entries[index - 1]?.dict && Object.keys(dictTitles).length > 1 && (
-            <div className="mt-1 text-[11px] text-[var(--label-3)]">{dictTitles[entry.dict]}</div>
-          )}
         </div>
       ))}
     </div>
@@ -90,7 +92,8 @@ function Entries({ state, dictTitles, locale, t }: { state: LookupState; dictTit
 function Footer({ state, dictTitles, t }: { state: LookupState; dictTitles: Record<string, string>; t: Translations }) {
   const [copied, setCopied] = useState(false);
   const word = state.status === 'done' ? state.result.entries[0]?.term ?? state.result.query : state.query;
-  const source = state.status === 'done' ? dictTitles[state.result.entries[0]?.dict] : '';
+  const dicts = state.status === 'done' ? [...new Set(state.result.entries.map(entry => entry.dict))] : [];
+  const source = dicts.map(id => dictTitles[id] ?? id).join(' · ');
   return (
     <div className="flex items-center gap-2 border-t border-[var(--sep)] py-2 pl-4 pr-3 text-[11px] text-[var(--label-3)]">
       <span className="truncate">{source}</span>

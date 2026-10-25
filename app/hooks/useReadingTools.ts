@@ -30,7 +30,7 @@ export function useReadingTools({ analyze, t, engineReady, readerOpen }: {
   // The bundled dictionary installs itself in the background the first time the reader opens (and after an upgrade).
   // The settings sheet lists it too, so opening the sheet installs it as well.
   useEffect(() => {
-    if (readerOpen || sheetOpen) void ensureBuiltinDictionary().then(refresh, refresh);
+    if (readerOpen || sheetOpen) void ensureBuiltinDictionary(undefined, () => void refresh()).then(refresh, refresh);
   }, [readerOpen, sheetOpen, refresh]);
 
   const changeSettings = useCallback((next: TranslationSettings) => {

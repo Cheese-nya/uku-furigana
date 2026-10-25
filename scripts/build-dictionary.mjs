@@ -4,13 +4,40 @@ import zlib from 'node:zlib';
 import JSZip from 'jszip';
 import { loadTypescript } from '../tests/loadTypescript.mjs';
 
+// Bundled dictionaries (sources are downloaded into tools/dict-src/, which is not committed):
+//   node scripts/build-dictionary.mjs ja-zh   wty-ja-zh.zip from https://huggingface.co/datasets/daxida/wty-release (latest/dict/ja/zh)
+//   node scripts/build-dictionary.mjs ja-en   jitendex-yomitan.zip from https://jitendex.org/pages/downloads.html
+const BUILTINS = {
+  'ja-zh': {
+    source: 'tools/dict-src/wty-ja-zh.zip',
+    id: 'wty-ja-zh',
+    title: '日中词典（维基词典）',
+    titleEn: 'Japanese–Chinese (Wiktionary)',
+    attribution: 'Wiktionary contributors via kaikki.org / wty, CC BY-SA 4.0',
+    license: 'CC BY-SA 4.0',
+    url: 'https://github.com/yomidevs/wiktionary-to-yomitan',
+  },
+  'ja-en': {
+    source: 'tools/dict-src/jitendex-yomitan.zip',
+    id: 'jitendex',
+    title: '日英词典（Jitendex）',
+    titleEn: 'Japanese–English (Jitendex)',
+    attribution: 'Jitendex © Stephen Kraus, built on JMdict (EDRDG) and Tatoeba, CC BY-SA 4.0',
+    license: 'CC BY-SA 4.0',
+    url: 'https://jitendex.org',
+  },
+};
+
 const { readYomitanZip } = loadTypescript('../app/utils/yomitanFormat.ts');
 
 const SHARD_SIZE = 20_000;
 
 async function main() {
-  const zipPath = path.resolve(process.argv[2] || 'tools/dict-src/wty-ja-zh.zip');
-  const outDir = path.resolve(process.argv[3] || 'public/lookup/ja-zh');
+  const key = process.argv[2] || 'ja-zh';
+  const meta = BUILTINS[key];
+  if (!meta) throw new Error(`unknown dictionary ${key}; one of ${Object.keys(BUILTINS).join(', ')}`);
+  const zipPath = path.resolve(process.argv[3] || meta.source);
+  const outDir = path.resolve(process.argv[4] || `public/lookup/${key}`);
 
   const rawBuf = fs.readFileSync(zipPath);
   const zip = await JSZip.loadAsync(rawBuf);
@@ -46,15 +73,13 @@ async function main() {
   }
 
   const indexData = {
-    id: 'wty-ja-zh',
-    title: '日中词典（维基词典）',
-    titleEn: 'Japanese–Chinese (Wiktionary)',
-    revision: revision || String(rawIndex.revision || ''),
-    attribution: 'Wiktionary contributors via kaikki.org / wty, CC BY-SA 4.0',
-    license: 'CC BY-SA 4.0',
-    url: typeof rawIndex.url === 'string' && rawIndex.url
-      ? rawIndex.url
-      : 'https://github.com/yomidevs/wiktionary-to-yomitan',
+    id: meta.id,
+    title: meta.title,
+    titleEn: meta.titleEn,
+    revision: revision || String(rawIndex.revision || rawIndex.title || ''),
+    attribution: meta.attribution,
+    license: meta.license,
+    url: meta.url,
     count: entries.length,
     shards,
   };

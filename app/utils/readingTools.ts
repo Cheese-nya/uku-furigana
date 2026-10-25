@@ -27,9 +27,12 @@ export interface ReaderTools {
   engineLabel: string;
 }
 
-/** Bundled dictionary files, next to the page like the kuromoji dictionary (works under a sub-path too). */
-export function builtinDictionaryUrl(): string {
-  return typeof window === 'undefined' ? '/lookup/ja-zh/' : new URL('./lookup/ja-zh/', window.location.href.split('?')[0]).pathname;
+/** Bundled dictionaries, in display order: Japanese–Chinese first, Jitendex (Japanese–English) to fill its gaps. */
+const BUILTIN_DICTIONARIES = ['ja-zh', 'ja-en'];
+
+/** Bundled dictionary files sit next to the page like the kuromoji dictionary (so a sub-path works too). */
+export function builtinDictionaryUrl(name: string): string {
+  return typeof window === 'undefined' ? `/lookup/${name}/` : new URL(`./lookup/${name}/`, window.location.href.split('?')[0]).pathname;
 }
 
 let dictionaryStore: DictionaryStore | null = null;
@@ -38,19 +41,34 @@ export function getDictionaryStore(): DictionaryStore {
   return dictionaryStore;
 }
 
-let installing: Promise<void> | null = null;
+// One install per dictionary per session; every caller waiting on the first one hears its progress.
+const installs = new Map<string, Promise<void>>();
 const installListeners = new Set<(progress: number) => void>();
-/** Installs (or upgrades) the bundled dictionary once per session; every caller waiting on it hears the progress. */
-export async function ensureBuiltinDictionary(onProgress?: (progress: number) => void): Promise<void> {
+function install(name: string, order: number, onProgress?: (progress: number) => void): Promise<void> {
+  let running = installs.get(name);
+  if (!running) {
+    running = getDictionaryStore().ensureBuiltin(builtinDictionaryUrl(name), onProgress, order)
+      .then(() => undefined, (error: unknown) => { installs.delete(name); throw error; });
+    installs.set(name, running);
+  }
+  return running;
+}
+
+/**
+ * Installs (or upgrades) the bundled dictionaries. Resolves once the first one is ready, which is all a lookup
+ * needs; the larger Japanese–English one keeps installing in the background and joins the results when done.
+ */
+export async function ensureBuiltinDictionary(onProgress?: (progress: number) => void, onAllDone?: () => void): Promise<void> {
   if (onProgress) installListeners.add(onProgress);
-  installing ??= getDictionaryStore()
-    .ensureBuiltin(builtinDictionaryUrl(), progress => installListeners.forEach(listener => listener(progress)))
-    .then(() => undefined, (error: unknown) => { installing = null; throw error; });
   try {
-    await installing;
+    await install(BUILTIN_DICTIONARIES[0], 0, progress => installListeners.forEach(listener => listener(progress)));
   } finally {
     if (onProgress) installListeners.delete(onProgress);
   }
+  const rest = BUILTIN_DICTIONARIES.slice(1).reduce<Promise<void>>(
+    (previous, name, index) => previous.then(() => install(name, index + 1)), Promise.resolve(),
+  );
+  void rest.then(onAllDone, () => undefined);
 }
 
 export function createReaderTools(options: {

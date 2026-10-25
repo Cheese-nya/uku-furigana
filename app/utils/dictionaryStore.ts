@@ -15,6 +15,7 @@ export interface DictionaryRecord {
   title: string;
   revision: string;
   attribution: string;
+  license?: string;
   enabled: boolean;
   order: number;
   builtin: boolean;
@@ -31,6 +32,7 @@ interface BuiltinManifest {
   title?: string;
   revision?: string;
   attribution?: string;
+  license?: string;
   count?: number;
   shards?: string[];
 }
@@ -224,6 +226,8 @@ export class DictionaryStore {
   async ensureBuiltin(
     baseUrl = '/lookup/ja-zh/',
     onProgress?: (fraction: number) => void,
+    /** Place in the dictionary list when it is installed for the first time. */
+    order = 0,
   ): Promise<DictionaryRecord> {
     if (!this.fetchFn) {
       throw new Error('当前环境不支持网络请求');
@@ -280,8 +284,9 @@ export class DictionaryStore {
       title: manifest.title || '日中词典（维基词典）',
       revision,
       attribution: manifest.attribution || '',
+      license: manifest.license,
       enabled: existing ? existing.enabled : true,
-      order: existing ? existing.order : 0,
+      order: existing ? existing.order : order,
       builtin: true,
       count: inserted,
     };
