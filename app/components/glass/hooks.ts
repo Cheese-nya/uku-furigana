@@ -3,7 +3,15 @@
 import { useCallback, useRef, type MutableRefObject, type Ref } from 'react';
 import { registerGlass, type GlassOptions } from './refraction';
 
-export const SPRING_BOUNCY = 'linear(0, 0.0374, 0.1314, 0.2581, 0.3989, 0.5394, 0.6698, 0.7841, 0.879, 0.9536, 1.009, 1.0469, 1.0701, 1.0813, 1.0833, 1.0789, 1.0703, 1.0593, 1.0474, 1.0358, 1.0252, 1.016, 1.0085, 1.0026, 0.9984, 0.9955, 0.9938, 0.9931, 0.9931, 0.9936, 0.9943, 0.9953, 0.9963, 0.9972, 0.9981, 0.9988, 1)';
+const SPRING_BOUNCY_LINEAR = 'linear(0, 0.0374, 0.1314, 0.2581, 0.3989, 0.5394, 0.6698, 0.7841, 0.879, 0.9536, 1.009, 1.0469, 1.0701, 1.0813, 1.0833, 1.0789, 1.0703, 1.0593, 1.0474, 1.0358, 1.0252, 1.016, 1.0085, 1.0026, 0.9984, 0.9955, 0.9938, 0.9931, 0.9931, 0.9936, 0.9943, 0.9953, 0.9963, 0.9972, 0.9981, 0.9988, 1)';
+
+/**
+ * Easing for Web Animations. `linear()` needs Chromium 113; older WebViews (HarmonyOS 4 ships Chrome 99) make
+ * `animate()` throw on it, which crashed the whole app from a layout effect, so they get a plain overshoot curve.
+ */
+export const SPRING_BOUNCY = typeof CSS !== 'undefined' && CSS.supports?.('transition-timing-function', 'linear(0, 1)')
+  ? SPRING_BOUNCY_LINEAR
+  : 'cubic-bezier(0.34, 1.4, 0.64, 1)';
 
 export function prefersReducedMotion(): boolean {
   return typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
