@@ -132,8 +132,11 @@ export interface DriverState {
 export interface UpdateDriver {
   /** False means "show the yellow dot and open RELEASES_URL". */
   readonly canAutoDownload: boolean;
-  /** Start (or resume) the background download of `asset`. Resolves once it has started. */
-  start(release: ReleaseInfo, asset: ReleaseAsset): Promise<void>;
+  /**
+   * Start (or resume) the background download of `asset`. Resolves once it has started. `userInitiated`:
+   * the user tapped download, so Android may use mobile data (automatic downloads wait for Wi-Fi).
+   */
+  start(release: ReleaseInfo, asset: ReleaseAsset, userInitiated?: boolean): Promise<void>;
   poll(): Promise<DriverState>;
   /** Android: launch the system installer. Desktop: quit, replace the exe and relaunch. */
   apply(): Promise<void>;

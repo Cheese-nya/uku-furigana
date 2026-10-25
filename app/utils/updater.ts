@@ -287,14 +287,15 @@ export function createAndroidDriver(
   const wifiOnly = opts?.wifiOnly ?? true;
   return {
     canAutoDownload: true,
-    async start(release: ReleaseInfo, asset: ReleaseAsset): Promise<void> {
+    async start(release: ReleaseInfo, asset: ReleaseAsset, userInitiated = false): Promise<void> {
       const args = JSON.stringify({
         version: release.version,
         url: asset.url,
         mirrorUrl: asset.mirrorUrl,
         sha256: asset.sha256 ?? '',
         size: asset.size,
-        wifiOnly,
+        // Only the automatic download waits for Wi-Fi; a tap on 下载 means the user accepts mobile data.
+        wifiOnly: wifiOnly && !userInitiated,
       });
       let parsed: { success?: boolean; error?: string };
       try {
@@ -638,7 +639,7 @@ export function createUpdateController(deps: UpdateControllerDeps): UpdateContro
     }, pollMs);
   }
 
-  async function startDownload(): Promise<void> {
+  async function startDownload(userInitiated = true): Promise<void> {
     if (disposed || !driver.canAutoDownload || !state.latest) return;
     const asset = selectAsset(state.latest, platform);
     if (!asset) return;
@@ -651,7 +652,7 @@ export function createUpdateController(deps: UpdateControllerDeps): UpdateContro
     logEvent('info', 'update', `start download v${state.latest.version}`);
 
     try {
-      await driver.start(state.latest, asset);
+      await driver.start(state.latest, asset, userInitiated);
       if (disposed) return;
       startPolling();
     } catch (err) {
@@ -788,7 +789,7 @@ export function createUpdateController(deps: UpdateControllerDeps): UpdateContro
     });
 
     if (isAuto && driver.canAutoDownload) {
-      await startDownload();
+      await startDownload(false);
     }
   }
 
