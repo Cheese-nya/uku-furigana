@@ -572,3 +572,33 @@ test('preferMirror leaves assets without a mirror alone and does not mutate its 
   assert.equal(input.assets[0].url, 'gh-a');
 });
 
+
+test('issue #28: only the automatic download waits for Wi-Fi; a tap on download may use mobile data', async () => {
+  const sent = [];
+  const bridge = {
+    startUpdateDownload(args) { sent.push(JSON.parse(args).wifiOnly); return '{"success":true}'; },
+    getUpdateState() { return '{"phase":"downloading","progress":0}'; },
+    installUpdate() { return '{"success":true}'; },
+    cancelUpdateDownload() { return '{"success":true}'; },
+  };
+  const driver = createAndroidDriver(bridge, { wifiOnly: true });
+  await driver.start(SAMPLE_RELEASE, SAMPLE_RELEASE.assets[0]);
+  await driver.start(SAMPLE_RELEASE, SAMPLE_RELEASE.assets[0], true);
+  assert.deepEqual(sent, [true, false]);
+
+  clearEntries();
+  const flags = [];
+  const ctrl = createUpdateController({
+    driver: { canAutoDownload: true, async start(_r, _a, user) { flags.push(user); }, async poll() { return { phase: 'downloading', progress: 0 }; }, async apply() {}, async cancel() {} },
+    currentVersion: '1.2.1',
+    platform: 'android',
+    fetchRelease: async () => SAMPLE_RELEASE,
+    storage: createFakeStorage(),
+    now: () => 50_000,
+    pollMs: 60_000,
+  });
+  await ctrl.check({ auto: true });
+  await ctrl.startDownload();
+  assert.deepEqual(flags, [false, true]);
+  ctrl.dispose();
+});
