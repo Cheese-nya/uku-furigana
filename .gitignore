@@ -44,3 +44,4 @@ __pycache__/
 # Copied from node_modules by scripts/vendor-assets.mjs
 /public/vendor/
 /tests/.tmp/
+/public/__e2e/

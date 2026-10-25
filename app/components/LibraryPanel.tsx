@@ -565,7 +565,7 @@ function BookCover({ book, t, categoryText, lifted, onOpen, onMenu }: {
         {book.favorite && <IconStarFill size={12} className="shrink-0 text-[var(--review)]" />}
         <span className="truncate">
           {categoryText} · {book.format === 'epub' || book.format === 'pdf'
-            ? `${book.format.toUpperCase()} · ${fill(t.importChapters, { count: book.chapters.length })}`
+            ? `${book.format.toUpperCase()} · ${book.chapters.length > 1 ? fill(t.importChapters, { count: book.chapters.length }) : fill(t.libraryBookLines, { count: lines })}`
             : fill(t.libraryBookLines, { count: lines })} · {started ? fill(t.libraryBookProgress, { percent }) : t.libraryUnread}
         </span>
       </div>
