@@ -38,3 +38,8 @@ __pycache__/
 .idea/
 *.pem
 *.tsbuildinfo
+
+# Dictionary sources (downloaded, see scripts/build-dictionary.mjs)
+/tools/dict-src/
+# Copied from node_modules by scripts/vendor-assets.mjs
+/public/vendor/
