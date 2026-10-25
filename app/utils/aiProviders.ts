@@ -31,7 +31,7 @@ export const AI_PROVIDERS: AiProvider[] = [
     note: { zh: '新用户有免费额度，之后按量付费', en: 'Free quota for new users, then pay as you go' },
   },
   {
-    id: 'openrouter', name: 'OpenRouter', nameEn: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', model: 'google/gemma-4-31b-it:free',
+    id: 'openrouter', name: 'OpenRouter', nameEn: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', model: 'openrouter/free',
     keyUrl: 'https://openrouter.ai/settings/keys', direct: false, login: true,
     note: { zh: '名称带 :free 的模型免费，可用账号一键登录', en: 'Models ending in :free cost nothing; sign in with one click' },
   },
@@ -62,27 +62,98 @@ export function providerById(id: string): AiProvider {
 
 const trimSlash = (url: string) => url.replace(/\/+$/, '');
 
-/** Model ids the platform offers (`GET /models`), free ones first. */
-export async function listModels(llm: LlmSettings, fetchImpl: typeof fetch = fetch): Promise<{ id: string; free: boolean }[]> {
+export type ModelPrice = 'free' | 'quota' | 'paid' | 'unknown';
+export interface ModelInfo { id: string; price: ModelPrice }
+
+// Free models SiliconFlow publishes (its /models list carries no prices); Pro/ variants are always paid.
+const SILICONFLOW_FREE = /(?:^|\/)(?:Qwen2\.5-7B-Instruct|Qwen2\.5-Coder-7B-Instruct|Qwen3-8B|Qwen2-7B-Instruct|glm-4-9b-chat|GLM-4-9B-0414|GLM-Z1-9B-0414|DeepSeek-R1-0528-Qwen3-8B|DeepSeek-R1-Distill-Qwen-7B|internlm2_5-7b-chat|Hunyuan-MT-7B)$/i;
+// Not chat models: embeddings, speech, images, rerankers, moderation.
+const NOT_CHAT = /embed|whisper|tts|speech|audio|rerank|image|imagen|veo|lyria|guard|moderation|bge-|sdxl|flux|kolors|aqa/i;
+
+/** Whether a model costs nothing: from the price list where the platform has one, else from what it publishes. */
+export function modelPrice(providerId: string, id: string, pricing?: { prompt?: unknown; completion?: unknown }): ModelPrice {
+  if (pricing && pricing.prompt !== undefined) {
+    return Number(pricing.prompt) === 0 && Number(pricing.completion ?? 0) === 0 ? 'free' : 'paid';
+  }
+  if (id.endsWith(':free')) return 'free';
+  switch (providerId) {
+    case 'siliconflow': return id.startsWith('Pro/') ? 'paid' : SILICONFLOW_FREE.test(id) ? 'free' : 'unknown';
+    case 'groq': return 'quota';
+    case 'gemini': return /flash/i.test(id) ? 'quota' : 'paid';
+    case 'deepseek': return 'paid';
+    default: return 'unknown';
+  }
+}
+
+const PRICE_ORDER: Record<ModelPrice, number> = { free: 0, quota: 1, unknown: 2, paid: 3 };
+
+/** Chat models the platform offers (`GET /models`), free ones first. */
+export async function listModels(llm: LlmSettings, fetchImpl: typeof fetch = fetch): Promise<ModelInfo[]> {
   const response = await fetchImpl(`${trimSlash(llm.baseUrl)}/models`, {
     headers: llm.apiKey ? { Authorization: `Bearer ${llm.apiKey}` } : {},
   });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  const body = await response.json() as { data?: { id?: unknown; pricing?: { prompt?: unknown; completion?: unknown } }[] };
-  const models = (body.data ?? [])
-    .filter(model => typeof model.id === 'string')
-    .map(model => {
-      const id = model.id as string;
-      const zeroPrice = model.pricing && Number(model.pricing.prompt) === 0 && Number(model.pricing.completion) === 0;
-      return { id, free: id.endsWith(':free') || Boolean(zeroPrice) };
-    });
-  return models.sort((a, b) => Number(b.free) - Number(a.free) || a.id.localeCompare(b.id));
+  const body = await response.json() as { data?: { id?: unknown; pricing?: { prompt?: unknown; completion?: unknown }; architecture?: { output_modalities?: unknown } }[] };
+  const provider = llm.provider ?? 'custom';
+  const seen = new Set<string>();
+  const models: ModelInfo[] = [];
+  for (const model of body.data ?? []) {
+    if (typeof model.id !== 'string') continue;
+    // Gemini lists "models/gemini-…"; the chat endpoint takes the bare name.
+    const id = model.id.replace(/^models\//, '');
+    const outputs = model.architecture?.output_modalities;
+    if (NOT_CHAT.test(id) || (Array.isArray(outputs) && !outputs.includes('text')) || seen.has(id)) continue;
+    seen.add(id);
+    models.push({ id, price: modelPrice(provider, id, model.pricing) });
+  }
+  return models.sort((a, b) => PRICE_ORDER[a.price] - PRICE_ORDER[b.price] || a.id.localeCompare(b.id));
 }
 
 /** Translate one short sentence with these settings; resolves to the translation, rejects with the reason. */
-export async function testConnection(llm: LlmSettings, target: TranslationTarget, fetchImpl: typeof fetch = fetch): Promise<string> {
-  const [translation] = await translateLlm(['こんにちは。'], target, llm, fetchImpl);
+export async function testConnection(llm: LlmSettings, target: TranslationTarget, fetchImpl: typeof fetch = fetch, signal?: AbortSignal): Promise<string> {
+  const [translation] = await translateLlm(['こんにちは。'], target, llm, fetchImpl, signal);
   return translation;
+}
+
+export type ProbeResult = { state: 'ok' } | { state: 'bad'; reason: 'key' | 'limit' | 'missing' | 'paid' | 'timeout' | 'other'; detail: string };
+
+function probeReason(message: string): ProbeResult {
+  if (/HTTP 40[13]/.test(message)) return { state: 'bad', reason: 'key', detail: message };
+  if (/HTTP 429/.test(message)) return { state: 'bad', reason: 'limit', detail: message };
+  if (/HTTP 404/.test(message)) return { state: 'bad', reason: 'missing', detail: message };
+  if (/HTTP 402/.test(message)) return { state: 'bad', reason: 'paid', detail: message };
+  if (/abort|中止|timeout/i.test(message)) return { state: 'bad', reason: 'timeout', detail: message };
+  return { state: 'bad', reason: 'other', detail: message };
+}
+
+/**
+ * Try each model with one tiny translation, two at a time, 20 s each, reporting as results come in.
+ * Only free models are probed by the app, so the check never costs the user anything.
+ */
+export async function probeModels(
+  llm: LlmSettings, ids: string[], target: TranslationTarget,
+  onResult: (id: string, result: ProbeResult) => void, signal: AbortSignal, fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  let next = 0;
+  const lane = async () => {
+    while (!signal.aborted && next < ids.length) {
+      const id = ids[next++];
+      const timeout = new AbortController();
+      const timer = setTimeout(() => timeout.abort(), 20000);
+      const stop = () => timeout.abort();
+      signal.addEventListener('abort', stop);
+      try {
+        await testConnection({ ...llm, model: id }, target, fetchImpl, timeout.signal);
+        if (!signal.aborted) onResult(id, { state: 'ok' });
+      } catch (error) {
+        if (!signal.aborted) onResult(id, probeReason(error instanceof Error ? `${error.name} ${error.message}` : String(error)));
+      } finally {
+        clearTimeout(timer);
+        signal.removeEventListener('abort', stop);
+      }
+    }
+  };
+  await Promise.all([lane(), lane()]);
 }
 
 // ---- OpenRouter one-click sign-in (OAuth PKCE): the page goes to openrouter.ai and comes back with ?code= ----

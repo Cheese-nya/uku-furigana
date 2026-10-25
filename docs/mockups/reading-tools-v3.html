@@ -521,7 +521,15 @@ input[type=range] { width: 100%; accent-color: var(--label); }
 .mlist { margin: -6px 0 12px; border-radius: 12px; background: var(--fill-2); max-height: 180px; overflow-y: auto; padding: 4px; }
 .mlist button { display: flex; width: 100%; justify-content: space-between; border: 0; background: none; padding: 8px 10px; border-radius: 8px; font: inherit; font-size: 13px; color: var(--label); cursor: pointer; text-align: left; }
 .mlist button:hover { background: var(--item-hover); }
+.mlist .tags { display: inline-flex; gap: 6px; align-items: center; flex: none; }
+.mlist .mid { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mlist .free { font-size: 11px; color: var(--ok); font-weight: 600; }
+.mlist .paid { font-size: 11px; color: var(--label-3); }
+.mlist .ok { font-size: 11px; color: var(--ok); }
+.mlist .bad { font-size: 11px; color: var(--danger); }
+.mlist .run { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid var(--fill); border-top-color: var(--label); animation: spin .8s linear infinite; }
+.msum { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px 8px; font-size: 12px; color: var(--label-2); }
+.msum .mre { border: 0; background: none; font: inherit; font-weight: 600; color: var(--label); cursor: pointer; padding: 0; }
 .testrow { display: flex; align-items: center; gap: 10px; margin: 0 0 8px; font-size: 12px; }
 .testrow .ok { color: var(--ok); } .testrow .bad { color: var(--danger); }
 
@@ -1425,7 +1433,7 @@ $('#tgrab').addEventListener('pointerup', () => $('#tocCard').classList.toggle('
 const PROVS = [
   { id: 'siliconflow', name: '硅基流动', url: 'https://api.siliconflow.cn/v1', model: 'Qwen/Qwen3-8B', note: '<b>国内直连</b> · 部分开源模型免费（Qwen、GLM 等）' },
   { id: 'dashscope', name: '通义', url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-turbo', note: '<b>国内直连</b> · 新用户有免费额度，之后按量付费' },
-  { id: 'openrouter', name: 'OpenRouter', url: 'https://openrouter.ai/api/v1', model: 'google/gemma-4-31b-it:free', note: '<i>国内不稳定</i> · 名称带 :free 的模型免费，可用账号一键登录', login: true },
+  { id: 'openrouter', name: 'OpenRouter', url: 'https://openrouter.ai/api/v1', model: 'openrouter/free', note: '<i>国内不稳定</i> · 名称带 :free 的模型免费，可用账号一键登录', login: true },
   { id: 'gemini', name: 'Gemini', url: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-2.5-flash', note: '<i>需要代理</i> · Flash 系列有免费额度' },
   { id: 'groq', name: 'Groq', url: 'https://api.groq.com/openai/v1', model: 'llama-3.3-70b-versatile', note: '<i>需要代理</i> · 免费额度，速度快' },
   { id: 'deepseek', name: 'DeepSeek', url: 'https://api.deepseek.com/v1', model: 'deepseek-chat', note: '<b>国内直连</b> · 付费，价格低，翻译质量好' },
@@ -1442,8 +1450,17 @@ function renderProv() {
   $('#modelIn').value = p.model; $('#urlIn').value = p.url; $('#mlist').hidden = true; $('#testOut').textContent = '';
 }
 $('#provs').addEventListener('click', (e) => { const b = e.target.closest('[data-prov]'); if (b) { prov = b.dataset.prov; renderProv(); } });
-$('#pickModel').onclick = (e) => { e.preventDefault(); const l = $('#mlist'); l.hidden = !l.hidden;
-  l.innerHTML = ['google/gemma-4-31b-it:free', 'nvidia/nemotron-3-super-120b-a12b:free', 'thinkingmachines/inkling-small:free', 'deepseek/deepseek-v4-flash', 'openai/gpt-5-mini'].map((m) => `<button data-m="${m}"><span>${m}</span>${m.endsWith(':free') ? '<span class="free">免费</span>' : ''}</button>`).join(''); };
+// v3.3: the list loads by itself once a key is in; free models are probed with one tiny request each
+const MODELS = [
+  ['openrouter/free', 'free', 'ok'], ['google/gemma-4-31b-it:free', 'free', 'ok'], ['nvidia/nemotron-3-super-120b-a12b:free', 'free', 'ok'],
+  ['thinkingmachines/inkling-small:free', 'free', 'bad', '限流'], ['poolside/laguna-s-2.1:free', 'free', 'run'],
+  ['deepseek/deepseek-v4-flash', 'paid'], ['openai/gpt-5-mini', 'paid'],
+];
+function renderModels() {
+  const l = $('#mlist');
+  l.innerHTML = '<div class="msum"><span>42 个模型 · 17 个免费 · 4 个可用</span><button class="mre">重新检测</button></div>' + MODELS.map(([m, price, st, why]) => `<button data-m="${m}"><span class="mid">${m}</span><span class="tags">${price === 'free' ? '<span class="free">免费</span>' : '<span class="paid">付费</span>'}${st === 'ok' ? '<span class="ok">✓ 可用</span>' : st === 'bad' ? `<span class="bad">✗ ${why}</span>` : st === 'run' ? '<span class="run"></span>' : ''}</span></button>`).join('');
+}
+$('#pickModel').onclick = (e) => { e.preventDefault(); const l = $('#mlist'); l.hidden = !l.hidden; renderModels(); };
 $('#mlist').addEventListener('click', (e) => { const b = e.target.closest('[data-m]'); if (b) { $('#modelIn').value = b.dataset.m; $('#mlist').hidden = true; } });
 $('#testBtn').onclick = () => { const o = $('#testOut'); o.className = ''; o.textContent = '正在测试…'; setTimeout(() => { if ($('#keyIn').value) { o.className = 'ok'; o.textContent = '✓ 可以使用 · 「こんにちは」→「你好」'; } else { o.className = 'bad'; o.textContent = '请先填写 API Key'; } }, 700); };
 $('#orLogin').onclick = () => { $('#keyIn').value = 'sk-or-v1-••••••••'; const o = $('#testOut'); o.className = 'ok'; o.textContent = '✓ 已登录 OpenRouter，Key 已保存'; };
