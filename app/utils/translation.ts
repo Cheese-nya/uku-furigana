@@ -1,0 +1,443 @@
+import type { TranslationCache } from './translationStore';
+
+export type TranslationEngine = 'microsoft' | 'llm';
+export type TranslationTarget = 'zh-Hans' | 'zh-Hant' | 'en';
+
+export interface LlmSettings {
+  baseUrl: string;
+  model: string;
+  apiKey: string;
+}
+
+export interface TranslationSettings {
+  engine: TranslationEngine;
+  target: TranslationTarget;
+  llm: LlmSettings;
+}
+
+export const DEFAULT_TRANSLATION_SETTINGS: TranslationSettings = {
+  engine: 'microsoft',
+  target: 'zh-Hans',
+  llm: { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', apiKey: '' },
+};
+
+const SETTINGS_KEY = 'uku-translation-settings-v1';
+const ENGINES: TranslationEngine[] = ['microsoft', 'llm'];
+const TARGETS: TranslationTarget[] = ['zh-Hans', 'zh-Hant', 'en'];
+
+export class TranslationError extends Error {
+  readonly retryable: boolean;
+
+  constructor(message: string, retryable: boolean) {
+    super(message);
+    this.name = 'TranslationError';
+    this.retryable = retryable;
+  }
+}
+
+function text(value: unknown, fallback: string, allowEmpty = false): string {
+  return typeof value === 'string' && (allowEmpty || value.trim()) ? value : fallback;
+}
+
+function oneOf<T extends string>(value: unknown, allowed: T[], fallback: T): T {
+  return allowed.includes(value as T) ? (value as T) : fallback;
+}
+
+/** Validates a stored settings object field by field, so one bad field never discards the rest. */
+export function validateTranslationSettings(value: unknown): TranslationSettings {
+  const source = (typeof value === 'object' && value !== null ? value : {}) as Partial<TranslationSettings>;
+  const llm = (typeof source.llm === 'object' && source.llm !== null ? source.llm : {}) as Partial<LlmSettings>;
+  const defaults = DEFAULT_TRANSLATION_SETTINGS;
+  return {
+    engine: oneOf(source.engine, ENGINES, defaults.engine),
+    target: oneOf(source.target, TARGETS, defaults.target),
+    llm: {
+      baseUrl: text(llm.baseUrl, defaults.llm.baseUrl),
+      model: text(llm.model, defaults.llm.model),
+      apiKey: text(llm.apiKey, defaults.llm.apiKey, true),
+    },
+  };
+}
+
+export function loadTranslationSettings(): TranslationSettings {
+  try {
+    const raw = (globalThis as { localStorage?: Storage }).localStorage?.getItem(SETTINGS_KEY);
+    return raw ? validateTranslationSettings(JSON.parse(raw)) : validateTranslationSettings(undefined);
+  } catch {
+    return validateTranslationSettings(undefined);
+  }
+}
+
+export function saveTranslationSettings(settings: TranslationSettings): void {
+  try {
+    (globalThis as { localStorage?: Storage }).localStorage?.setItem(SETTINGS_KEY, JSON.stringify(validateTranslationSettings(settings)));
+  } catch {
+    // A full or unavailable localStorage must not break translation.
+  }
+}
+
+// Letters and digits keep a sentence worth translating; punctuation, whitespace and symbols
+// (……, 「」, ！？) are returned as their own "translation" so they cost no request. Kana ranges
+// stop before ・ and ー, which are punctuation and a length mark rather than words.
+const MEANINGFUL = /[0-9A-Za-z\u3041-\u3096\u30A1-\u30FA\u3400-\u4DBF\u4E00-\u9FFF\uFF10-\uFF5A]/;
+
+export function needsTranslation(value: string): boolean {
+  return MEANINGFUL.test(value);
+}
+
+function abortError(): Error {
+  // `DOMException` carries the name the callers check for; where it is missing (older
+  // environments) a plain Error with the same name is enough.
+  const error: { name: string; message: string } = typeof DOMException === 'function'
+    ? new DOMException('翻译已中止', 'AbortError')
+    : new Error('翻译已中止');
+  error.name = 'AbortError';
+  return error as Error;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw abortError();
+}
+
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(abortError()); return; }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const onAbort = () => { cleanup(); reject(abortError()); };
+    const cleanup = () => {
+      if (timer !== undefined) clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+    };
+    timer = setTimeout(() => { cleanup(); resolve(); }, ms);
+    signal?.addEventListener('abort', onAbort);
+  });
+}
+
+function httpError(status: number, what: string): TranslationError {
+  const retryable = status === 429 || status >= 500;
+  return new TranslationError(`${what}失败（HTTP ${status}）`, retryable);
+}
+
+const MICROSOFT_ENDPOINT = 'https://edge.microsoft.com/translate/translatetext';
+
+/** Microsoft Edge's free endpoint: a JSON array in, `[{ translations: [{ text }] }]` out, same order. */
+export async function translateMicrosoft(
+  texts: string[],
+  target: string,
+  fetchImpl: typeof fetch = fetch,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  if (!texts.length) return [];
+  const url = `${MICROSOFT_ENDPOINT}?from=ja&to=${encodeURIComponent(target)}&isEnterpriseClient=false`;
+  const response = await fetchImpl(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(texts),
+    signal,
+  });
+  if (!response.ok) throw httpError(response.status, '微软翻译');
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new TranslationError('微软翻译返回了无法解析的数据', true);
+  }
+  if (!Array.isArray(payload) || payload.length !== texts.length) {
+    throw new TranslationError('微软翻译返回的条数不一致', false);
+  }
+  return payload.map((item: unknown) => {
+    const translations = (item as { translations?: { text?: unknown }[] } | null)?.translations;
+    const value = Array.isArray(translations) ? translations[0]?.text : undefined;
+    if (typeof value !== 'string') throw new TranslationError('微软翻译返回的数据不完整', false);
+    return value;
+  });
+}
+
+const TARGET_NAMES: Record<string, string> = { 'zh-Hans': 'Simplified Chinese', 'zh-Hant': 'Traditional Chinese', en: 'English' };
+
+function systemPrompt(target: string): string {
+  return [
+    `You are a literary Japanese → ${TARGET_NAMES[target] || target} translator.`,
+    `Translate each item of the input JSON array into ${TARGET_NAMES[target] || target}.`,
+    'Keep every item\'s meaning and its order, and stay natural and faithful to the original tone.',
+    'Never add explanations, notes or extra items.',
+    'Output ONLY a JSON array of strings with exactly the same length and order as the input.',
+  ].join(' ');
+}
+
+function userPrompt(texts: string[], context: string[]): string {
+  const lines = context.filter(line => line.trim()).map(line => line.trim());
+  const header = lines.length ? `Context (previous lines, do not translate):\n${lines.join('\n')}\n\n` : '';
+  return `${header}Sentences to translate (JSON array):\n${JSON.stringify(texts)}`;
+}
+
+/** First balanced JSON array in the reply, so surrounding prose or ``` fences do not matter. */
+function firstJsonArray(source: string): string | undefined {
+  const start = source.indexOf('[');
+  if (start < 0) return undefined;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < source.length; index++) {
+    const char = source[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === '[') depth += 1;
+    else if (char === ']') {
+      depth -= 1;
+      if (depth === 0) return source.slice(start, index + 1);
+    }
+  }
+  return undefined;
+}
+
+export function parseLlmTranslations(reply: string, expected: number): string[] {
+  const raw = firstJsonArray(reply.replace(/```[a-zA-Z]*\s*/g, ''));
+  if (!raw) throw new TranslationError('模型没有返回 JSON 数组', false);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new TranslationError('模型返回的 JSON 无法解析', false);
+  }
+  const list = Array.isArray(parsed) && parsed.every(item => typeof item === 'string') ? parsed as string[] : undefined;
+  if (!list) throw new TranslationError('译文格式不正确', false);
+  if (list.length !== expected) throw new TranslationError('译文条数不一致', false);
+  return list;
+}
+
+/** OpenAI-compatible chat endpoint, asked for a JSON array so one request covers a whole batch. */
+export async function translateLlm(
+  texts: string[],
+  target: string,
+  llm: LlmSettings,
+  fetchImpl: typeof fetch = fetch,
+  signal?: AbortSignal,
+  context: string[] = [],
+): Promise<string[]> {
+  if (!texts.length) return [];
+  if (!llm.apiKey.trim()) throw new TranslationError('请先在设置里填写 API Key', false);
+  const url = `${llm.baseUrl.replace(/\/+$/, '')}/chat/completions`;
+  const response = await fetchImpl(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${llm.apiKey}` },
+    body: JSON.stringify({
+      model: llm.model,
+      temperature: 0.3,
+      messages: [
+        { role: 'system', content: systemPrompt(target) },
+        { role: 'user', content: userPrompt(texts, context) },
+      ],
+    }),
+    signal,
+  });
+  if (!response.ok) throw httpError(response.status, '模型翻译');
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new TranslationError('模型返回了无法解析的数据', true);
+  }
+  const reply = (payload as { choices?: { message?: { content?: unknown } }[] } | null)?.choices?.[0]?.message?.content;
+  if (typeof reply !== 'string') throw new TranslationError('模型没有返回译文', false);
+  return parseLlmTranslations(reply, texts.length);
+}
+
+interface EngineLimits {
+  batchSize: number;
+  maxChars: number;
+}
+
+const ENGINE_LIMITS: Record<TranslationEngine, EngineLimits> = {
+  microsoft: { batchSize: 50, maxChars: 8000 },
+  llm: { batchSize: 20, maxChars: 3000 },
+};
+
+// Context is sent only to make the model's sentence boundaries and pronouns coherent; the
+// neighbouring lines are never part of the returned array.
+const CONTEXT_LINES = 3;
+const RETRY_DELAYS = [1000, 2000, 4000];
+const PRETRANSLATE_CHUNK = 200;
+
+export interface TranslatorOptions {
+  store: TranslationCache;
+  settings: () => TranslationSettings;
+  fetchImpl?: typeof fetch;
+  batchSize?: number;
+  maxChars?: number;
+  concurrency?: number;
+}
+
+interface PendingText {
+  text: string;
+  order: number;
+}
+
+function buildBatches(pending: PendingText[], limits: EngineLimits): PendingText[][] {
+  const batches: PendingText[][] = [];
+  let batch: PendingText[] = [];
+  let chars = 0;
+  for (const item of pending) {
+    const overflow = batch.length >= limits.batchSize || (batch.length > 0 && chars + item.text.length > limits.maxChars);
+    if (overflow) {
+      batches.push(batch);
+      batch = [];
+      chars = 0;
+    }
+    batch.push(item);
+    chars += item.text.length;
+  }
+  if (batch.length) batches.push(batch);
+  return batches;
+}
+
+async function runLimited<T>(items: T[], limit: number, worker: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  const errors: unknown[] = [];
+  const lanes = Math.max(1, Math.min(limit, items.length));
+  await Promise.all(Array.from({ length: lanes }, async () => {
+    for (;;) {
+      // The first failure stops new batches; ones already in flight finish and keep
+      // their results, which is why a retry resumes from the cache.
+      if (errors.length) return;
+      const index = next++;
+      if (index >= items.length) return;
+      try {
+        await worker(items[index]);
+      } catch (error) {
+        errors.push(error);
+        return;
+      }
+    }
+  }));
+  if (errors.length) throw errors[0];
+}
+
+/** Batched, cached, retrying translator over the Microsoft endpoint or an OpenAI-compatible LLM. */
+export class Translator {
+  private readonly store: TranslationCache;
+  private readonly settings: () => TranslationSettings;
+  private readonly fetchImpl: typeof fetch;
+  private readonly batchSize?: number;
+  private readonly maxChars?: number;
+  private readonly concurrency: number;
+
+  constructor(options: TranslatorOptions) {
+    this.store = options.store;
+    this.settings = options.settings;
+    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.batchSize = options.batchSize;
+    this.maxChars = options.maxChars;
+    this.concurrency = Math.max(1, options.concurrency ?? 2);
+  }
+
+  private limits(engine: TranslationEngine): EngineLimits {
+    const defaults = ENGINE_LIMITS[engine];
+    return {
+      batchSize: Math.max(1, this.batchSize ?? defaults.batchSize),
+      maxChars: Math.max(1, this.maxChars ?? defaults.maxChars),
+    };
+  }
+
+  private async request(
+    engine: TranslationEngine,
+    texts: string[],
+    target: string,
+    context: string[],
+    signal?: AbortSignal,
+  ): Promise<string[]> {
+    const settings = this.settings();
+    for (let attempt = 0; ; attempt++) {
+      throwIfAborted(signal);
+      try {
+        return engine === 'llm'
+          ? await translateLlm(texts, target, settings.llm, this.fetchImpl, signal, context)
+          : await translateMicrosoft(texts, target, this.fetchImpl, signal);
+      } catch (error) {
+        const retryable = error instanceof TranslationError && error.retryable;
+        if (!retryable || attempt >= RETRY_DELAYS.length) throw error;
+        await delay(RETRY_DELAYS[attempt], signal);
+      }
+    }
+  }
+
+  async translate(bookId: string, texts: string[], signal?: AbortSignal): Promise<Map<string, string>> {
+    const settings = this.settings();
+    const target = settings.target;
+    const engine = settings.engine;
+    const result = new Map<string, string>();
+    const seen = new Set<string>();
+    const pending: PendingText[] = [];
+    texts.forEach((value, order) => {
+      if (seen.has(value)) return;
+      seen.add(value);
+      if (needsTranslation(value)) pending.push({ text: value, order });
+      else result.set(value, value);
+    });
+    if (!pending.length) return result;
+
+    const cached = await this.store.get(bookId, target, pending.map(item => item.text));
+    const misses = pending.filter(item => {
+      if (!cached.has(item.text)) return true;
+      result.set(item.text, cached.get(item.text) as string);
+      return false;
+    });
+    if (!misses.length) return result;
+
+    const batches = buildBatches(misses, this.limits(engine));
+    await runLimited(batches, this.concurrency, async batch => {
+      const list = batch.map(item => item.text);
+      const context = engine === 'llm'
+        ? texts.slice(Math.max(0, batch[0].order - CONTEXT_LINES), batch[0].order)
+        : [];
+      const translations = await this.request(engine, list, target, context, signal);
+      const pairs: [string, string][] = [];
+      list.forEach((source, index) => {
+        const value = translations[index];
+        if (typeof value !== 'string') return;
+        result.set(source, value);
+        pairs.push([source, value]);
+      });
+      await this.store.put(bookId, target, engine, pairs);
+    });
+    return result;
+  }
+
+  /**
+   * Translates a whole book in book order and reports how far it got. Progress counts
+   * the cached sentences as done, so an interrupted run resumes from that share instead
+   * of restarting the counter at zero.
+   */
+  async pretranslate(
+    bookId: string,
+    texts: string[],
+    onProgress: (done: number, total: number) => void,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const total = texts.length;
+    const target = this.settings().target;
+    // Read the cache chunk by chunk so a whole book never becomes one huge transaction.
+    const done = texts.map(value => !needsTranslation(value));
+    for (let start = 0; start < total; start += PRETRANSLATE_CHUNK) {
+      throwIfAborted(signal);
+      const chunk = texts.slice(start, start + PRETRANSLATE_CHUNK);
+      const cached = await this.store.get(bookId, target, chunk.filter(needsTranslation));
+      chunk.forEach((value, index) => { if (cached.has(value)) done[start + index] = true; });
+    }
+    const report = () => onProgress(done.filter(Boolean).length, total);
+    report();
+    for (let start = 0; start < total; start += PRETRANSLATE_CHUNK) {
+      throwIfAborted(signal);
+      const chunk = texts.slice(start, start + PRETRANSLATE_CHUNK);
+      await this.translate(bookId, chunk, signal);
+      throwIfAborted(signal);
+      done.fill(true, start, start + chunk.length);
+      report();
+    }
+  }
+}
