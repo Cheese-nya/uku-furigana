@@ -380,7 +380,7 @@ export interface Translations {
   toolsProbeKey: string;
   toolsProbeLimit: string;
   toolsProbeMissing: string;
-  toolsProbePaid: string;
+  toolsProbeAccount: string;
   toolsProbeTimeout: string;
   toolsProbeOther: string;
   toolsDirect: string;
@@ -894,7 +894,7 @@ export const translations: Record<Locale, Translations> = {
     toolsProbeKey: 'Key 无效',
     toolsProbeLimit: '限流',
     toolsProbeMissing: '不存在',
-    toolsProbePaid: '需付费',
+    toolsProbeAccount: '账户受限',
     toolsProbeTimeout: '超时',
     toolsProbeOther: '不可用',
     toolsDirect: '国内直连',
@@ -1404,7 +1404,7 @@ export const translations: Record<Locale, Translations> = {
     toolsProbeKey: 'bad key',
     toolsProbeLimit: 'rate-limited',
     toolsProbeMissing: 'not found',
-    toolsProbePaid: 'needs credit',
+    toolsProbeAccount: 'account restricted',
     toolsProbeTimeout: 'timed out',
     toolsProbeOther: 'unavailable',
     toolsDirect: 'Works in mainland China',

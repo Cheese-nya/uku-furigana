@@ -115,13 +115,14 @@ export async function testConnection(llm: LlmSettings, target: TranslationTarget
   return translation;
 }
 
-export type ProbeResult = { state: 'ok' } | { state: 'bad'; reason: 'key' | 'limit' | 'missing' | 'paid' | 'timeout' | 'other'; detail: string };
+export type ProbeResult = { state: 'ok' } | { state: 'bad'; reason: 'key' | 'limit' | 'missing' | 'account' | 'timeout' | 'other'; detail: string };
 
 function probeReason(message: string): ProbeResult {
   if (/HTTP 40[13]/.test(message)) return { state: 'bad', reason: 'key', detail: message };
   if (/HTTP 429/.test(message)) return { state: 'bad', reason: 'limit', detail: message };
   if (/HTTP 404/.test(message)) return { state: 'bad', reason: 'missing', detail: message };
-  if (/HTTP 402/.test(message)) return { state: 'bad', reason: 'paid', detail: message };
+  // 402 is the account (not verified, no balance) — even for free models, so it is not "paid".
+  if (/HTTP 402/.test(message)) return { state: 'bad', reason: 'account', detail: message };
   if (/abort|中止|timeout/i.test(message)) return { state: 'bad', reason: 'timeout', detail: message };
   return { state: 'bad', reason: 'other', detail: message };
 }

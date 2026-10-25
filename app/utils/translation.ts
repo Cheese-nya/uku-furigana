@@ -32,6 +32,8 @@ const TARGETS: TranslationTarget[] = ['zh-Hans', 'zh-Hant', 'en'];
 
 export class TranslationError extends Error {
   readonly retryable: boolean;
+  /** How long the platform asked us to wait (Retry-After), when it said. */
+  retryAfterMs?: number;
 
   constructor(message: string, retryable: boolean) {
     super(message);
@@ -184,7 +186,7 @@ function userPrompt(texts: string[], context: string[]): string {
   return `${header}Sentences to translate (JSON array):\n${JSON.stringify(texts)}`;
 }
 
-/** First balanced JSON array in the reply, so surrounding prose or ``` fences do not matter. */
+/** First balanced JSON array in the text, so surrounding prose does not matter. */
 function firstJsonArray(source: string): string | undefined {
   const start = source.indexOf('[');
   if (start < 0) return undefined;
@@ -209,44 +211,61 @@ function firstJsonArray(source: string): string | undefined {
   return undefined;
 }
 
-export function parseLlmTranslations(reply: string, expected: number): string[] {
-  const raw = firstJsonArray(reply.replace(/```[a-zA-Z]*\s*/g, ''));
-  if (!raw) throw new TranslationError('模型没有返回 JSON 数组', false);
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new TranslationError('模型返回的 JSON 无法解析', false);
-  }
-  const list = Array.isArray(parsed) && parsed.every(item => typeof item === 'string') ? parsed as string[] : undefined;
-  if (!list) throw new TranslationError('译文格式不正确', false);
-  if (list.length !== expected) throw new TranslationError('译文条数不一致', false);
-  return list;
+const stringList = (value: unknown): string[] | undefined =>
+  Array.isArray(value) && value.length && value.every(item => typeof item === 'string') ? value as string[] : undefined;
+
+/** Reasoning models think aloud first (<think>…</think>, sometimes cut off); fences wrap the answer. */
+export function cleanLlmReply(reply: string): string {
+  return reply
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/^[\s\S]*<\/think>/i, '')
+    .replace(/<think>[\s\S]*$/i, '')
+    .replace(/```[a-zA-Z]*\s*/g, '')
+    .trim();
 }
 
-/** OpenAI-compatible chat endpoint, asked for a JSON array so one request covers a whole batch. */
-export async function translateLlm(
-  texts: string[],
-  target: string,
-  llm: LlmSettings,
-  fetchImpl: typeof fetch = fetch,
-  signal?: AbortSignal,
-  context: string[] = [],
-): Promise<string[]> {
-  if (!texts.length) return [];
-  if (!llm.apiKey.trim()) throw new TranslationError('请先在设置里填写 API Key', false);
-  const url = `${llm.baseUrl.replace(/\/+$/, '')}/chat/completions`;
+/**
+ * Read the model's translations, forgiving what models really send: an object around the array, single
+ * quotes, trailing commas, unescaped double quotes inside a translation, or a numbered list.
+ */
+export function parseLlmTranslations(reply: string, expected: number): string[] {
+  const text = cleanLlmReply(reply);
+  const attempts: (() => string[] | undefined)[] = [
+    () => { const raw = firstJsonArray(text); return raw ? stringList(JSON.parse(raw)) : undefined; },
+    () => {
+      const parsed: unknown = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1));
+      return parsed && typeof parsed === 'object' ? Object.values(parsed).map(stringList).find(Boolean) : undefined;
+    },
+    () => { const raw = firstJsonArray(text); return raw ? stringList(JSON.parse(raw.replace(/,\s*\]$/, ']'))) : undefined; },
+    // ["他说："你好"。", "…"]: split between items instead of trusting the quotes inside them.
+    () => {
+      const open = text.search(/\[\s*["']/);
+      const close = Math.max(text.lastIndexOf('"]'), text.lastIndexOf("']"), text.search(/["']\s*,?\s*\]\s*$/));
+      if (open < 0 || close <= open) return undefined;
+      const inner = text.slice(text.indexOf(text.slice(open).match(/["']/)?.[0] ?? '"', open) + 1, close);
+      return inner.split(/["']\s*,\s*["']/).map(item => item.replace(/\\n/g, '\n').replace(/\\(["'\\])/g, '$1'));
+    },
+    () => {
+      const items = text.split('\n').map(line => line.match(/^\s*(?:\d+|[-*•])\s*[.)、:：]?\s+(.+)$/)?.[1]).filter((line): line is string => Boolean(line));
+      return items.length ? items.map(item => item.replace(/^["'「“]|["'」”],?$/g, '')) : undefined;
+    },
+  ];
+  let found: string[] | undefined;
+  for (const attempt of attempts) {
+    try { found = attempt(); } catch { found = undefined; }
+    if (found?.length === expected) return found;
+  }
+  if (found) throw new TranslationError('译文条数不一致', false);
+  throw new TranslationError('模型返回的 JSON 无法解析', false);
+}
+
+const FORMAT_ERRORS = new Set(['模型返回的 JSON 无法解析', '译文条数不一致', '模型没有返回译文']);
+
+async function chat(url: string, llm: LlmSettings, messages: { role: string; content: string }[], fetchImpl: typeof fetch, signal?: AbortSignal): Promise<string> {
   const response = await fetchImpl(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${llm.apiKey}` },
-    body: JSON.stringify({
-      model: llm.model,
-      temperature: 0.3,
-      messages: [
-        { role: 'system', content: systemPrompt(target) },
-        { role: 'user', content: userPrompt(texts, context) },
-      ],
-    }),
+    body: JSON.stringify({ model: llm.model, temperature: 0.3, messages }),
     signal,
   });
   if (!response.ok) {
@@ -258,6 +277,8 @@ export async function translateLlm(
     );
     const error = httpError(response.status, '模型翻译');
     if (typeof detail === 'string' && detail.trim()) error.message += `：${detail.trim().slice(0, 160)}`;
+    const wait = Number(response.headers?.get?.('retry-after'));
+    if (Number.isFinite(wait) && wait > 0) error.retryAfterMs = Math.min(30, wait) * 1000;
     throw error;
   }
   let payload: unknown;
@@ -266,9 +287,68 @@ export async function translateLlm(
   } catch {
     throw new TranslationError('模型返回了无法解析的数据', true);
   }
-  const reply = (payload as { choices?: { message?: { content?: unknown } }[] } | null)?.choices?.[0]?.message?.content;
-  if (typeof reply !== 'string') throw new TranslationError('模型没有返回译文', false);
-  return parseLlmTranslations(reply, texts.length);
+  const content = (payload as { choices?: { message?: { content?: unknown } }[] } | null)?.choices?.[0]?.message?.content;
+  // Some endpoints send content as parts: [{ type: 'text', text }].
+  const reply = Array.isArray(content)
+    ? content.map(part => (typeof part === 'string' ? part : (part as { text?: unknown })?.text)).filter(part => typeof part === 'string').join('')
+    : content;
+  if (typeof reply !== 'string' || !cleanLlmReply(reply)) throw new TranslationError('模型没有返回译文', false);
+  return reply;
+}
+
+/**
+ * OpenAI-compatible chat endpoint, asked for a JSON array so one request covers a whole batch. When a
+ * model cannot keep to that (wrong count, broken JSON, a reply cut off), the batch is split in half and
+ * tried again, down to single sentences asked for plain text — so small or reasoning models still work.
+ */
+export async function translateLlm(
+  texts: string[],
+  target: string,
+  llm: LlmSettings,
+  fetchImpl: typeof fetch = fetch,
+  signal?: AbortSignal,
+  context: string[] = [],
+): Promise<string[]> {
+  if (!texts.length) return [];
+  if (!llm.apiKey.trim()) throw new TranslationError('请先在设置里填写 API Key', false);
+  const url = `${llm.baseUrl.replace(/\/+$/, '')}/chat/completions`;
+  const language = TARGET_NAMES[target] || target;
+  if (texts.length === 1) {
+    try {
+      const reply = await chat(url, llm, [
+        { role: 'system', content: systemPrompt(target) },
+        { role: 'user', content: userPrompt(texts, context) },
+      ], fetchImpl, signal);
+      try {
+        return parseLlmTranslations(reply, 1);
+      } catch (error) {
+        // A one-sentence answer without the array around it is still the answer.
+        const bare = cleanLlmReply(reply);
+        if (bare && !/^[[{]/.test(bare) && !bare.includes('\n\n')) return [bare.replace(/^["'「“]|["'」”]$/g, '').trim()];
+        throw error;
+      }
+    } catch (error) {
+      if (!(error instanceof TranslationError) || !FORMAT_ERRORS.has(error.message)) throw error;
+      const reply = cleanLlmReply(await chat(url, llm, [
+        { role: 'system', content: `Translate the Japanese text into ${language}. Reply with the translation only, no quotes, notes or explanations.` },
+        { role: 'user', content: texts[0] },
+      ], fetchImpl, signal));
+      return [reply.replace(/^["'「“]|["'」”]$/g, '').trim()];
+    }
+  }
+  try {
+    const reply = await chat(url, llm, [
+      { role: 'system', content: systemPrompt(target) },
+      { role: 'user', content: userPrompt(texts, context) },
+    ], fetchImpl, signal);
+    return parseLlmTranslations(reply, texts.length);
+  } catch (error) {
+    if (!(error instanceof TranslationError) || !FORMAT_ERRORS.has(error.message)) throw error;
+    const half = Math.ceil(texts.length / 2);
+    const first = await translateLlm(texts.slice(0, half), target, llm, fetchImpl, signal, context);
+    const second = await translateLlm(texts.slice(half), target, llm, fetchImpl, signal, [...context, ...texts.slice(0, half)].slice(-3));
+    return [...first, ...second];
+  }
 }
 
 interface EngineLimits {
@@ -278,7 +358,8 @@ interface EngineLimits {
 
 const ENGINE_LIMITS: Record<TranslationEngine, EngineLimits> = {
   microsoft: { batchSize: 50, maxChars: 8000 },
-  llm: { batchSize: 20, maxChars: 3000 },
+  // Small free models truncate long replies; a failed batch is split anyway, but smaller ones rarely fail.
+  llm: { batchSize: 12, maxChars: 2000 },
 };
 
 // Context is sent only to make the model's sentence boundaries and pronouns coherent; the
@@ -394,7 +475,7 @@ export class Translator {
       } catch (error) {
         const retryable = error instanceof TranslationError && error.retryable;
         if (!retryable || attempt >= RETRY_DELAYS.length) throw error;
-        await delay(RETRY_DELAYS[attempt], signal);
+        await delay(Math.max(RETRY_DELAYS[attempt], error instanceof TranslationError ? error.retryAfterMs ?? 0 : 0), signal);
       }
     }
   }
