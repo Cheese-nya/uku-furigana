@@ -301,3 +301,28 @@ test('pretranslate rejects with AbortError both before and during the run', asyn
   await assert.rejects(cancelling.pretranslate('b2', texts, () => {}, controller.signal), (error) => error.name === 'AbortError');
   assert.ok(calls.length > 0);
 });
+
+test('switching engine or model translates again; switching back reuses what that engine translated', async () => {
+  const { Translator, translationCacheKey } = loadTypescript('../app/utils/translation.ts');
+  const { MemoryTranslationStore } = loadTypescript('../app/utils/translationStore.ts');
+  const store = new MemoryTranslationStore();
+  let settings = { engine: 'microsoft', target: 'zh-Hans', llm: { baseUrl: 'https://x/v1', model: 'a', apiKey: 'k' } };
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    if (String(url).includes('edge.microsoft.com')) { calls.push('ms'); return { ok: true, status: 200, json: async () => JSON.parse(init.body).map(() => ({ translations: [{ text: '微软' }] })) }; }
+    const model = JSON.parse(init.body).model; calls.push(model);
+    return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: JSON.stringify([`模型${model}`]) } }] }) };
+  };
+  const translator = new Translator({ store, settings: () => settings, fetchImpl });
+  const get = async () => (await translator.translate('book', ['こんにちは。'])).get('こんにちは。');
+  assert.equal(await get(), '微软');
+  settings = { ...settings, engine: 'llm' };
+  assert.equal(await get(), '模型a', 'a new engine translates again instead of reusing Microsoft');
+  settings = { ...settings, llm: { ...settings.llm, model: 'b' } };
+  assert.equal(await get(), '模型b', 'a new model translates again');
+  settings = { ...settings, engine: 'microsoft' };
+  assert.equal(await get(), '微软');
+  assert.deepEqual(calls, ['ms', 'a', 'b'], 'switching back to Microsoft needed no request');
+  // Microsoft keeps the plain target, so translations cached by earlier versions still count.
+  assert.equal(translationCacheKey({ engine: 'microsoft', target: 'en', llm: settings.llm }), 'en');
+});

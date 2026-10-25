@@ -332,6 +332,16 @@ async function runLimited<T>(items: T[], limit: number, worker: (item: T) => Pro
 }
 
 /** Batched, cached, retrying translator over the Microsoft endpoint or an OpenAI-compatible LLM. */
+/**
+ * Cache slot for a sentence: the target language plus who translated it. Microsoft keeps the plain target
+ * (what earlier versions stored), every LLM endpoint + model gets its own slot, so switching models
+ * translates again instead of showing the old engine's text, and switching back finds it still there.
+ */
+export function translationCacheKey(settings: TranslationSettings): string {
+  if (settings.engine !== 'llm') return settings.target;
+  return `${settings.target}|${settings.llm.baseUrl.replace(/\/+$/, '')}|${settings.llm.model}`;
+}
+
 export class Translator {
   private readonly store: TranslationCache;
   private readonly settings: () => TranslationSettings;
@@ -382,6 +392,7 @@ export class Translator {
   async translate(bookId: string, texts: string[], signal?: AbortSignal): Promise<Map<string, string>> {
     const settings = this.settings();
     const target = settings.target;
+    const slot = translationCacheKey(settings);
     const engine = settings.engine;
     const result = new Map<string, string>();
     const seen = new Set<string>();
@@ -394,7 +405,7 @@ export class Translator {
     });
     if (!pending.length) return result;
 
-    const cached = await this.store.get(bookId, target, pending.map(item => item.text));
+    const cached = await this.store.get(bookId, slot, pending.map(item => item.text));
     const misses = pending.filter(item => {
       if (!cached.has(item.text)) return true;
       result.set(item.text, cached.get(item.text) as string);
@@ -416,7 +427,7 @@ export class Translator {
         result.set(source, value);
         pairs.push([source, value]);
       });
-      await this.store.put(bookId, target, engine, pairs);
+      await this.store.put(bookId, slot, engine, pairs);
     });
     return result;
   }
@@ -433,13 +444,13 @@ export class Translator {
     signal?: AbortSignal,
   ): Promise<void> {
     const total = texts.length;
-    const target = this.settings().target;
+    const slot = translationCacheKey(this.settings());
     // Read the cache chunk by chunk so a whole book never becomes one huge transaction.
     const done = texts.map(value => !needsTranslation(value));
     for (let start = 0; start < total; start += PRETRANSLATE_CHUNK) {
       throwIfAborted(signal);
       const chunk = texts.slice(start, start + PRETRANSLATE_CHUNK);
-      const cached = await this.store.get(bookId, target, chunk.filter(needsTranslation));
+      const cached = await this.store.get(bookId, slot, chunk.filter(needsTranslation));
       chunk.forEach((value, index) => { if (cached.has(value)) done[start + index] = true; });
     }
     const report = () => onProgress(done.filter(Boolean).length, total);
