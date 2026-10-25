@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { loadTypescript } from './loadTypescript.mjs';
 const {
   DEFAULT_TRANSLATION_SETTINGS, Translator, TranslationError,
-  loadTranslationSettings, saveTranslationSettings, translateLlm, translateMicrosoft, validateTranslationSettings,
+  loadTranslationSettings, saveTranslationSettings, translateLlm, translationConcurrency, translateMicrosoft, validateTranslationSettings,
 } = loadTypescript('../app/utils/translation.ts');
 const { MemoryTranslationStore, TranslationStore, defaultTranslationStore } = loadTypescript('../app/utils/translationStore.ts');
 
@@ -151,8 +151,9 @@ test('translate dedupes, skips cached sentences and batches within the Microsoft
   assert.equal(result.get('文0。'), 'cached 0');
   assert.equal(result.get('文119。'), 'zh:文119。');
   assert.equal(result.size, 120);
-  assert.equal(fetchImpl.calls.length, 3);
-  assert.deepEqual(fetchImpl.calls.map(call => call.body.length).sort((a, b) => b - a), [50, 50, 19]);
+  // A small first batch so the first lines arrive sooner, then full ones.
+  assert.equal(fetchImpl.calls.length, 4);
+  assert.deepEqual(fetchImpl.calls.map(call => call.body.length), [10, 50, 50, 9]);
   assert.equal(fetchImpl.calls[0].body.includes('文0。'), false);
   assert.equal(await store.count('b1', 'zh-Hans', texts), 120);
 });
@@ -388,4 +389,62 @@ test('translation models that answer one small array per line (Hunyuan-MT) are r
 test('a one-sentence answer with a header line keeps only the translation', () => {
   const { parseLlmTranslations } = loadTypescript('../app/utils/translation.ts');
   assert.deepEqual(parseLlmTranslations('需要翻译的句子（JSON数组）：\n["她平静地说她快要死了。""]', 1), ['她平静地说她快要死了。']);
+});
+
+test('lines arrive batch by batch: cache first, then each batch, and the first LLM batch is small', async () => {
+  const store = new MemoryTranslationStore();
+  await store.put('b1', 'zh-Hans|https://x/v1|m', 'llm', [['文0。', 'cached']]);
+  const texts = Array.from({ length: 17 }, (_, index) => `文${index}。`);
+  const sizes = [];
+  const fetchImpl = async (_url, init) => {
+    const list = JSON.parse(JSON.parse(init.body).messages.at(-1).content.match(/\[.*\]$/s)[0]);
+    sizes.push(list.length);
+    return llmReply(JSON.stringify(list.map(value => `zh:${value}`)));
+  };
+  const parts = [];
+  const translator = new Translator({ store, fetchImpl, settings: () => settings({ engine: 'llm', llm: { provider: 'custom', baseUrl: 'https://x/v1', model: 'm', apiKey: 'k' } }) });
+  const result = await translator.translate('b1', texts, undefined, { onPartial: found => parts.push([...found.keys()]) });
+  assert.deepEqual(sizes, [4, 12]);
+  assert.deepEqual(parts[0], ['文0。'], 'the cached part comes first');
+  assert.deepEqual(parts.slice(1).map(part => part.length).sort((a, b) => a - b), [4, 12]);
+  assert.equal(result.size, 17);
+
+  // Six on-screen sentences are never batched with the ones below them.
+  sizes.length = 0;
+  const more = Array.from({ length: 14 }, (_, index) => `新${index}。`);
+  await translator.translate('b2', more, undefined, { leading: 6 });
+  assert.deepEqual(sizes, [4, 2, 8]);
+});
+
+test('requests share one pool per platform; the newest call goes first and whole-book work waits', async () => {
+  let inFlight = 0;
+  let peak = 0;
+  const started = [];
+  const releases = [];
+  const fetchImpl = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    started.push(body[0]);
+    inFlight++;
+    peak = Math.max(peak, inFlight);
+    await new Promise(resolve => releases.push(resolve));
+    inFlight--;
+    return microsoftReply(body);
+  };
+  const translator = new Translator({ store: new MemoryTranslationStore(), fetchImpl, batchSize: 1, settings: () => settings() });
+  assert.equal(translationConcurrency(settings()), 3);
+  assert.equal(translationConcurrency(settings({ engine: 'llm', llm: { provider: 'gemini', baseUrl: '', model: '', apiKey: '' } })), 2);
+  assert.equal(translationConcurrency(settings({ engine: 'llm', llm: { provider: 'siliconflow', baseUrl: '', model: '', apiKey: '' } })), 4);
+  const tick = () => new Promise(resolve => setTimeout(resolve, 0));
+  const older = translator.translate('b1', ['旧1。', '旧2。', '旧3。']);
+  await tick();
+  const book = translator.translate('b1', ['本1。', '本2。'], undefined, { background: true });
+  await tick();
+  const newer = translator.translate('b1', ['新1。', '新2。']);
+  await tick();
+  assert.deepEqual(started, ['旧1。', '旧2。', '旧3。'], 'three Microsoft requests at once, the rest wait across calls');
+  while (releases.length) { releases.shift()(); await tick(); await tick(); }
+  await Promise.all([book, older, newer]);
+  assert.equal(peak, 3);
+  // Freed slots go to the newest reader call first; the whole-book batches come last.
+  assert.deepEqual(started.slice(3), ['新1。', '新2。', '本1。', '本2。']);
 });
