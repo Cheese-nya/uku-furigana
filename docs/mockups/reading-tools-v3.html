@@ -507,6 +507,24 @@ input[type=range] { width: 100%; accent-color: var(--label); }
 .chapnav .btn:disabled { opacity: .35; }
 .reader-scroll.vert .chapnav { flex-direction: column; margin: 0 2.4em; justify-content: center; }
 
+/* v3.2: AI translation providers */
+.sheet .field[hidden] { display: none; }
+.sheet .field input { min-width: 0; }
+.provs { display: flex; flex-wrap: wrap; gap: 6px; }
+.provs .btn { height: 30px; padding: 0 12px; font-size: 13px; }
+.provs .btn[aria-pressed="true"] { background: var(--ink); color: var(--on-ink); }
+.pnote { font-size: 12px; color: var(--label-2); margin: 8px 2px 10px; line-height: 1.5; }
+.pnote b { color: var(--ok); font-weight: 600; } .pnote i { font-style: normal; color: var(--review); font-weight: 600; }
+.orlogin { width: 100%; justify-content: center; height: 42px; margin-bottom: 12px; }
+.sheet .field .getkey { font-size: 12px; color: var(--label); font-weight: 600; text-decoration: none; white-space: nowrap; }
+.sheet .field .pick { border: 0; background: none; color: var(--label-2); cursor: pointer; padding: 4px; }
+.mlist { margin: -6px 0 12px; border-radius: 12px; background: var(--fill-2); max-height: 180px; overflow-y: auto; padding: 4px; }
+.mlist button { display: flex; width: 100%; justify-content: space-between; border: 0; background: none; padding: 8px 10px; border-radius: 8px; font: inherit; font-size: 13px; color: var(--label); cursor: pointer; text-align: left; }
+.mlist button:hover { background: var(--item-hover); }
+.mlist .free { font-size: 11px; color: var(--ok); font-weight: 600; }
+.testrow { display: flex; align-items: center; gap: 10px; margin: 0 0 8px; font-size: 12px; }
+.testrow .ok { color: var(--ok); } .testrow .bad { color: var(--danger); }
+
 /* ---------- reduced motion ---------- */
 .app.rm *, .app.rm *::before, .app.rm *::after { transition-duration: 1ms !important; animation-duration: 1ms !important; }
 </style>
@@ -529,6 +547,7 @@ input[type=range] { width: 100%; accent-color: var(--label); }
     <button class="demo" data-demo="settings">翻译与词典设置</button>
     <button class="demo" data-demo="toc">目录</button>
     <button class="demo" data-demo="chapterEnd">章末翻章</button>
+    <button class="demo" data-demo="ai">AI 翻译平台</button>
   </label>
 </div>
 
@@ -778,10 +797,15 @@ input[type=range] { width: 100%; accent-color: var(--label); }
       <div class="sec">翻译引擎</div>
       <div class="sel seg solid full" id="engSeg"><span class="sel-ind"></span><button data-opt="ms" aria-selected="true">微软翻译（免费）</button><button data-opt="llm">大模型 API</button></div>
       <div id="llmFields" style="display:none;margin-top:12px">
-        <label class="field"><span>接口地址</span><input value="https://api.deepseek.com/v1" spellcheck="false"></label>
-        <label class="field"><span>模型</span><input value="deepseek-chat" spellcheck="false"></label>
-        <label class="field"><span>API Key</span><input type="password" placeholder="sk-…" spellcheck="false"></label>
-        <div class="note">兼容 OpenAI 格式的接口均可（DeepSeek、通义、Kimi、OpenAI…）。Key 只保存在本机。</div>
+        <div class="provs" id="provs"></div>
+        <div class="pnote" id="provNote"></div>
+        <button class="btn ink orlogin" id="orLogin"><svg class="i"><use href="#i-link"/></svg>用 OpenRouter 账号登录</button>
+        <label class="field"><span>API Key</span><input type="password" id="keyIn" placeholder="粘贴 Key" spellcheck="false"><a class="getkey" id="getKey" href="#">获取 Key ↗</a></label>
+        <label class="field"><span>模型</span><input id="modelIn" spellcheck="false"><button class="pick" id="pickModel" aria-label="选择模型"><svg class="i"><use href="#i-down"/></svg></button></label>
+        <div class="mlist" id="mlist" hidden></div>
+        <label class="field" id="urlField" hidden><span>接口地址</span><input id="urlIn" spellcheck="false"></label>
+        <div class="testrow"><button class="btn" id="testBtn">测试连接</button><span id="testOut"></span></div>
+        <div class="note">Key 只保存在本机，翻译请求由本机直接发给该平台。</div>
       </div>
       <div class="note" id="msNote" style="margin-top:8px">无需注册，国内可直接使用。译文按段缓存在书里，再次打开不重复请求。</div>
       <div class="sec">译文语言</div>
@@ -1396,6 +1420,34 @@ $('#tocBtn').onclick = (e) => { e.stopPropagation(); openToc($('#tocBtn')); };
 $('#tocTitle').onclick = (e) => { e.stopPropagation(); openToc($('#tocTitle')); };
 document.addEventListener('click', (e) => { const r = e.target.closest('.toc-row'); if (!r) return; closeToc(); $('#readerScroll').scrollTop = 0; $('#pct1').textContent = `第 ${+r.dataset.ch + 1} / ${CHAPTERS.length} 章 · 0%`; $('#tocTitle b').textContent = '夢十夜 · ' + CHAPTERS[+r.dataset.ch]; });
 $('#tgrab').addEventListener('pointerup', () => $('#tocCard').classList.toggle('tall'));
+
+/* v3.2 providers */
+const PROVS = [
+  { id: 'siliconflow', name: '硅基流动', url: 'https://api.siliconflow.cn/v1', model: 'Qwen/Qwen3-8B', note: '<b>国内直连</b> · 部分开源模型免费（Qwen、GLM 等）' },
+  { id: 'dashscope', name: '通义', url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-turbo', note: '<b>国内直连</b> · 新用户有免费额度，之后按量付费' },
+  { id: 'openrouter', name: 'OpenRouter', url: 'https://openrouter.ai/api/v1', model: 'google/gemma-4-31b-it:free', note: '<i>国内不稳定</i> · 名称带 :free 的模型免费，可用账号一键登录', login: true },
+  { id: 'gemini', name: 'Gemini', url: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-2.5-flash', note: '<i>需要代理</i> · Flash 系列有免费额度' },
+  { id: 'groq', name: 'Groq', url: 'https://api.groq.com/openai/v1', model: 'llama-3.3-70b-versatile', note: '<i>需要代理</i> · 免费额度，速度快' },
+  { id: 'deepseek', name: 'DeepSeek', url: 'https://api.deepseek.com/v1', model: 'deepseek-chat', note: '<b>国内直连</b> · 付费，价格低，翻译质量好' },
+  { id: 'custom', name: '自定义', url: '', model: '', note: '任何兼容 OpenAI 格式的接口' },
+];
+let prov = 'siliconflow';
+function renderProv() {
+  const p = PROVS.find((x) => x.id === prov);
+  $('#provs').innerHTML = PROVS.map((x) => `<button class="btn" data-prov="${x.id}" aria-pressed="${x.id === prov}">${x.name}</button>`).join('');
+  $('#provNote').innerHTML = p.note;
+  $('#orLogin').style.display = p.login ? '' : 'none';
+  $('#getKey').style.display = p.id === 'custom' ? 'none' : '';
+  $('#urlField').hidden = p.id !== 'custom';
+  $('#modelIn').value = p.model; $('#urlIn').value = p.url; $('#mlist').hidden = true; $('#testOut').textContent = '';
+}
+$('#provs').addEventListener('click', (e) => { const b = e.target.closest('[data-prov]'); if (b) { prov = b.dataset.prov; renderProv(); } });
+$('#pickModel').onclick = (e) => { e.preventDefault(); const l = $('#mlist'); l.hidden = !l.hidden;
+  l.innerHTML = ['google/gemma-4-31b-it:free', 'nvidia/nemotron-3-super-120b-a12b:free', 'thinkingmachines/inkling-small:free', 'deepseek/deepseek-v4-flash', 'openai/gpt-5-mini'].map((m) => `<button data-m="${m}"><span>${m}</span>${m.endsWith(':free') ? '<span class="free">免费</span>' : ''}</button>`).join(''); };
+$('#mlist').addEventListener('click', (e) => { const b = e.target.closest('[data-m]'); if (b) { $('#modelIn').value = b.dataset.m; $('#mlist').hidden = true; } });
+$('#testBtn').onclick = () => { const o = $('#testOut'); o.className = ''; o.textContent = '正在测试…'; setTimeout(() => { if ($('#keyIn').value) { o.className = 'ok'; o.textContent = '✓ 可以使用 · 「こんにちは」→「你好」'; } else { o.className = 'bad'; o.textContent = '请先填写 API Key'; } }, 700); };
+$('#orLogin').onclick = () => { $('#keyIn').value = 'sk-or-v1-••••••••'; const o = $('#testOut'); o.className = 'ok'; o.textContent = '✓ 已登录 OpenRouter，Key 已保存'; };
+renderProv();
 $('#openTools').onclick = openTools;
 $('#toolsDone').onclick = closeSheet;
 $$('#toolsSheet .switch').forEach((s) => s.onclick = () => s.setAttribute('aria-checked', s.getAttribute('aria-checked') !== 'true'));
@@ -1444,6 +1496,7 @@ $('#stage').addEventListener('click', (e) => {
   if (d === 'import') demoImport();
   if (d === 'pdf') demoPdf();
   if (d === 'settings') openTools();
+  if (d === 'ai') { openTools(); selectors.engSeg.select('llm', false, false); prov = 'openrouter'; renderProv(); }
   if (d === 'toc') { goView('reader'); setTimeout(() => openToc(), 60); }
   if (d === 'chapterEnd') { goView('reader'); selectors.wmSeg.select('h', false, false); setTimeout(() => { const sc = $('#readerScroll'); sc.scrollTop = sc.scrollHeight; }, 60); }
 });

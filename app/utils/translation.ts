@@ -7,18 +7,23 @@ export interface LlmSettings {
   baseUrl: string;
   model: string;
   apiKey: string;
+  /** Preset the fields came from (aiProviders.ts), 'custom' for a hand-entered endpoint. */
+  provider?: string;
 }
 
 export interface TranslationSettings {
   engine: TranslationEngine;
   target: TranslationTarget;
   llm: LlmSettings;
+  /** Key, model and endpoint last used with each platform, so switching platforms keeps them. */
+  saved?: Record<string, LlmSettings>;
 }
 
 export const DEFAULT_TRANSLATION_SETTINGS: TranslationSettings = {
   engine: 'microsoft',
   target: 'zh-Hans',
-  llm: { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', apiKey: '' },
+  llm: { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', apiKey: '', provider: 'deepseek' },
+  saved: {},
 };
 
 const SETTINGS_KEY = 'uku-translation-settings-v1';
@@ -48,14 +53,24 @@ export function validateTranslationSettings(value: unknown): TranslationSettings
   const source = (typeof value === 'object' && value !== null ? value : {}) as Partial<TranslationSettings>;
   const llm = (typeof source.llm === 'object' && source.llm !== null ? source.llm : {}) as Partial<LlmSettings>;
   const defaults = DEFAULT_TRANSLATION_SETTINGS;
+  const validLlm = (value: Partial<LlmSettings>, fallback: LlmSettings): LlmSettings => ({
+    baseUrl: text(value.baseUrl, fallback.baseUrl),
+    model: text(value.model, fallback.model),
+    apiKey: text(value.apiKey, '', true),
+    provider: text(value.provider, fallback.provider ?? 'custom'),
+  });
+  const saved: Record<string, LlmSettings> = {};
+  if (typeof source.saved === 'object' && source.saved !== null) {
+    for (const [id, value] of Object.entries(source.saved)) {
+      if (typeof value === 'object' && value !== null) saved[id] = validLlm(value, { baseUrl: '', model: '', apiKey: '', provider: id });
+    }
+  }
   return {
     engine: oneOf(source.engine, ENGINES, defaults.engine),
     target: oneOf(source.target, TARGETS, defaults.target),
-    llm: {
-      baseUrl: text(llm.baseUrl, defaults.llm.baseUrl),
-      model: text(llm.model, defaults.llm.model),
-      apiKey: text(llm.apiKey, defaults.llm.apiKey, true),
-    },
+    // Settings saved before presets existed have no provider: they were a hand-entered endpoint.
+    llm: validLlm(llm, { ...defaults.llm, provider: typeof source.llm === 'object' && source.llm !== null ? 'custom' : defaults.llm.provider }),
+    saved,
   };
 }
 

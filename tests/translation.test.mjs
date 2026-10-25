@@ -90,7 +90,8 @@ function installStorage(value) {
 test('settings validation falls back field by field', () => {
   assert.deepEqual(DEFAULT_TRANSLATION_SETTINGS, {
     engine: 'microsoft', target: 'zh-Hans',
-    llm: { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', apiKey: '' },
+    llm: { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', apiKey: '', provider: 'deepseek' },
+    saved: {},
   });
   assert.deepEqual(validateTranslationSettings(undefined), DEFAULT_TRANSLATION_SETTINGS);
   assert.deepEqual(validateTranslationSettings('nope'), DEFAULT_TRANSLATION_SETTINGS);
@@ -98,8 +99,13 @@ test('settings validation falls back field by field', () => {
   // One bad field never discards its valid neighbours, and the key may be empty.
   assert.deepEqual(
     validateTranslationSettings({ engine: 'llm', target: 'en', llm: { baseUrl: 'https://x/v1/', model: '', apiKey: '' } }),
-    { engine: 'llm', target: 'en', llm: { baseUrl: 'https://x/v1/', model: 'deepseek-chat', apiKey: '' } },
+    { engine: 'llm', target: 'en', llm: { baseUrl: 'https://x/v1/', model: 'deepseek-chat', apiKey: '', provider: 'custom' }, saved: {} },
   );
+  // Each platform keeps its own key and model.
+  const withSaved = validateTranslationSettings({ llm: { provider: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', model: 'a:free', apiKey: 'k1' }, saved: { siliconflow: { baseUrl: 'https://api.siliconflow.cn/v1', model: 'Qwen/Qwen3-8B', apiKey: 'k2' }, broken: 3 } });
+  assert.equal(withSaved.llm.provider, 'openrouter');
+  assert.deepEqual(Object.keys(withSaved.saved), ['siliconflow']);
+  assert.equal(withSaved.saved.siliconflow.apiKey, 'k2');
 });
 
 test('settings round-trip through localStorage and survive a broken one', () => {
@@ -111,12 +117,12 @@ test('settings round-trip through localStorage and survive a broken one', () => 
   if (!restore) return;
   try {
     assert.deepEqual(loadTranslationSettings(), DEFAULT_TRANSLATION_SETTINGS);
-    const custom = { engine: 'llm', target: 'en', llm: { baseUrl: 'https://x/v1', model: 'm', apiKey: 'k' } };
+    const custom = { engine: 'llm', target: 'en', llm: { baseUrl: 'https://x/v1', model: 'm', apiKey: 'k', provider: 'custom' }, saved: {} };
     saveTranslationSettings(custom);
     assert.deepEqual(loadTranslationSettings(), custom);
     assert.ok(rows.has('uku-translation-settings-v1'));
     rows.set('uku-translation-settings-v1', JSON.stringify({ engine: 'llm', target: 'en', llm: { apiKey: '' } }));
-    assert.deepEqual(loadTranslationSettings().llm, { baseUrl: DEFAULT_TRANSLATION_SETTINGS.llm.baseUrl, model: DEFAULT_TRANSLATION_SETTINGS.llm.model, apiKey: '' });
+    assert.deepEqual(loadTranslationSettings().llm, { baseUrl: DEFAULT_TRANSLATION_SETTINGS.llm.baseUrl, model: DEFAULT_TRANSLATION_SETTINGS.llm.model, apiKey: '', provider: 'custom' });
     rows.set('uku-translation-settings-v1', 'not json');
     assert.deepEqual(loadTranslationSettings(), DEFAULT_TRANSLATION_SETTINGS);
   } finally {
