@@ -534,6 +534,9 @@ export interface Translations {
   feedbackErrInvalid: string;
   feedbackErrNetwork: string;
   feedbackErrServer: string;
+  crashTitle: string;
+  crashBody: string;
+  crashReload: string;
   feedbackRetry: string;
 }
 
@@ -1049,6 +1052,9 @@ export const translations: Record<Locale, Translations> = {
     feedbackErrInvalid: '内容不符合要求，请检查后重试',
     feedbackErrNetwork: '网络不可用，请检查网络后重试',
     feedbackErrServer: '服务器暂时不可用，请稍后再试',
+    crashTitle: '出错了',
+    crashBody: '软件遇到错误，这个界面停止了运行。书库和设置都还保存在本机。重新加载即可继续；上传报错日志能帮我们修好它。',
+    crashReload: '重新加载',
     feedbackRetry: '重试',
   },
   'en': {
@@ -1562,6 +1568,9 @@ export const translations: Record<Locale, Translations> = {
     feedbackErrInvalid: 'Content was rejected — please check it and retry',
     feedbackErrNetwork: 'Network unavailable — check your connection and retry',
     feedbackErrServer: 'Server is temporarily unavailable — please try again later',
+    crashTitle: 'Something went wrong',
+    crashBody: 'The app hit an error and stopped this screen. Your books and settings are kept on this device. Reload to continue; sending the error log helps us fix it.',
+    crashReload: 'Reload',
     feedbackRetry: 'Retry',
   },
 };
