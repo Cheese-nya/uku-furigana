@@ -49,6 +49,11 @@ This data (and adaptations of it) is shared under the same license and is not co
 Jitendex © Stephen Kraus, built on JMdict (EDRDG) and Tatoeba example sentences; repacked by
 `scripts/build-dictionary.mjs` (glosses, parts of speech and some examples only).
 
+读音对照表 `public/dict/readings.json.gz`（供注音与词典读音互相校验）同样由该词典数据生成，
+由 `tools/build-reading-table.mjs` 只提取「词条 → 读音」并排除不含汉字的词条。
+The reading cross-check table `public/dict/readings.json.gz` is derived from the same data by
+`tools/build-reading-table.mjs` (term → readings, kanji terms only).
+
 许可 / License: [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/)。Jitendex 的生成代码为 AGPL-3.0，本项目只使用其发布的词典数据，不包含其代码。
 This project uses only the published dictionary data, not Jitendex's AGPL-3.0 code.
 

@@ -149,6 +149,13 @@ npm run lint
 npm run build:web    # 静态网页包，输出到 out/
 ```
 
+内置的读音对照表（`public/dict/readings.json.gz`）由随附的日英词典生成，重新构建词典后再生成一次即可：
+
+```bash
+node scripts/build-dictionary.mjs ja-en   # 需要 tools/dict-src/jitendex-yomitan.zip
+node tools/build-reading-table.mjs        # 由 public/lookup/ja-en/terms-*.json.gz 生成对照表
+```
+
 ### 打包
 
 | 目标 | 命令 | 环境 |

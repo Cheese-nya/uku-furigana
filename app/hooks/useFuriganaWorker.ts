@@ -1,9 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { reviewReadings } from '../utils/aiReadingReview';
 import { AnnotationClient, type EngineState } from '../utils/annotationClient';
 import type { AnnotationInput } from '../utils/annotationTask';
-import type { ScriptLine } from '../utils/furigana';
+import { logEvent } from '../utils/appLog';
+import { formatRuby, type ScriptLine } from '../utils/furigana';
+import { loadTranslationSettings } from '../utils/translation';
 
 export function useFuriganaWorker(input: AnnotationInput) {
   const [engine, setEngine] = useState<EngineState>({ status: 'loading', mode: 'worker' });
@@ -36,7 +39,33 @@ export function useFuriganaWorker(input: AnnotationInput) {
           return { input, revision, lines, done: false, error: '' };
         });
       }, controller.signal).then(lines => {
-        if (!controller.signal.aborted) setSnapshot({ input, revision, lines, done: true, error: '' });
+        if (controller.signal.aborted) return;
+        setSnapshot({ input, revision, lines, done: true, error: '' });
+        const settings = loadTranslationSettings();
+        if (settings.engine === 'llm' && settings.aiReadingReview && settings.llm.apiKey.trim()) {
+          void reviewReadings(lines, settings.llm, controller.signal)
+            .then(results => {
+              if (controller.signal.aborted || results.length === 0) return;
+              setSnapshot(previous => {
+                if (previous.input !== input || previous.revision !== revision) return previous;
+                const nextLines = previous.lines.map(line => ({
+                  ...line,
+                  tokens: line.tokens.map(token => ({ ...token })),
+                }));
+                for (const { lineIndex, tokenIndex, reading } of results) {
+                  const token = nextLines[lineIndex]?.tokens[tokenIndex];
+                  if (!token) continue;
+                  token.ruby = formatRuby(reading, input.rubyType);
+                  token.needsReview = false;
+                }
+                return { ...previous, lines: nextLines };
+              });
+            })
+            .catch(err => {
+              if (controller.signal.aborted || (err instanceof Error && err.name === 'AbortError')) return;
+              logEvent('warn', 'reading-review', err instanceof Error ? err.message : String(err));
+            });
+        }
       }).catch(error => {
         if (!controller.signal.aborted) setSnapshot({ input, revision, lines: [], done: true, error: String(error) });
       });

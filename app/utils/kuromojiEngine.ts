@@ -20,36 +20,33 @@ export interface KuromojiToken {
 let tokenizer: { tokenize(text: string): KuromojiToken[] } | null = null;
 let initPromise: Promise<void> | null = null;
 
+/**
+ * Where the kuromoji dictionary lives. The reading table (readings.json.gz) sits in the same
+ * directory, so this is also its base path.
+ */
+export const resolveDictionaryPath = (dictionaryPath?: string): string => {
+  if (dictionaryPath) return dictionaryPath;
+  // Determine the dictionary path based on window.location if in browser
+  const location = typeof window === 'undefined' ? undefined : window.location;
+  if (!location) return '/dict';
+  // In PyWebView Desktop mode, we might need a relative or specific path
+  if (location.protocol === 'file:') return './dict';
+  // In NextJS dev/export mode, /dict is in the public root; ensure trailing slash is not an issue.
+  return location.pathname.replace(/\/$/, '') + '/dict';
+};
+
 export const initKuromoji = async (dictionaryPath?: string): Promise<void> => {
   if (tokenizer) return;
   if (initPromise) return initPromise;
 
   initPromise = new Promise((resolve, reject) => {
-    // Determine the dictionary path based on window.location if in browser
-    let dictPath = '/dict';
-    if (typeof window !== 'undefined') {
-       const isDesktopExe = window.location.protocol === 'file:';
-       // In PyWebView Desktop mode, we might need a relative or specific path
-       // In NextJS dev/export mode, /dict is in the public root.
-       if (isDesktopExe) {
-          dictPath = './dict';
-       } else {
-          // ensure trailing slash is not an issue
-          dictPath = window.location.pathname.replace(/\/$/, '') + '/dict';
-          // if we are at root, dictPath becomes /dict
-          if (dictPath === '/dict' && !window.location.pathname.startsWith('/dict')) {
-              dictPath = '/dict';
-          }
-       }
-    }
-
     let settled = false;
     const timeout = setTimeout(() => {
       settled = true;
       initPromise = null;
       reject(new Error('离线词典加载超时，请重试'));
     }, 60000);
-    kuromoji.builder({ dicPath: dictionaryPath || dictPath }).build((err, _tokenizer) => {
+    kuromoji.builder({ dicPath: resolveDictionaryPath(dictionaryPath) }).build((err, _tokenizer) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);

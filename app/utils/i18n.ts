@@ -302,6 +302,10 @@ export interface Translations {
   readerEnterFullscreen: string;
   readerExitFullscreen: string;
   readerFullscreenHint: string;
+  quickDraft: string;
+  quickDraftHint: string;
+  aiReadingReview: string;
+  aiReadingReviewHint: string;
 
   // Dark mode
   navDarkModeToggle: string;
@@ -829,6 +833,10 @@ export const translations: Record<Locale, Translations> = {
     readerEnterFullscreen: '全屏',
     readerExitFullscreen: '退出全屏',
     readerFullscreenHint: '单击空白处呼出四角控制栏',
+    quickDraft: '先用微软翻译秒出草稿',
+    quickDraftHint: '等待免费模型回复时，先显示微软翻译结果，模型译出后自动替换。',
+    aiReadingReview: 'AI 判读多音词',
+    aiReadingReviewHint: '注音后把拿不准的读音交给上面的模型判断，会消耗少量额度',
 
     // Dark mode
     navDarkModeToggle: '切换日间/黑夜模式',
@@ -1352,6 +1360,10 @@ export const translations: Record<Locale, Translations> = {
     readerEnterFullscreen: 'Fullscreen',
     readerExitFullscreen: 'Exit Fullscreen',
     readerFullscreenHint: 'Tap blank canvas to toggle 4-corner controls',
+    quickDraft: 'Instant Microsoft draft first',
+    quickDraftHint: 'Show Microsoft translations right away while waiting for the model, then replace them as lines arrive.',
+    aiReadingReview: 'AI reading review for polyphones',
+    aiReadingReviewHint: 'After annotation, ask the model above to pick readings for ambiguous words from context (uses a small amount of quota).',
 
     // Dark mode
     navDarkModeToggle: 'Toggle Light/Dark Mode',
