@@ -209,6 +209,8 @@ export function useLibraryController({
       sourceOverrides: withLfLineKeys(sourceOverrides),
       srtCues,
       format: editorFormat,
+      // An edited book carries no layout of its own: reuse the one the PDF import stored.
+      pdfLayout: editorBookId ? libraryDbRef.current.books[editorBookId]?.pdfLayout : undefined,
     });
     const book = locateBook(next, editorBookId ?? null, fingerprint);
     setLibraryDb(next);
@@ -250,6 +252,7 @@ export function useLibraryController({
           sourceOverrides: parsed.sourceOverrides,
           srtCues: parsed.srtCues,
           chapters: parsed.chapters,
+          ...(parsed.pdfLayout ? { pdfLayout: parsed.pdfLayout } : {}),
           ...(coverUrl ? { coverUrl } : {}),
         });
         const book = locateBook(next, null, fingerprint);

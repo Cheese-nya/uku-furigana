@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import { loadTypescript } from './loadTypescript.mjs';
 const {
   DEFAULT_TRANSLATION_SETTINGS, Translator, TranslationError,
-  loadTranslationSettings, saveTranslationSettings, translateLlm, translationConcurrency, translateMicrosoft, validateTranslationSettings,
+  loadTranslationSettings, parseIncrementalArray, reasoningParams, saveTranslationSettings,
+  translateLlm, translationConcurrency, translateMicrosoft, validateTranslationSettings,
 } = loadTypescript('../app/utils/translation.ts');
 const { MemoryTranslationStore, TranslationStore, defaultTranslationStore } = loadTypescript('../app/utils/translationStore.ts');
 
@@ -92,14 +93,16 @@ test('settings validation falls back field by field', () => {
     engine: 'microsoft', target: 'zh-Hans',
     llm: { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', apiKey: '', provider: 'deepseek' },
     saved: {},
+    quickDraft: true,
+    aiReadingReview: false,
   });
   assert.deepEqual(validateTranslationSettings(undefined), DEFAULT_TRANSLATION_SETTINGS);
   assert.deepEqual(validateTranslationSettings('nope'), DEFAULT_TRANSLATION_SETTINGS);
   assert.deepEqual(validateTranslationSettings({ engine: 'bogus', target: 7, llm: 'x' }), DEFAULT_TRANSLATION_SETTINGS);
   // One bad field never discards its valid neighbours, and the key may be empty.
   assert.deepEqual(
-    validateTranslationSettings({ engine: 'llm', target: 'en', llm: { baseUrl: 'https://x/v1/', model: '', apiKey: '' } }),
-    { engine: 'llm', target: 'en', llm: { baseUrl: 'https://x/v1/', model: 'deepseek-chat', apiKey: '', provider: 'custom' }, saved: {} },
+    validateTranslationSettings({ engine: 'llm', target: 'en', llm: { baseUrl: 'https://x/v1/', model: '', apiKey: '' }, quickDraft: false }),
+    { engine: 'llm', target: 'en', llm: { baseUrl: 'https://x/v1/', model: 'deepseek-chat', apiKey: '', provider: 'custom' }, saved: {}, quickDraft: false, aiReadingReview: false },
   );
   // Each platform keeps its own key and model.
   const withSaved = validateTranslationSettings({ llm: { provider: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', model: 'a:free', apiKey: 'k1' }, saved: { siliconflow: { baseUrl: 'https://api.siliconflow.cn/v1', model: 'Qwen/Qwen3-8B', apiKey: 'k2' }, broken: 3 } });
@@ -117,7 +120,7 @@ test('settings round-trip through localStorage and survive a broken one', () => 
   if (!restore) return;
   try {
     assert.deepEqual(loadTranslationSettings(), DEFAULT_TRANSLATION_SETTINGS);
-    const custom = { engine: 'llm', target: 'en', llm: { baseUrl: 'https://x/v1', model: 'm', apiKey: 'k', provider: 'custom' }, saved: {} };
+    const custom = { engine: 'llm', target: 'en', llm: { baseUrl: 'https://x/v1', model: 'm', apiKey: 'k', provider: 'custom' }, saved: {}, quickDraft: false, aiReadingReview: false };
     saveTranslationSettings(custom);
     assert.deepEqual(loadTranslationSettings(), custom);
     assert.ok(rows.has('uku-translation-settings-v1'));
@@ -447,4 +450,124 @@ test('requests share one pool per platform; the newest call goes first and whole
   assert.equal(peak, 3);
   // Freed slots go to the newest reader call first; the whole-book batches come last.
   assert.deepEqual(started.slice(3), ['新1。', '新2。', '本1。', '本2。']);
+});
+
+function sseReply(chunks) {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+      controller.close();
+    },
+  });
+  return new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream; charset=utf-8' } });
+}
+
+test('parseIncrementalArray handles partial input, <think> blocks, fences and escaped quotes', () => {
+  assert.deepEqual(parseIncrementalArray(''), []);
+  assert.deepEqual(parseIncrementalArray('<think>still thinking ["not yet"]'), []);
+  assert.deepEqual(parseIncrementalArray('<think>draft ["ignored"]</think>\n```json\n["第一句。","第二句未完'), ['第一句。']);
+  assert.deepEqual(
+    parseIncrementalArray('```json\n[\n  "他说：\\"你好\\"。\\n第二行",\n  "路径 C:\\\\temp",\n  "未闭合'),
+    ['他说："你好"。\n第二行', '路径 C:\\temp'],
+  );
+  assert.deepEqual(parseIncrementalArray('["甲","乙","丙"]\n```'), ['甲', '乙', '丙']);
+});
+
+test('SSE streaming emits items incrementally via onItem and onPartial, and final validation overwrites wrong early items', async () => {
+  const llm = { provider: 'deepseek', baseUrl: 'https://x/v1', model: 'deepseek-chat', apiKey: 'k' };
+  const items = [];
+  const sse = sseReply([
+    'data: {"choices":[{"delta":{"content":"<think>hmm</think>```json\\n[\\"第一"}}]}\n\n',
+    'data: {"choices":[{"delta":{"content":"句。\\", \\"第二"}}]}\n\n',
+    'data: {"choices":[{"delta":{"content":[{"type":"text","text":"句。\\"]\\n```"}]}}]}\n',
+    'data: [DONE]\n\n',
+  ]);
+  const out = await translateLlm(['文1。', '文2。'], 'zh-Hans', llm, async () => sse, undefined, [], (index, text) => items.push([index, text]));
+  assert.deepEqual(items, [[0, '第一句。'], [1, '第二句。']]);
+  assert.deepEqual(out, ['第一句。', '第二句。']);
+
+  // If a streamed batch ends with the wrong count, split-in-half overwrites the earlier streamed item.
+  const store = new MemoryTranslationStore();
+  const partials = [];
+  let callCount = 0;
+  const translator = new Translator({
+    store,
+    settings: () => settings({ engine: 'llm', quickDraft: false, llm }),
+    fetchImpl: async () => {
+      callCount += 1;
+      if (callCount === 1) {
+        return sseReply([
+          'data: {"choices":[{"delta":{"content":"[\\"流式错译\\"]"}}]}\n\n',
+          'data: [DONE]\n\n',
+        ]);
+      }
+      return llmReply(callCount === 2 ? '["正确一"]' : '["正确二"]');
+    },
+  });
+  const finalMap = await translator.translate('b1', ['文1。', '文2。'], undefined, {
+    onPartial: found => partials.push(new Map(found)),
+  });
+  assert.equal(partials.some(map => map.get('文1。') === '流式错译'), true);
+  assert.equal(finalMap.get('文1。'), '正确一');
+  assert.equal(finalMap.get('文2。'), '正确二');
+});
+
+test('reasoningParams disables or minimizes thinking per platform and retries once on 400', async () => {
+  assert.deepEqual(reasoningParams({ provider: 'groq', baseUrl: '', model: 'openai/gpt-oss-120b', apiKey: '' }), { reasoning_effort: 'low' });
+  assert.deepEqual(reasoningParams({ provider: 'groq', baseUrl: '', model: 'llama-3.3-70b-versatile', apiKey: '' }), {});
+  assert.deepEqual(reasoningParams({ provider: 'siliconflow', baseUrl: '', model: 'Qwen/Qwen3-8B', apiKey: '' }), { enable_thinking: false });
+  assert.deepEqual(reasoningParams({ provider: 'dashscope', baseUrl: '', model: 'qwen3-8b', apiKey: '' }), { enable_thinking: false });
+  assert.deepEqual(reasoningParams({ provider: 'siliconflow', baseUrl: '', model: 'deepseek-ai/DeepSeek-V3', apiKey: '' }), {});
+  assert.deepEqual(reasoningParams({ provider: 'gemini', baseUrl: '', model: 'gemini-2.5-flash', apiKey: '' }), { reasoning_effort: 'none' });
+  assert.deepEqual(reasoningParams({ provider: 'gemini', baseUrl: '', model: 'gemini-2.0-flash', apiKey: '' }), {});
+  assert.deepEqual(reasoningParams({ provider: 'openrouter', baseUrl: '', model: 'google/gemma-3-27b-it:free', apiKey: '' }), { reasoning: { effort: 'low' } });
+  assert.deepEqual(reasoningParams({ provider: 'deepseek', baseUrl: '', model: 'deepseek-chat', apiKey: '' }), {});
+
+  const { getEntries, clearEntries } = loadTypescript('../app/utils/appLog.ts');
+  clearEntries();
+  const bodies = [];
+  const llm = { provider: 'siliconflow', baseUrl: 'https://api.siliconflow.cn/v1', model: 'Qwen/Qwen3-8B', apiKey: 'k' };
+  const result = await translateLlm(['文一。'], 'zh-Hans', llm, async (_url, init) => {
+    const body = JSON.parse(init.body);
+    bodies.push(body);
+    if (bodies.length === 1) {
+      return new Response(JSON.stringify({ error: { message: 'Invalid parameter: enable_thinking is not supported' } }), {
+        status: 400, headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return llmReply('["译一。"]');
+  });
+  assert.deepEqual(result, ['译一。']);
+  assert.equal(bodies.length, 2);
+  assert.equal(bodies[0].stream, true);
+  assert.equal(bodies[0].enable_thinking, false);
+  assert.equal('enable_thinking' in bodies[1], false);
+  assert.match(getEntries().map(e => e.message).join('\n'), /enable_thinking/);
+});
+
+test('quickDraft emits Microsoft drafts first without caching them in the LLM slot, then LLM replaces them', async () => {
+  const store = new MemoryTranslationStore();
+  const llm = { provider: 'deepseek', baseUrl: 'https://x/v1', model: 'm', apiKey: 'k' };
+  const events = [];
+  const translator = new Translator({
+    store,
+    settings: () => settings({ engine: 'llm', quickDraft: true, llm }),
+    fetchImpl: async (url, init) => {
+      if (String(url).includes('edge.microsoft.com')) {
+        return microsoftReply(JSON.parse(init.body), '草稿:');
+      }
+      return llmReply('["精译一","精译二"]');
+    },
+  });
+  const result = await translator.translate('b1', ['文一。', '文二。'], undefined, {
+    onPartial: (found, draft) => {
+      if (found.size) events.push({ entries: [...found.entries()], draft: Boolean(draft) });
+    },
+  });
+  assert.deepEqual(events[0], { entries: [['文一。', '草稿:文一。'], ['文二。', '草稿:文二。']], draft: true });
+  assert.deepEqual(events.at(-1), { entries: [['文一。', '精译一'], ['文二。', '精译二']], draft: false });
+  assert.deepEqual(result, new Map([['文一。', '精译一'], ['文二。', '精译二']]));
+  const cached = await store.get('b1', 'zh-Hans|https://x/v1|m', ['文一。', '文二。']);
+  assert.deepEqual(cached, new Map([['文一。', '精译一'], ['文二。', '精译二']]));
 });

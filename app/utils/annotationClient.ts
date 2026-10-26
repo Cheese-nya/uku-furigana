@@ -1,6 +1,7 @@
 import type { AnalyzedToken } from './analyze';
 import type { ScriptLine } from './furigana';
 import type { AnnotationChunk, AnnotationInput, createAnnotator } from './annotationTask';
+import type { ReadingTable } from './readingCheck';
 import type { WorkerRequest, WorkerResponse } from '../workers/protocol';
 
 export interface EngineState {
@@ -82,11 +83,20 @@ export class AnnotationClient {
     this.worker = null;
     this.onState({ status: 'loading', mode: 'fallback', error: reason });
     try {
-      const [{ initKuromoji }, { createAnnotator }] = await Promise.all([import('./kuromojiEngine'), import('./annotationTask')]);
+      const [{ initKuromoji, resolveDictionaryPath }, { createAnnotator }, { loadReadingTable }] = await Promise.all([
+        import('./kuromojiEngine'), import('./annotationTask'), import('./readingCheck'),
+      ]);
       let error = '';
+      // The reading table loads alongside, never instead of, annotation; without it the
+      // cross-check is simply skipped.
+      let readings: ReadingTable | null = null;
+      void loadReadingTable(resolveDictionaryPath(this.dictionaryPath)).then(
+        table => { readings = table; },
+        cause => console.warn('读音对照表加载失败，跳过词典校对：', cause),
+      );
       try { await initKuromoji(this.dictionaryPath); } catch (cause) { error = String(cause); }
       if (this.disposed) return;
-      this.fallback = createAnnotator();
+      this.fallback = createAnnotator(() => readings);
       this.onState({ status: error ? 'degraded' : 'ready', mode: 'fallback', error: error || reason });
       this.resolveReady();
       for (const [id, job] of this.jobs) void this.runFallback(id, job);

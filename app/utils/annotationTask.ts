@@ -2,6 +2,7 @@ import { annotateLine, formatRuby, type RubyType, type ScriptLine } from './furi
 import { applyRubyOverrides, type RubyOverride } from './rubyOverrides';
 import { applyGlossary } from './glossary';
 import type { LearnedReading, ProperNounEntry } from './correctionDatabase';
+import { checkLine, type ReadingTable } from './readingCheck';
 import { learnedOverrides } from './review';
 
 export interface AnnotationInput {
@@ -30,8 +31,8 @@ function applyLearned(line: ScriptLine, entries: LearnedReading[] = [], type: Ru
 }
 
 /** Own one cache per execution environment; cache canonical readings, never overlays. */
-export function createAnnotator() {
-  const cache = new Map<string, ScriptLine>();
+export function createAnnotator(getTable?: () => ReadingTable | null) {
+  const cache = new Map<string, { line: ScriptLine; checkedWithTable: boolean }>();
   return {
     clear: () => cache.clear(),
     async run(input: AnnotationInput, cancelled: () => boolean, onChunk: (chunk: AnnotationChunk) => void): Promise<void> {
@@ -40,11 +41,16 @@ export function createAnnotator() {
       const overrides = groupOverrides(input.overrides);
       for (let offset = 0; offset < texts.length; offset += 50) {
         if (cancelled()) throw new DOMException('注音任务已取消', 'AbortError');
+        // The reading table arrives in the background; lines annotated before it did are
+        // re-annotated (and cached) once it is there.
+        const table = getTable?.() ?? null;
         const lines = texts.slice(offset, offset + 50).map((text, index) => {
-          let canonical = cache.get(text);
+          const entry = cache.get(text);
+          let canonical = entry && entry.checkedWithTable === Boolean(table) ? entry.line : undefined;
           if (!canonical) {
             canonical = annotateLine(text, 'hiragana');
-            cache.set(text, canonical);
+            if (table) canonical = checkLine(canonical, table);
+            cache.set(text, { line: canonical, checkedWithTable: Boolean(table) });
             if (cache.size > 12000) cache.delete(cache.keys().next().value!);
           }
           const line: ScriptLine = { ...canonical, id: String(offset + index), tokens: canonical.tokens.map(token => ({ ...token,

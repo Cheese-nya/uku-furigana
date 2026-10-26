@@ -22,9 +22,9 @@ export interface AiProvider {
 // the page. Checked 2026-10-25; Zhipu does not, so it is left out.
 export const AI_PROVIDERS: AiProvider[] = [
   {
-    id: 'siliconflow', name: '硅基流动', nameEn: 'SiliconFlow', baseUrl: 'https://api.siliconflow.cn/v1', model: 'tencent/Hunyuan-MT-7B',
+    id: 'siliconflow', name: '硅基流动', nameEn: 'SiliconFlow', baseUrl: 'https://api.siliconflow.cn/v1', model: 'XingChenAGI/Xing4.0-29B',
     keyUrl: 'https://cloud.siliconflow.cn/account/ak', direct: true,
-    note: { zh: '翻译专用的 Hunyuan-MT-7B 免费；账号需实名认证且余额不为负', en: 'Hunyuan-MT-7B, a translation model, is free; the account must be verified and not overdue' },
+    note: { zh: '默认 Xing4.0-29B（免费，约 10 秒/批）；翻译专用的 Hunyuan-MT-7B 也免费，质量更好但每句近一分钟。账号需实名认证且余额不为负', en: 'Defaults to Xing4.0-29B (free, ~10 s per batch); Hunyuan-MT-7B is also free with better quality but takes about a minute per sentence. The account must be verified and not overdue' },
   },
   {
     id: 'dashscope', name: '通义', nameEn: 'Qwen (DashScope)', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-turbo',

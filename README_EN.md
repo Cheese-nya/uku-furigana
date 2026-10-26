@@ -149,6 +149,14 @@ npm run lint
 npm run build:web    # static web bundle in out/
 ```
 
+The reading cross-check table (`public/dict/readings.json.gz`) is generated from the bundled Japanese–English
+dictionary; regenerate it after rebuilding that dictionary:
+
+```bash
+node scripts/build-dictionary.mjs ja-en   # needs tools/dict-src/jitendex-yomitan.zip
+node tools/build-reading-table.mjs        # reads public/lookup/ja-en/terms-*.json.gz
+```
+
 ### Packaging
 
 | Target | Command | Needs |

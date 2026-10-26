@@ -3,7 +3,7 @@
 import React from 'react';
 import { GlassPopover, PopoverItem, PopoverSeparator } from './glass/GlassPopover';
 import { LiquidSelector } from './glass/LiquidSelector';
-import { IconBug, IconCheck, IconDictionary, IconDownload, IconMessage, IconUsers, IconTranslate } from './glass/icons';
+import { IconBug, IconCheck, IconDictionary, IconDownload, IconList, IconMessage, IconUsers, IconTranslate } from './glass/icons';
 import { UpdateDot } from './UpdateDot';
 import { getPlatform } from '../utils/appInfo';
 import { QQ_GROUP, type UpdateState } from '../utils/updateTypes';
@@ -23,6 +23,9 @@ export interface SettingsMenuProps {
   glossaryCount: number;
   onOpenLearned: () => void;
   onOpenGlossary: () => void;
+  /** Release notes sheet; the row carries the yellow dot until the newest version has been opened once. */
+  onOpenWhatsNew?: () => void;
+  hasUnseenNotes?: boolean;
   /** Translation & lookup sheet; the row shows the engine and how many dictionaries there are. */
   onOpenReadingTools?: () => void;
   readingToolsDetail?: string;
@@ -60,6 +63,8 @@ export function SettingsMenu({
   glossaryCount,
   onOpenLearned,
   onOpenGlossary,
+  onOpenWhatsNew,
+  hasUnseenNotes = false,
   onOpenReadingTools,
   readingToolsDetail,
   dictionaryStatus,
@@ -184,6 +189,13 @@ export function SettingsMenu({
       <PopoverItem icon={<IconDictionary size={17} />} detail={glossaryCount} onClick={() => { onClose(); onOpenGlossary(); }}>{t.properNounGlossary}</PopoverItem>
       {onOpenReadingTools && (
         <PopoverItem icon={<IconTranslate size={17} />} detail={readingToolsDetail} onClick={() => { onClose(); onOpenReadingTools(); }}>{t.toolsTitle}</PopoverItem>
+      )}
+      {onOpenWhatsNew && (
+        <PopoverItem icon={<IconList size={17} />} onClick={() => { onClose(); onOpenWhatsNew(); }}>
+          {t.whatsNew}
+          {/* UpdateDot stays absolutely positioned; this 8px box keeps it inline after the title. */}
+          {hasUnseenNotes && <span className="relative ml-1.5 inline-block h-2 w-2 shrink-0 align-middle"><UpdateDot /></span>}
+        </PopoverItem>
       )}
       {hasFeedbackGroup && (
         <>

@@ -287,6 +287,56 @@ export function parseCompoundToTokens(
 }
 
 /**
+ * Common IPADIC heteronyms (多音字) whose dictionary entry is easily the wrong
+ * reading in a dubbing script. Table-driven on purpose: `reading` is the default
+ * and `alternatives` is the candidate set that reaches the review queue
+ * (parseCompoundToTokens puts the selected reading first). Entries without
+ * alternatives are certain jukujikun and stay out of review.
+ */
+const HETERONYM_READINGS: Record<string, { reading: string; alternatives?: string[] }> = {
+  // 一人/二人 are already resolved as person compounds; kept here so the default
+  // also holds when the word reaches disambiguation without the pair check.
+  '一人': { reading: 'ひとり' },
+  '二人': { reading: 'ふたり' },
+  '大人': { reading: 'おとな' },
+  '今日': { reading: 'きょう', alternatives: ['きょう', 'こんにち'] },
+  '明日': { reading: 'あした', alternatives: ['あした', 'あす'] },
+  '昨日': { reading: 'きのう', alternatives: ['きのう', 'さくじつ'] },
+  '上手': { reading: 'じょうず', alternatives: ['じょうず', 'うわて'] },
+  '下手': { reading: 'へた', alternatives: ['へた', 'したて'] },
+  '人気': { reading: 'にんき', alternatives: ['にんき', 'ひとけ'] },
+  '生物': { reading: 'せいぶつ', alternatives: ['せいぶつ', 'なまもの'] },
+  '色紙': { reading: 'しきし', alternatives: ['しきし', 'いろがみ'] },
+  '寒気': { reading: 'さむけ', alternatives: ['さむけ', 'かんき'] },
+  '市場': { reading: 'しじょう', alternatives: ['しじょう', 'いちば'] },
+  '最中': { reading: 'さいちゅう', alternatives: ['さいちゅう', 'もなか'] },
+  '分別': { reading: 'ふんべつ', alternatives: ['ふんべつ', 'ぶんべつ'] },
+  '目下': { reading: 'もっか', alternatives: ['もっか', 'めした'] },
+  '大家': { reading: 'おおや', alternatives: ['おおや', 'たいか'] },
+  '風車': { reading: 'ふうしゃ', alternatives: ['ふうしゃ', 'かざぐるま'] },
+  '心中': { reading: 'しんじゅう', alternatives: ['しんじゅう', 'しんちゅう'] },
+  '日本': { reading: 'にほん', alternatives: ['にほん', 'にっぽん'] },
+  // Usually split as 何 + 時 / 何 + で by IPADIC; kept for dictionaries that fuse them.
+  '何時': { reading: 'なんじ', alternatives: ['なんじ', 'いつ'] },
+  '何で': { reading: 'なんで', alternatives: ['なんで', 'なにで'] },
+};
+
+/** 何時/時 + one of these is the pronoun いつ, not the counter reading なんじ. */
+const ITSU_FOLLOWER = /^(も|でも|から|まで|か|だろう|頃)/;
+
+/**
+ * 何で + one of these is the interrogative "why" (なん + で = なんで); 何で +
+ * anything else (何で書いた, 何で食べた) is instrumental (なに + で = なにで).
+ */
+const NANDE_FOLLOWER = /^(来|行|帰|泣|笑|遅|怒|死|起|寝|呼|言|思|知)/;
+
+/** 何 + 時 + も/から/まで is the pronoun いつ, not the counter なんじ. */
+function findItsuCompound(tokens: KuromojiToken[], index: number): { length: number; surface: string; reading: string } | null {
+  if (tokens[index]?.surface_form !== '何' || tokens[index + 1]?.surface_form !== '時') return null;
+  return ITSU_FOLLOWER.test(tokens[index + 2]?.surface_form || '') ? { length: 2, surface: '何時', reading: 'いつ' } : null;
+}
+
+/**
  * Contextual Disambiguation Engine (前後文上下文消歧引擎)
  * Analyzes surrounding tokens, grammatical markers, and sentence semantics to pick the correct reading for Japanese heteronyms.
  */
@@ -302,6 +352,8 @@ export function disambiguateToken(
 
   const prevToken = i > 0 ? allTokens[i - 1] : null;
   const nextToken = i < allTokens.length - 1 ? allTokens[i + 1] : null;
+  const followingTokens = (count: number) =>
+    allTokens.slice(i + 1, i + 1 + count).map(token => token.surface_form).join('');
 
   // 1. 辛い (からい vs つらい)
   if (surface === '辛い') {
@@ -332,11 +384,20 @@ export function disambiguateToken(
   // 2. 何 (なん vs なに)
   else if (surface === '何') {
     const nextSurface = nextToken ? nextToken.surface_form : '';
+    const afterNext = allTokens[i + 2]?.surface_form || '';
     // The dictionary tags 何 as a numeral before any counter suffix (何歳, 何杯, 何軒).
-    const isCounter = kt.pos_detail_1 === '数' || /^(人|日|回|度|番|年|時|分|秒|個|本|枚|匹|冊|通|台|階|体|点|色|曲|種類)/.test(nextSurface);
-    const isNanFollower = /^(で|だ|です|である|だった|だろう|の)/.test(nextSurface);
+    // ...but not before a particle: 何で書いた is なにで (with what), whatever the tag says.
+    const isCounter = (kt.pos_detail_1 === '数' && !/^助(動)?詞$/.test(nextToken?.pos ?? '')) ||
+      /^(人|日|回|度|番|年|時|分|秒|個|本|枚|匹|冊|通|台|階|体|点|色|曲|週|歳|種類)/.test(nextSurface);
+    // 何で splits into 何 + で: なん + で (なんで "why") in 何でも and before motion
+    // verbs, なに + で (なにで "with what") before other verbs (何で書いた).
+    // The alternatives on 何 carry both outcome readings, so the review entry for
+    // the following で stays coherent.
+    const nande = nextSurface === 'で' && (/^も/.test(afterNext) || NANDE_FOLLOWER.test(afterNext));
+    // なん before です/だ/の/と/て (何ですか, 何の本, 何と言った) and the counters above.
+    const isNanFollower = nande || /^(だ|です|である|だった|だろう|の|と|て)/.test(nextSurface);
 
-    if (isCounter || isNanFollower || nextSurface === 'と') {
+    if (isCounter || isNanFollower) {
       reading = 'なん';
       alternatives = ['なん', 'なに'];
     } else {
@@ -440,6 +501,41 @@ export function disambiguateToken(
     }
   }
 
+  // 9. Common IPADIC heteronyms: table default, refined by a few set phrases.
+  else if (HETERONYM_READINGS[surface]) {
+    reading = HETERONYM_READINGS[surface].reading;
+    alternatives = HETERONYM_READINGS[surface].alternatives;
+    // 今日: こんにち in set phrases (今日的, 今日では, 今日までは, 今日の世界).
+    // 今日は。 is the greeting, so the reading stays ambiguous there.
+    if (surface === '今日' && /^(は[。」！？!?]|の(世界|日本(?![語人]))|的|では|までは)/.test(followingTokens(2))) {
+      reading = 'こんにち';
+      alternatives = ['きょう', 'こんにち'];
+    }
+    // 人気のない / 人気がない "no sign of people" reads ひとけ, not にんき (popularity).
+    // 人気がある/人気のある stays にんき: it only ever means "popular".
+    if (surface === '人気' && /^(の|が)(ない|無い|ありません)/.test(followingTokens(2))) {
+      reading = 'ひとけ';
+      alternatives = ['ひとけ', 'にんき'];
+    }
+    // A fused 何時 also covers the いつ pronunciation (何時も = いつも).
+    if (surface === '何時' && ITSU_FOLLOWER.test(followingTokens(1))) {
+      reading = 'いつ';
+      alternatives = ['いつ', 'なんじ'];
+    }
+    // A fused 何で splits in practice (何 + で); keep both readings when it does not.
+    // IPADIC fuses it as an adverb (ナンデ), so the same follower test as the split form decides.
+    if (surface === '何で') {
+      reading = NANDE_FOLLOWER.test(followingTokens(1)) ? 'なんで' : 'なにで';
+      alternatives = ['なんで', 'なにで'];
+    }
+  }
+
+  // 10. 時 split off after 何 is the counter じ (何時 = なんじ), not とき.
+  else if (surface === '時' && prevToken?.surface_form === '何') {
+    reading = 'じ';
+    alternatives = ['じ', 'とき'];
+  }
+
   return { reading, alternatives };
 }
 
@@ -486,6 +582,14 @@ export function annotateLine(
 
     for (let i = 0; i < kuromojiTokens.length; i++) {
       const kt = kuromojiTokens[i];
+      // 何時も / 何時から is いつ: the counter path would say なんじ, so fuse the pair.
+      const itsuCompound = findItsuCompound(kuromojiTokens, i);
+      if (itsuCompound) {
+        tokens.push(...parseCompoundToTokens(itsuCompound.surface, itsuCompound.reading, rubyType, ['いつ', 'なんじ'])
+          .map(token => ({ ...token, readingSource: 'automatic' as const })));
+        i += itsuCompound.length - 1;
+        continue;
+      }
       const counterCompound = findCounterCompound(kuromojiTokens, i);
       if (counterCompound) {
         // Counter readings are certain, except counts with two common readings (一日), which stay in review.

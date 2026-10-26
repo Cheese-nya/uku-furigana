@@ -91,7 +91,39 @@ export function ReadingToolsSheet({
         options={[{ value: 'microsoft', label: t.toolsEngineMicrosoft }, { value: 'llm', label: t.toolsEngineLlm }]}
       />
       {settings.engine === 'llm' ? (
-        <LlmFields settings={settings} onSettingsChange={onSettingsChange} locale={locale} t={t} loginNotice={loginNotice} />
+        <>
+          <LlmFields settings={settings} onSettingsChange={onSettingsChange} locale={locale} t={t} loginNotice={loginNotice} />
+          <div className="mt-2.5 flex items-center justify-between gap-2.5 rounded-[14px] bg-[var(--fill-2)] px-3 py-2.5">
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold text-[var(--label)]">{t.quickDraft}</div>
+              <div className="text-xs text-[var(--label-2)]">{t.quickDraftHint}</div>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={settings.quickDraft !== false}
+              aria-label={t.quickDraft}
+              className="switch shrink-0 origin-right scale-[.85]"
+              onClick={() => set({ quickDraft: settings.quickDraft === false })}
+            ><i /></button>
+          </div>
+          {Boolean(settings.llm.apiKey.trim()) && (
+            <div className="mt-2.5 flex items-center justify-between gap-2.5 rounded-[14px] bg-[var(--fill-2)] px-3 py-2.5">
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold text-[var(--label)]">{t.aiReadingReview}</div>
+                <div className="text-xs text-[var(--label-2)]">{t.aiReadingReviewHint}</div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={Boolean(settings.aiReadingReview)}
+                aria-label={t.aiReadingReview}
+                className="switch shrink-0 origin-right scale-[.85]"
+                onClick={() => set({ aiReadingReview: !settings.aiReadingReview })}
+              ><i /></button>
+            </div>
+          )}
+        </>
       ) : (
         <p className="mx-0.5 mt-2 text-xs leading-normal text-[var(--label-3)]">{t.toolsMsNote}</p>
       )}

@@ -302,6 +302,10 @@ export interface Translations {
   readerEnterFullscreen: string;
   readerExitFullscreen: string;
   readerFullscreenHint: string;
+  quickDraft: string;
+  quickDraftHint: string;
+  aiReadingReview: string;
+  aiReadingReviewHint: string;
 
   // Dark mode
   navDarkModeToggle: string;
@@ -314,6 +318,10 @@ export interface Translations {
   batchRemove: string;
   batchEmptyTitle: string;
   batchEmptyBody: string;
+  batchAddFromLibrary: string;
+  batchAddSelected: string;
+  batchLibraryEmpty: string;
+  batchSearchLibrary: string;
   libraryRead: string;
   libraryOpenInEditor: string;
   libraryInfoAndCategory: string;
@@ -510,6 +518,9 @@ export interface Translations {
   updateMeteredHint: string;
   updateOpenReleases: string;
   updateCurrentVersion: string;
+  whatsNew: string;
+  whatsNewCurrent: string;
+  whatsNewEmpty: string;
   feedbackTitleLog: string;
   feedbackTitleText: string;
   feedbackModeLog: string;
@@ -822,6 +833,10 @@ export const translations: Record<Locale, Translations> = {
     readerEnterFullscreen: '全屏',
     readerExitFullscreen: '退出全屏',
     readerFullscreenHint: '单击空白处呼出四角控制栏',
+    quickDraft: '先用微软翻译秒出草稿',
+    quickDraftHint: '等待免费模型回复时，先显示微软翻译结果，模型译出后自动替换。',
+    aiReadingReview: 'AI 判读多音词',
+    aiReadingReviewHint: '注音后把拿不准的读音交给上面的模型判断，会消耗少量额度',
 
     // Dark mode
     navDarkModeToggle: '切换日间/黑夜模式',
@@ -834,6 +849,10 @@ export const translations: Record<Locale, Translations> = {
     batchRemove: '移除',
     batchEmptyTitle: '还没有文件',
     batchEmptyBody: '添加 TXT、DOCX、SRT、EPUB 或 PDF 文件，一次注音并导出。',
+    batchAddFromLibrary: '从台本库添加',
+    batchAddSelected: '添加所选',
+    batchLibraryEmpty: '台本库里还没有作品',
+    batchSearchLibrary: '搜索台本名…',
     libraryRead: '阅读',
     libraryOpenInEditor: '在工作台打开',
     libraryInfoAndCategory: '信息与分类',
@@ -1028,6 +1047,9 @@ export const translations: Record<Locale, Translations> = {
     updateMeteredHint: '当前为移动网络，点击下载',
     updateOpenReleases: '前往下载页',
     updateCurrentVersion: '当前版本 v{version}',
+    whatsNew: '更新内容',
+    whatsNewCurrent: '当前版本',
+    whatsNewEmpty: '这个版本没有单独的更新说明。',
     feedbackTitleLog: '上传报错日志',
     feedbackTitleText: '提交问题',
     feedbackModeLog: '日志',
@@ -1338,6 +1360,10 @@ export const translations: Record<Locale, Translations> = {
     readerEnterFullscreen: 'Fullscreen',
     readerExitFullscreen: 'Exit Fullscreen',
     readerFullscreenHint: 'Tap blank canvas to toggle 4-corner controls',
+    quickDraft: 'Instant Microsoft draft first',
+    quickDraftHint: 'Show Microsoft translations right away while waiting for the model, then replace them as lines arrive.',
+    aiReadingReview: 'AI reading review for polyphones',
+    aiReadingReviewHint: 'After annotation, ask the model above to pick readings for ambiguous words from context (uses a small amount of quota).',
 
     // Dark mode
     navDarkModeToggle: 'Toggle Light/Dark Mode',
@@ -1350,6 +1376,10 @@ export const translations: Record<Locale, Translations> = {
     batchRemove: 'Remove',
     batchEmptyTitle: 'No files yet',
     batchEmptyBody: 'Add TXT, DOCX, SRT, EPUB or PDF files to annotate and export them together.',
+    batchAddFromLibrary: 'Add from Library',
+    batchAddSelected: 'Add Selected',
+    batchLibraryEmpty: 'No scripts in the library yet',
+    batchSearchLibrary: 'Search script titles…',
     libraryRead: 'Read',
     libraryOpenInEditor: 'Open in Workbench',
     libraryInfoAndCategory: 'Info & Category',
@@ -1544,6 +1574,9 @@ export const translations: Record<Locale, Translations> = {
     updateMeteredHint: 'On mobile data — tap to download',
     updateOpenReleases: 'Open download page',
     updateCurrentVersion: 'Current version v{version}',
+    whatsNew: 'What’s New',
+    whatsNewCurrent: 'Current',
+    whatsNewEmpty: 'No release notes for this version.',
     feedbackTitleLog: 'Upload Error Log',
     feedbackTitleText: 'Report an Issue',
     feedbackModeLog: 'Log',
