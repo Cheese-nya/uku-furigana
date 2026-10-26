@@ -314,6 +314,10 @@ export interface Translations {
   batchRemove: string;
   batchEmptyTitle: string;
   batchEmptyBody: string;
+  batchAddFromLibrary: string;
+  batchAddSelected: string;
+  batchLibraryEmpty: string;
+  batchSearchLibrary: string;
   libraryRead: string;
   libraryOpenInEditor: string;
   libraryInfoAndCategory: string;
@@ -834,6 +838,10 @@ export const translations: Record<Locale, Translations> = {
     batchRemove: '移除',
     batchEmptyTitle: '还没有文件',
     batchEmptyBody: '添加 TXT、DOCX、SRT、EPUB 或 PDF 文件，一次注音并导出。',
+    batchAddFromLibrary: '从台本库添加',
+    batchAddSelected: '添加所选',
+    batchLibraryEmpty: '台本库里还没有作品',
+    batchSearchLibrary: '搜索台本名…',
     libraryRead: '阅读',
     libraryOpenInEditor: '在工作台打开',
     libraryInfoAndCategory: '信息与分类',
@@ -1350,6 +1358,10 @@ export const translations: Record<Locale, Translations> = {
     batchRemove: 'Remove',
     batchEmptyTitle: 'No files yet',
     batchEmptyBody: 'Add TXT, DOCX, SRT, EPUB or PDF files to annotate and export them together.',
+    batchAddFromLibrary: 'Add from Library',
+    batchAddSelected: 'Add Selected',
+    batchLibraryEmpty: 'No scripts in the library yet',
+    batchSearchLibrary: 'Search script titles…',
     libraryRead: 'Read',
     libraryOpenInEditor: 'Open in Workbench',
     libraryInfoAndCategory: 'Info & Category',

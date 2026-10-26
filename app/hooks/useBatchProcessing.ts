@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
-import type { BatchFileItem } from '../components/BatchProcessingPanel';
+import type { BatchFileItem, ExportFormat } from '../components/BatchProcessingPanel';
 import type { useFuriganaWorker } from './useFuriganaWorker';
 import type { ScriptLine } from '../utils/furigana';
 import { generateSRT, type SrtCue } from '../utils/srt';
@@ -9,8 +9,10 @@ import { importTextScript, scriptSourceFormat, withLfLineKeys } from '../utils/i
 import { cleanScriptTitle, importDocx } from '../utils/docxImporter';
 import type { RubyOverride } from '../utils/rubyOverrides';
 import { fingerprintText, resolveScript, type CorrectionDatabaseV2, type ProperNounEntry } from '../utils/correctionDatabase';
-import { upsertBook, type LibraryDatabaseV1 } from '../utils/libraryDatabase';
+import { upsertBook, type BookItem, type LibraryDatabaseV1 } from '../utils/libraryDatabase';
 import { buildDocxBlob } from '../utils/docxExporter';
+import { buildEpubBlob } from '../utils/epubExporter';
+import { buildPdfBlob } from '../utils/pdfExporter';
 import { isBookFile, parseBookFile } from '../utils/bookImport';
 import { withoutImageLines } from '../utils/bookAssets';
 import { buildBatchZipBlob, pickBatchDirectory, saveBlob, saveBlobToDirectory, type BatchSaveMode } from '../utils/fileSave';
@@ -44,7 +46,7 @@ export function useBatchProcessing({
   // Batch File Processing State
   const [batchFiles, setBatchFiles] = useState<BatchFileItem[]>([]);
   const [isBatchProcessing, setIsBatchProcessing] = useState<boolean>(false);
-  const [batchTargetFormat, setBatchTargetFormat] = useState<'docx' | 'srt' | 'txt'>('docx');
+  const [batchTargetFormat, setBatchTargetFormat] = useState<ExportFormat>('docx');
   const [batchSaveMode, setBatchSaveMode] = useState<BatchSaveMode>('zip');
   const [alsoSaveToLibrary, setAlsoSaveToLibrary] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -87,13 +89,31 @@ export function useBatchProcessing({
     setBatchFiles(prev => prev.filter(f => f.id !== id));
   };
 
+  /** Queue library books without a file: the text and its overrides already live in the library. */
+  const addBooksToQueue = (books: BookItem[]) => {
+    setBatchFiles(prev => {
+      const queuedBookIds = new Set(prev.map(item => item.bookId).filter((bookId): bookId is string => !!bookId));
+      const newItems: BatchFileItem[] = books
+        .filter(book => !queuedBookIds.has(book.bookId))
+        .map(book => ({
+          id: Math.random().toString(36).substring(2, 9),
+          bookId: book.bookId,
+          name: `${book.title}.${book.format}`,
+          size: book.content.length,
+          status: 'pending' as const,
+          progress: 0,
+        }));
+      return [...prev, ...newItems];
+    });
+  };
+
   const clearBatchFiles = () => {
     setBatchFiles([]);
   };
 
   // Execute Batch Processing on Queue
   // 全部导出 picks the format at click time (no separate format setting in the UI).
-  const processBatchQueue = async (format: 'docx' | 'srt' | 'txt' = batchTargetFormat) => {
+  const processBatchQueue = async (format: ExportFormat = batchTargetFormat) => {
     if (batchFiles.length === 0 || isBatchProcessing || isKuromojiLoading || !correctionsReady) return;
 
     let effectiveMode: BatchSaveMode = batchSaveMode;
@@ -119,6 +139,7 @@ export function useBatchProcessing({
     const zipOutputs: Array<{ filename: string; blob: Blob }> = [];
     let batchDatabase = database;
     let librarySnapshot = libraryDbRef.current;
+    let libraryWritten = false;
 
     for (let i = 0; i < batchFiles.length; i++) {
       const item = batchFiles[i];
@@ -131,7 +152,17 @@ export function useBatchProcessing({
         let textContent = '';
         let importedOverrides: RubyOverride[] = [];
         let importedCues: SrtCue[] = [];
-        if (isBookFile(item.name)) {
+        // A queued library book is already parsed: read its text, overrides and cues straight from the library.
+        const libraryBook = item.bookId ? libraryDbRef.current.books[item.bookId] : undefined;
+        if (item.bookId) {
+          if (!libraryBook) throw new Error('台本库里已经找不到这本书');
+          textContent = libraryBook.content;
+          // Library overrides are keyed with LF line endings, which is what the book content uses.
+          importedOverrides = libraryBook.sourceOverrides;
+          importedCues = libraryBook.srtCues || [];
+        } else if (!item.file) {
+          throw new Error('未找到待处理的文件');
+        } else if (isBookFile(item.name)) {
           const parsed = await parseBookFile(item.file);
           textContent = withoutImageLines(parsed.content);
           importedOverrides = parsed.sourceOverrides;
@@ -148,7 +179,9 @@ export function useBatchProcessing({
           importedOverrides = imported.overrides;
           importedCues = imported.cues;
         }
-        const itemTitle = item.name.replace(/\.[^/.]+$/, "") || '日语假名配音台本';
+        const itemTitle = item.bookId
+          ? (libraryBook?.title || item.name.replace(/\.[^/.]+$/, ''))
+          : item.name.replace(/\.[^/.]+$/, "") || '日语假名配音台本';
         const fingerprint = await fingerprintText(textContent);
         const resolved = resolveScript(batchDatabase, itemTitle, textContent, fingerprint);
         batchDatabase = resolved.database;
@@ -161,6 +194,10 @@ export function useBatchProcessing({
         let outputBlob: Blob;
         if (format === 'docx') {
           outputBlob = await buildDocxBlob(parsedLines, { title: itemTitle, baseFontSize: fontSize, rubyFontSize, lineSpacing });
+        } else if (format === 'epub') {
+          outputBlob = await buildEpubBlob(parsedLines, { title: itemTitle, baseFontSize: fontSize, rubyFontSize, lineSpacing });
+        } else if (format === 'pdf') {
+          outputBlob = await buildPdfBlob(parsedLines, { title: itemTitle, baseFontSize: fontSize, rubyFontSize, lineSpacing });
         } else {
           const textOutput = format === 'srt' ? generateSRT(parsedLines, importedCues) : generateTextContent(parsedLines, 'txt');
           const mime = format === 'srt' ? 'application/x-subrip' : 'text/plain';
@@ -176,7 +213,8 @@ export function useBatchProcessing({
         const outExt = format;
         const outName = `${cleanScriptTitle(itemTitle) || 'japanese_script'}.${outExt}`;
 
-        if (alsoSaveToLibrary) {
+        if (alsoSaveToLibrary && !item.bookId) {
+          // A book taken from the library is already saved: never write it back.
           // The book's format describes its source file (as in the library importer), not the export.
           librarySnapshot = await upsertBook(librarySnapshot, {
             title: cleanScriptTitle(itemTitle) || t.untitledScript,
@@ -186,6 +224,7 @@ export function useBatchProcessing({
             sourceOverrides: withLfLineKeys(importedOverrides),
             srtCues: importedCues,
           });
+          libraryWritten = true;
         }
 
         if (effectiveMode === 'folder' && dirHandle) {
@@ -225,7 +264,7 @@ export function useBatchProcessing({
       }
     }
 
-    if (alsoSaveToLibrary) setLibraryDb(librarySnapshot);
+    if (libraryWritten) setLibraryDb(librarySnapshot);
 
     if (effectiveMode === 'zip' && zipOutputs.length > 0) {
       try {
@@ -262,6 +301,6 @@ export function useBatchProcessing({
   return {
     batchFiles, isBatchProcessing, batchTargetFormat, setBatchTargetFormat, batchSaveMode, setBatchSaveMode,
     alsoSaveToLibrary, setAlsoSaveToLibrary, fileInputRef, handleFileSelect, handleDrop, removeBatchFile,
-    clearBatchFiles, processBatchQueue, isBatchDoneModalOpen, setIsBatchDoneModalOpen, batchDoneResults,
+    clearBatchFiles, addBooksToQueue, processBatchQueue, isBatchDoneModalOpen, setIsBatchDoneModalOpen, batchDoneResults,
   };
 }

@@ -423,7 +423,7 @@ export default function DubbingStudioApp() {
   // Batch page queue (state, file intake and processing).
   const {
     batchFiles, isBatchProcessing, fileInputRef, handleFileSelect, handleDrop, removeBatchFile,
-    processBatchQueue, isBatchDoneModalOpen, setIsBatchDoneModalOpen, batchDoneResults,
+    addBooksToQueue, processBatchQueue, isBatchDoneModalOpen, setIsBatchDoneModalOpen, batchDoneResults,
   } = useBatchProcessing({
     t, database, setDatabase, libraryDbRef, setLibraryDb, annotate, rubyType, glossaryEntries,
     fontSize, rubyFontSize, lineSpacing, generateTextContent, isKuromojiLoading, correctionsReady,
@@ -581,6 +581,8 @@ export default function DubbingStudioApp() {
             isBatchProcessing={isBatchProcessing}
             isKuromojiLoading={isKuromojiLoading}
             correctionsReady={correctionsReady}
+            books={libraryBooks}
+            onAddBooks={addBooksToQueue}
             t={t}
           />
         )}

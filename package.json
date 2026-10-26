@@ -20,11 +20,14 @@
     "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
+    "@pdf-lib/fontkit": "^1.1.1",
     "docx": "^9.7.1",
     "file-saver": "^2.0.5",
+    "harfbuzzjs": "^0.4.12",
     "jszip": "^3.10.2",
     "kuromoji": "^0.1.2",
     "next": "16.2.12",
+    "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^6.4.299",
     "react": "19.2.4",
     "react-dom": "19.2.4"
