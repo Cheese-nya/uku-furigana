@@ -4,18 +4,26 @@
  * and furigana (ruby) annotations positioned directly above kanji tokens.
  */
 
-import { PDFDocument, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
+import { PDFDocument, degrees, rgb, type Color, type PDFFont, type PDFPage } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import { subsetFont } from './fontSubset';
 import type { ScriptLine } from './furigana';
 import { cleanScriptTitle } from './docxImporter';
 import { extractChapters, type BookChapter } from './libraryDatabase';
 
+export interface PdfLayout {
+  pageWidth: number;
+  pageHeight: number;
+  vertical: boolean;
+  fontSize: number;
+} // PDF points
+
 export interface PdfExportOptions {
   title?: string;
   baseFontSize?: number;
   rubyFontSize?: number;
   lineSpacing?: number;
+  layout?: PdfLayout;
 }
 
 interface LayoutUnit {
@@ -26,10 +34,21 @@ interface LayoutUnit {
   unitWidth: number;
 }
 
-const PAGE_WIDTH = 595.28;
-const PAGE_HEIGHT = 841.89;
-const MARGIN = 50;
-const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2;
+const DEFAULT_PAGE_WIDTH = 595.28;
+const DEFAULT_PAGE_HEIGHT = 841.89;
+const DEFAULT_MARGIN = 50;
+
+const VERTICAL_UPPER_RIGHT_CHARS = new Set(Array.from('、。，．'));
+const VERTICAL_ROTATE_CHARS = new Set(
+  Array.from('ー－〜～—…‥（）「」『』【】〔〕［］《》〈〉()[]')
+);
+const VERTICAL_SMALL_KANA_CHARS = new Set(
+  Array.from('ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶ')
+);
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
 
 let cachedFontBytesPromise: Promise<ArrayBuffer> | null = null;
 
@@ -54,22 +73,36 @@ function sanitizePdfText(text: string): string {
   return text.replace(/[\r\n]+/g, '');
 }
 
+function buildHeadingUnits(
+  text: string,
+  font: PDFFont,
+  fontSize: number,
+  vertical: boolean
+): LayoutUnit[] {
+  const chars = Array.from(sanitizePdfText(text));
+  return chars.map((ch) => {
+    const span = vertical ? fontSize : font.widthOfTextAtSize(ch, fontSize);
+    return { baseText: ch, baseWidth: span, rubyWidth: 0, unitWidth: span };
+  });
+}
+
 function buildLineUnits(
   line: ScriptLine,
   font: PDFFont,
   baseFontSize: number,
-  rubyFontSize: number
+  rubyFontSize: number,
+  vertical: boolean
 ): LayoutUnit[] {
   const units: LayoutUnit[] = [];
 
   const pushPlainChars = (text: string) => {
     for (const ch of Array.from(sanitizePdfText(text))) {
-      const baseWidth = font.widthOfTextAtSize(ch, baseFontSize);
+      const baseSpan = vertical ? baseFontSize : font.widthOfTextAtSize(ch, baseFontSize);
       units.push({
         baseText: ch,
-        baseWidth,
+        baseWidth: baseSpan,
         rubyWidth: 0,
-        unitWidth: baseWidth,
+        unitWidth: baseSpan,
       });
     }
   };
@@ -84,15 +117,27 @@ function buildLineUnits(
 
     if (token.ruby && !token.annotationSuppressed) {
       const rubyText = sanitizePdfText(token.ruby);
-      const baseWidth = font.widthOfTextAtSize(surface, baseFontSize);
-      const rubyWidth = rubyText ? font.widthOfTextAtSize(rubyText, rubyFontSize) : 0;
-      units.push({
-        baseText: surface,
-        rubyText: rubyText || undefined,
-        baseWidth,
-        rubyWidth,
-        unitWidth: Math.max(baseWidth, rubyWidth),
-      });
+      if (vertical) {
+        const baseSpan = Array.from(surface).length * baseFontSize;
+        const rubySpan = rubyText ? Array.from(rubyText).length * rubyFontSize : 0;
+        units.push({
+          baseText: surface,
+          rubyText: rubyText || undefined,
+          baseWidth: baseSpan,
+          rubyWidth: rubySpan,
+          unitWidth: baseSpan,
+        });
+      } else {
+        const baseWidth = font.widthOfTextAtSize(surface, baseFontSize);
+        const rubyWidth = rubyText ? font.widthOfTextAtSize(rubyText, rubyFontSize) : 0;
+        units.push({
+          baseText: surface,
+          rubyText: rubyText || undefined,
+          baseWidth,
+          rubyWidth,
+          unitWidth: Math.max(baseWidth, rubyWidth),
+        });
+      }
     } else {
       pushPlainChars(surface);
     }
@@ -101,21 +146,21 @@ function buildLineUnits(
   return units;
 }
 
-function wrapUnits(units: LayoutUnit[], maxWidth: number): LayoutUnit[][] {
+function wrapUnits(units: LayoutUnit[], maxSpan: number): LayoutUnit[][] {
   if (units.length === 0) return [];
 
   const rows: LayoutUnit[][] = [];
   let currentRow: LayoutUnit[] = [];
-  let currentWidth = 0;
+  let currentSpan = 0;
 
   for (const unit of units) {
-    if (currentRow.length > 0 && currentWidth + unit.unitWidth > maxWidth) {
+    if (currentRow.length > 0 && currentSpan + unit.unitWidth > maxSpan) {
       rows.push(currentRow);
       currentRow = [unit];
-      currentWidth = unit.unitWidth;
+      currentSpan = unit.unitWidth;
     } else {
       currentRow.push(unit);
-      currentWidth += unit.unitWidth;
+      currentSpan += unit.unitWidth;
     }
   }
 
@@ -126,16 +171,69 @@ function wrapUnits(units: LayoutUnit[], maxWidth: number): LayoutUnit[][] {
   return rows;
 }
 
+function drawVerticalChar(
+  page: PDFPage,
+  font: PDFFont,
+  ch: string,
+  cellX: number,
+  cellY: number,
+  fontSize: number,
+  color: Color
+): void {
+  const glyphWidth = font.widthOfTextAtSize(ch, fontSize);
+  if (VERTICAL_ROTATE_CHARS.has(ch)) {
+    const centerX = cellX + fontSize / 2;
+    const centerY = cellY + fontSize / 2;
+    page.drawText(ch, {
+      x: centerX - fontSize * 0.38,
+      y: centerY + glyphWidth / 2,
+      size: fontSize,
+      font,
+      color,
+      rotate: degrees(-90),
+    });
+    return;
+  }
+
+  const normalX = cellX + (fontSize - glyphWidth) / 2;
+  let dx = 0;
+  let dy = 0;
+  if (VERTICAL_UPPER_RIGHT_CHARS.has(ch)) {
+    dx = fontSize * 0.6;
+    dy = fontSize * 0.6;
+  } else if (VERTICAL_SMALL_KANA_CHARS.has(ch)) {
+    dx = fontSize * 0.1;
+    dy = fontSize * 0.1;
+  }
+
+  page.drawText(ch, {
+    x: normalX + dx,
+    y: cellY + dy,
+    size: fontSize,
+    font,
+    color,
+  });
+}
+
 /**
- * Build an A4 portrait PDF Blob with furigana annotations centered above kanji tokens.
+ * Build a PDF Blob with furigana annotations (horizontal or vertical tategaki).
  */
 export async function buildPdfBlob(
   lines: ScriptLine[],
   opts?: PdfExportOptions
 ): Promise<Blob> {
   const title = cleanScriptTitle(opts?.title || '') || '日语假名配音台本';
-  const baseFontSize = opts?.baseFontSize ?? 16;
-  const rubyFontSize = opts?.rubyFontSize ?? 10;
+  const layout = opts?.layout;
+  const pageWidth = layout ? layout.pageWidth : DEFAULT_PAGE_WIDTH;
+  const pageHeight = layout ? layout.pageHeight : DEFAULT_PAGE_HEIGHT;
+  const margin = layout
+    ? clamp(Math.min(pageWidth, pageHeight) * 0.08, 24, 72)
+    : DEFAULT_MARGIN;
+  const vertical = layout ? layout.vertical : false;
+  const baseFontSize = layout ? layout.fontSize : (opts?.baseFontSize ?? 16);
+  const rubyFontSize = layout
+    ? Math.round(layout.fontSize * 0.5 * 10) / 10
+    : (opts?.rubyFontSize ?? 10);
   const lineSpacing = opts?.lineSpacing ?? 1.8;
 
   const rubyReserve = rubyFontSize + 2;
@@ -160,99 +258,131 @@ export async function buildPdfBlob(
   const rubyColor = rgb(0.145, 0.388, 0.922);
   const headingColor = rgb(0.08, 0.08, 0.08);
 
-  let page: PDFPage = doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-  let cursorY = PAGE_HEIGHT - MARGIN;
+  const contentSpan = (vertical ? pageHeight : pageWidth) - margin * 2;
+  const startCoord = (vertical ? pageWidth : pageHeight) - margin;
+  let page: PDFPage = doc.addPage([pageWidth, pageHeight]);
+  let cursor = startCoord;
 
-  const ensureSpace = (requiredHeight: number) => {
-    if (cursorY - requiredHeight < MARGIN) {
-      page = doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-      cursorY = PAGE_HEIGHT - MARGIN;
+  const ensureSpace = (requiredSpan: number) => {
+    if (cursor - requiredSpan < margin) {
+      page = doc.addPage([pageWidth, pageHeight]);
+      cursor = startCoord;
     }
   };
 
-  const drawPlainHeading = (headingText: string, fontSize: number, extraAfter: number) => {
-    const chars = Array.from(sanitizePdfText(headingText));
-    const units: LayoutUnit[] = chars.map((ch) => {
-      const w = font.widthOfTextAtSize(ch, fontSize);
-      return { baseText: ch, baseWidth: w, rubyWidth: 0, unitWidth: w };
-    });
-    const rows = wrapUnits(units, CONTENT_WIDTH);
-    for (const row of rows) {
+  const drawHeading = (headingText: string, fontSize: number, extraAfter: number) => {
+    const units = buildHeadingUnits(headingText, font, fontSize, vertical);
+    const segments = wrapUnits(units, contentSpan);
+    for (const segment of segments) {
       ensureSpace(fontSize);
-      const baselineY = cursorY - fontSize;
-      let x = MARGIN;
-      for (const unit of row) {
-        page.drawText(unit.baseText, {
-          x,
-          y: baselineY,
-          size: fontSize,
-          font,
-          color: headingColor,
-        });
-        x += unit.unitWidth;
+      if (vertical) {
+        const colX = cursor - fontSize;
+        let topY = pageHeight - margin;
+        for (const unit of segment) {
+          drawVerticalChar(page, font, unit.baseText, colX, topY - fontSize, fontSize, headingColor);
+          topY -= fontSize;
+        }
+      } else {
+        const baselineY = cursor - fontSize;
+        let x = margin;
+        for (const unit of segment) {
+          page.drawText(unit.baseText, {
+            x,
+            y: baselineY,
+            size: fontSize,
+            font,
+            color: headingColor,
+          });
+          x += unit.unitWidth;
+        }
       }
-      cursorY -= fontSize * 1.4;
+      cursor -= fontSize * 1.4;
     }
-    cursorY -= extraAfter;
+    cursor -= extraAfter;
   };
 
   // Document title on first page
-  drawPlainHeading(title, titleFontSize, baseFontSize * 0.5);
+  drawHeading(title, titleFontSize, baseFontSize * 0.5);
 
   // Render each chapter
   for (const chapter of chapters) {
-    drawPlainHeading(chapter.title, chapterFontSize, baseFontSize * 0.3);
+    drawHeading(chapter.title, chapterFontSize, baseFontSize * 0.3);
 
     const chapterLines =
       lines.length > 0 ? lines.slice(chapter.startLine, chapter.endLine + 1) : [];
 
     for (const line of chapterLines) {
-      const units = buildLineUnits(line, font, baseFontSize, rubyFontSize);
+      const units = buildLineUnits(line, font, baseFontSize, rubyFontSize, vertical);
 
-      // Empty line -> blank vertical gap
+      // Empty line -> blank gap
       if (units.length === 0) {
-        cursorY -= lineAdvance;
-        if (cursorY < MARGIN) {
-          page = doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-          cursorY = PAGE_HEIGHT - MARGIN;
+        cursor -= lineAdvance;
+        if (cursor < margin) {
+          page = doc.addPage([pageWidth, pageHeight]);
+          cursor = startCoord;
         }
         continue;
       }
 
-      const rows = wrapUnits(units, CONTENT_WIDTH);
-      const rowBlockHeight = rubyReserve + baseFontSize;
+      const segments = wrapUnits(units, contentSpan);
+      const blockSpan = rubyReserve + baseFontSize;
 
-      for (const row of rows) {
-        ensureSpace(rowBlockHeight);
-        const baseY = cursorY - rubyReserve - baseFontSize;
-        const rubyY = baseY + baseFontSize + 2;
+      for (const segment of segments) {
+        ensureSpace(blockSpan);
 
-        let x = MARGIN;
-        for (const unit of row) {
-          const baseX = x + (unit.unitWidth - unit.baseWidth) / 2;
-          page.drawText(unit.baseText, {
-            x: baseX,
-            y: baseY,
-            size: baseFontSize,
-            font,
-            color: baseColor,
-          });
+        if (vertical) {
+          const colX = cursor - rubyReserve - baseFontSize;
+          const rubyX = colX + baseFontSize + 2;
+          let topY = pageHeight - margin;
 
-          if (unit.rubyText) {
-            const rubyX = x + (unit.unitWidth - unit.rubyWidth) / 2;
-            page.drawText(unit.rubyText, {
-              x: rubyX,
-              y: rubyY,
-              size: rubyFontSize,
-              font,
-              color: rubyColor,
-            });
+          for (const unit of segment) {
+            let charTopY = topY;
+            for (const ch of Array.from(unit.baseText)) {
+              drawVerticalChar(page, font, ch, colX, charTopY - baseFontSize, baseFontSize, baseColor);
+              charTopY -= baseFontSize;
+            }
+
+            if (unit.rubyText) {
+              let rubyTopY = topY - (unit.baseWidth - unit.rubyWidth) / 2;
+              for (const rch of Array.from(unit.rubyText)) {
+                drawVerticalChar(page, font, rch, rubyX, rubyTopY - rubyFontSize, rubyFontSize, rubyColor);
+                rubyTopY -= rubyFontSize;
+              }
+            }
+
+            topY -= unit.unitWidth;
           }
+        } else {
+          const baseY = cursor - rubyReserve - baseFontSize;
+          const rubyY = baseY + baseFontSize + 2;
+          let x = margin;
 
-          x += unit.unitWidth;
+          for (const unit of segment) {
+            const baseX = x + (unit.unitWidth - unit.baseWidth) / 2;
+            page.drawText(unit.baseText, {
+              x: baseX,
+              y: baseY,
+              size: baseFontSize,
+              font,
+              color: baseColor,
+            });
+
+            if (unit.rubyText) {
+              const rubyX = x + (unit.unitWidth - unit.rubyWidth) / 2;
+              page.drawText(unit.rubyText, {
+                x: rubyX,
+                y: rubyY,
+                size: rubyFontSize,
+                font,
+                color: rubyColor,
+              });
+            }
+
+            x += unit.unitWidth;
+          }
         }
 
-        cursorY -= lineAdvance;
+        cursor -= lineAdvance;
       }
     }
   }

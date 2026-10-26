@@ -8,6 +8,17 @@ export type BookCategory = 'script' | 'novel' | 'subtitle' | 'other';
 export type BookFormat = 'txt' | 'srt' | 'docx' | 'epub' | 'pdf';
 export type BookCoverTheme = 'indigo' | 'emerald' | 'amber' | 'rose' | 'slate';
 
+/**
+ * Page geometry and text direction of the PDF a book was imported from, so a batch PDF export can
+ * reproduce the source layout. Declared here (not in `pdfExporter`) because that module pulls pdf-lib.
+ */
+export interface PdfLayout {
+  pageWidth: number;
+  pageHeight: number;
+  vertical: boolean;
+  fontSize: number;
+}
+
 export interface BookChapter {
   id: string;
   title: string;
@@ -45,6 +56,8 @@ export interface BookItem {
   fingerprint: string;
   sourceOverrides: RubyOverride[];
   srtCues?: SrtCue[];
+  /** Only present for books imported from a PDF that exposed a usable page layout. */
+  pdfLayout?: PdfLayout;
   chapters: BookChapter[];
   readingProgress: ReadingProgress;
   bookmarks: BookmarkItem[];
@@ -145,6 +158,8 @@ export interface UpsertBookInput {
   fingerprint?: string;
   sourceOverrides?: RubyOverride[];
   srtCues?: SrtCue[];
+  /** Source PDF layout; an existing value is kept when the input omits it. */
+  pdfLayout?: PdfLayout;
   /** Table of contents of an EPUB or PDF; ignored for other formats. */
   chapters?: { title: string; startLine: number }[];
   favorite?: boolean;
@@ -171,6 +186,8 @@ export async function upsertBook(db: LibraryDatabase, input: UpsertBookInput): P
   const sourceUrl = existing
     ? (input.sourceUrl !== undefined ? input.sourceUrl.trim() : existing.sourceUrl)
     : (input.sourceUrl?.trim() || undefined);
+  // A later save without a layout (e.g. an editor save) must not drop the imported PDF geometry.
+  const pdfLayout = input.pdfLayout ?? existing?.pdfLayout;
   const book: BookItem = {
     bookId,
     title,
@@ -185,6 +202,7 @@ export async function upsertBook(db: LibraryDatabase, input: UpsertBookInput): P
     fingerprint,
     sourceOverrides: input.sourceOverrides ?? existing?.sourceOverrides ?? [],
     ...(input.srtCues || existing?.srtCues ? { srtCues: input.srtCues ?? existing?.srtCues } : {}),
+    ...(pdfLayout !== undefined ? { pdfLayout } : {}),
     chapters: chaptersFor(input.format ?? existing?.format ?? 'txt', content, title, input.chapters ?? (existing?.content === content ? existing.chapters : undefined)),
     readingProgress: { ...readingProgress, chapterIndex: 0 },
     bookmarks: existing?.bookmarks ?? [],
@@ -333,6 +351,24 @@ function validateCue(value: unknown): SrtCue {
   return { index: value.index, start: value.start, end: value.end, lines: value.lines as string[] };
 }
 
+function isPositiveNumber(value: unknown): boolean {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
+/** A stored layout is optional: an incomplete one is dropped instead of failing the whole library. */
+function validatePdfLayout(value: unknown): PdfLayout | undefined {
+  if (!object(value) || typeof value.vertical !== 'boolean') return undefined;
+  if (!isPositiveNumber(value.pageWidth) || !isPositiveNumber(value.pageHeight) || !isPositiveNumber(value.fontSize)) {
+    return undefined;
+  }
+  return {
+    pageWidth: value.pageWidth as number,
+    pageHeight: value.pageHeight as number,
+    vertical: value.vertical as boolean,
+    fontSize: value.fontSize as number,
+  };
+}
+
 function chaptersFor(format: BookFormat, text: string, title: string, chapters?: { title: string; startLine: number }[]): BookChapter[] {
   return hasOwnChapters(format) && chapters?.length ? toBookChapters(text, chapters, title) : extractChapters(text, title);
 }
@@ -381,6 +417,8 @@ function validateBook(id: string, value: unknown, version: number): BookItem {
     if (!Array.isArray(value.srtCues)) throw new Error(`字幕时间轴格式无效：${id}`);
     book.srtCues = value.srtCues.map(validateCue);
   }
+  const pdfLayout = validatePdfLayout(value.pdfLayout);
+  if (pdfLayout) book.pdfLayout = pdfLayout;
   return book;
 }
 

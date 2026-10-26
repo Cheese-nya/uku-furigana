@@ -1,4 +1,5 @@
 import { ScannedPdfError, type ImportedBook } from './bookAssets';
+import type { PdfLayout } from './libraryDatabase';
 
 export interface PdfTextItem {
   str: string;
@@ -6,10 +7,28 @@ export interface PdfTextItem {
   width: number;
   height: number;
   hasEOL?: boolean;
+  fontName?: string;
+}
+
+/** Only `vertical` is used: it marks the fonts of a vertically set (tategaki) PDF. */
+export interface PdfTextStyleLike {
+  vertical?: boolean;
+}
+
+export interface PdfTextContentLike {
+  items: PdfTextItem[];
+  styles?: Record<string, PdfTextStyleLike>;
+}
+
+export interface PdfViewportLike {
+  width: number;
+  height: number;
 }
 
 export interface PdfPageLike {
-  getTextContent(): Promise<{ items: PdfTextItem[] }> | { items: PdfTextItem[] };
+  getTextContent(): Promise<PdfTextContentLike> | PdfTextContentLike;
+  /** Optional: fake loaders in tests only provide getTextContent, so a missing viewport skips the layout. */
+  getViewport?(params: { scale: number }): PdfViewportLike;
 }
 
 export interface PdfOutlineItem {
@@ -96,6 +115,27 @@ function computeMedian(values: number[]): number {
   return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
+function roundTenth(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
+function positive(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
+/** Page size of the first page, or null when the loader exposes no usable viewport. */
+function readPageSize(page: PdfPageLike): { width: number; height: number } | null {
+  try {
+    const viewport = page.getViewport?.({ scale: 1 });
+    if (!viewport) return null;
+    return positive(viewport.width) && positive(viewport.height)
+      ? { width: viewport.width, height: viewport.height }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function importPdf(
   data: ArrayBuffer,
   fileName: string,
@@ -109,11 +149,18 @@ export async function importPdf(
 
   const visualLines: VisualLine[] = [];
   let nonWhitespaceCount = 0;
+  // Source layout measures: the first page's size, plus how much of the text is set in vertical fonts.
+  let pageSize: { width: number; height: number } | null = null;
+  let verticalCharCount = 0;
+  let textCharCount = 0;
+  const verticalGlyphWidths: number[] = [];
 
   for (let pageNum = 1; pageNum <= doc.numPages; pageNum += 1) {
     const pageIndex = pageNum - 1;
     const page = await doc.getPage(pageNum);
+    if (pageNum === 1) pageSize = readPageSize(page);
     const content = await page.getTextContent();
+    const styles: Record<string, PdfTextStyleLike> = content.styles ?? {};
     let currentItems: PdfTextItem[] = [];
 
     const flushVisualLine = () => {
@@ -142,7 +189,17 @@ export async function importPdf(
         if (item.hasEOL) flushVisualLine();
         continue;
       }
-      nonWhitespaceCount += item.str.replace(/\s+/g, '').length;
+      const charCount = item.str.replace(/\s+/g, '').length;
+      nonWhitespaceCount += charCount;
+      // Vertical detection is per font: a CJK vertical font renders glyphs rotated 90° via its own metrics.
+      if (charCount > 0) {
+        textCharCount += charCount;
+        if (item.fontName && styles[item.fontName]?.vertical === true) {
+          verticalCharCount += charCount;
+          const glyphWidth = Math.abs(item.transform?.[0] ?? 0);
+          if (glyphWidth > 0) verticalGlyphWidths.push(glyphWidth);
+        }
+      }
       currentItems.push(item);
       if (item.hasEOL) {
         flushVisualLine();
@@ -155,6 +212,10 @@ export async function importPdf(
   if (nonWhitespaceCount < minChars) {
     throw new ScannedPdfError('这是扫描版 PDF，没有可提取的文字');
   }
+
+  // Source layout for batch export: page size from page 1, direction by character majority, and the
+  // median glyph size (vertical glyphs are rotated, so their size lives in transform[0]).
+  const vertical = textCharCount > 0 && verticalCharCount * 2 > textCharCount;
 
   // Layout measures for horizontal text: the usual distance between baselines (a paragraph gap is clearly
   // more than that) and each page's left margin (a first line set in from it is a paragraph indent).
@@ -171,6 +232,22 @@ export async function importPdf(
     if (previous && previous.pageIndex === line.pageIndex && !previous.rotated) baselineSteps.push(Math.abs(previous.y - line.y));
   });
   const medianStep = computeMedian(baselineSteps.filter(step => step > 0));
+
+  // A layout is only worth storing when both the page size and a glyph size are known.
+  // Horizontal text measures its size as the visual line height; vertical glyphs are rotated, so their
+  // size lives in transform[0]. The fallback keeps a vertical page with no measured advance usable.
+  const layoutFontSize = vertical
+    ? (computeMedian(verticalGlyphWidths) || computeMedian(visualLines.map(line => line.height).filter(height => height > 0)))
+    : computeMedian(horizontalHeights);
+  // Rounded to 0.1 so a stored layout survives a JSON round-trip without float noise.
+  const pdfLayout: PdfLayout | undefined = pageSize && layoutFontSize > 0
+    ? {
+      pageWidth: roundTenth(pageSize.width),
+      pageHeight: roundTenth(pageSize.height),
+      vertical,
+      fontSize: roundTenth(layoutFontSize),
+    }
+    : undefined;
 
   const paragraphs: string[] = [];
   const firstParaStartingOnPage = new Map<number, number>();
@@ -275,5 +352,6 @@ export async function importPdf(
     overrides: [],
     chapters,
     images: [],
+    ...(pdfLayout ? { pdfLayout } : {}),
   };
 }

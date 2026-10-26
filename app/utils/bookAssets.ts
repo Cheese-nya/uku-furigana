@@ -1,3 +1,4 @@
+import type { PdfLayout } from './libraryDatabase';
 import type { RubyOverride } from './rubyOverrides';
 
 export interface ImportedBookImage {
@@ -13,6 +14,8 @@ export interface ImportedBook {
   overrides: RubyOverride[];
   chapters: { title: string; startLine: number }[];
   images: ImportedBookImage[];
+  /** Source PDF page geometry, read back on export; absent when the loader gives no page viewport. */
+  pdfLayout?: PdfLayout;
   cover?: { mime: string; data: Uint8Array };
 }
 

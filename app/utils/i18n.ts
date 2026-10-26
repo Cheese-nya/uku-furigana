@@ -514,6 +514,9 @@ export interface Translations {
   updateMeteredHint: string;
   updateOpenReleases: string;
   updateCurrentVersion: string;
+  whatsNew: string;
+  whatsNewCurrent: string;
+  whatsNewEmpty: string;
   feedbackTitleLog: string;
   feedbackTitleText: string;
   feedbackModeLog: string;
@@ -1036,6 +1039,9 @@ export const translations: Record<Locale, Translations> = {
     updateMeteredHint: '当前为移动网络，点击下载',
     updateOpenReleases: '前往下载页',
     updateCurrentVersion: '当前版本 v{version}',
+    whatsNew: '更新内容',
+    whatsNewCurrent: '当前版本',
+    whatsNewEmpty: '这个版本没有单独的更新说明。',
     feedbackTitleLog: '上传报错日志',
     feedbackTitleText: '提交问题',
     feedbackModeLog: '日志',
@@ -1556,6 +1562,9 @@ export const translations: Record<Locale, Translations> = {
     updateMeteredHint: 'On mobile data — tap to download',
     updateOpenReleases: 'Open download page',
     updateCurrentVersion: 'Current version v{version}',
+    whatsNew: 'What’s New',
+    whatsNewCurrent: 'Current',
+    whatsNewEmpty: 'No release notes for this version.',
     feedbackTitleLog: 'Upload Error Log',
     feedbackTitleText: 'Report an Issue',
     feedbackModeLog: 'Log',

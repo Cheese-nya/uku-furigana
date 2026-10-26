@@ -1,7 +1,7 @@
 import type { ImportedBook } from './bookAssets';
 import { importDocx } from './docxImporter';
 import { importTextScript, scriptSourceFormat } from './inlineRuby';
-import type { BookCategory, BookFormat } from './libraryDatabase';
+import type { BookCategory, BookFormat, PdfLayout } from './libraryDatabase';
 import type { RubyOverride } from './rubyOverrides';
 import type { SrtCue } from './srt';
 
@@ -16,6 +16,8 @@ export interface ParsedBookFile {
   chapters?: { title: string; startLine: number }[];
   images: ImportedBook['images'];
   cover?: Blob;
+  /** Source PDF layout, forwarded so batch export can reproduce it. */
+  pdfLayout?: PdfLayout;
 }
 
 export const isBookFile = (name: string) => /\.(?:epub|pdf)$/i.test(name);
@@ -31,6 +33,7 @@ function fromImportedBook(book: ImportedBook, format: 'epub' | 'pdf'): ParsedBoo
     srtCues: [],
     chapters: book.chapters,
     images: book.images,
+    ...(book.pdfLayout ? { pdfLayout: book.pdfLayout } : {}),
     ...(book.cover ? { cover: new Blob([book.cover.data as BlobPart], { type: book.cover.mime }) } : {}),
   };
 }

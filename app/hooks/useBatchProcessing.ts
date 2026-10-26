@@ -9,7 +9,7 @@ import { importTextScript, scriptSourceFormat, withLfLineKeys } from '../utils/i
 import { cleanScriptTitle, importDocx } from '../utils/docxImporter';
 import type { RubyOverride } from '../utils/rubyOverrides';
 import { fingerprintText, resolveScript, type CorrectionDatabaseV2, type ProperNounEntry } from '../utils/correctionDatabase';
-import { upsertBook, type BookItem, type LibraryDatabaseV1 } from '../utils/libraryDatabase';
+import { upsertBook, type BookItem, type LibraryDatabaseV1, type PdfLayout } from '../utils/libraryDatabase';
 import { buildDocxBlob } from '../utils/docxExporter';
 import { buildEpubBlob } from '../utils/epubExporter';
 import { buildPdfBlob } from '../utils/pdfExporter';
@@ -152,6 +152,8 @@ export function useBatchProcessing({
         let textContent = '';
         let importedOverrides: RubyOverride[] = [];
         let importedCues: SrtCue[] = [];
+        // Source PDF layout travels with the item: from the imported file, or from the library book.
+        let pdfLayout: PdfLayout | undefined;
         // A queued library book is already parsed: read its text, overrides and cues straight from the library.
         const libraryBook = item.bookId ? libraryDbRef.current.books[item.bookId] : undefined;
         if (item.bookId) {
@@ -160,12 +162,14 @@ export function useBatchProcessing({
           // Library overrides are keyed with LF line endings, which is what the book content uses.
           importedOverrides = libraryBook.sourceOverrides;
           importedCues = libraryBook.srtCues || [];
+          pdfLayout = libraryBook.pdfLayout;
         } else if (!item.file) {
           throw new Error('未找到待处理的文件');
         } else if (isBookFile(item.name)) {
           const parsed = await parseBookFile(item.file);
           textContent = withoutImageLines(parsed.content);
           importedOverrides = parsed.sourceOverrides;
+          pdfLayout = parsed.pdfLayout;
         } else if (item.name.toLowerCase().endsWith('.docx')) {
           const arrayBuffer = await item.file.arrayBuffer();
           const imported = await importDocx(arrayBuffer);
@@ -197,7 +201,7 @@ export function useBatchProcessing({
         } else if (format === 'epub') {
           outputBlob = await buildEpubBlob(parsedLines, { title: itemTitle, baseFontSize: fontSize, rubyFontSize, lineSpacing });
         } else if (format === 'pdf') {
-          outputBlob = await buildPdfBlob(parsedLines, { title: itemTitle, baseFontSize: fontSize, rubyFontSize, lineSpacing });
+          outputBlob = await buildPdfBlob(parsedLines, { title: itemTitle, baseFontSize: fontSize, rubyFontSize, lineSpacing, layout: pdfLayout });
         } else {
           const textOutput = format === 'srt' ? generateSRT(parsedLines, importedCues) : generateTextContent(parsedLines, 'txt');
           const mime = format === 'srt' ? 'application/x-subrip' : 'text/plain';
@@ -223,6 +227,7 @@ export function useBatchProcessing({
             format: scriptSourceFormat(item.name),
             sourceOverrides: withLfLineKeys(importedOverrides),
             srtCues: importedCues,
+            ...(pdfLayout ? { pdfLayout } : {}),
           });
           libraryWritten = true;
         }

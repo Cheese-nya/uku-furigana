@@ -15,6 +15,7 @@ import { GlossaryModal } from './components/GlossaryModal';
 import { ExportProgressModal } from './components/ExportProgressModal';
 import { BatchDoneModal } from './components/BatchDoneModal';
 import { LearnedReadingsModal } from './components/LearnedReadingsModal';
+import { WhatsNewModal } from './components/WhatsNewModal';
 import { RubyCorrectionModal, type EditingTokenState } from './components/RubyCorrectionModal';
 import { BatchProcessingPanel } from './components/BatchProcessingPanel';
 import { EditorWorkspace } from './components/EditorWorkspace';
@@ -39,6 +40,7 @@ import { useUpdater } from './hooks/useUpdater';
 import { buildReport, installGlobalLogging } from './utils/appLog';
 import { buildFeedbackPayload, submitFeedback } from './utils/feedback';
 import { DISTRIBUTION } from './utils/appInfo';
+import { hasUnseenNotes, markNotesSeen } from './utils/whatsNew';
 import { QQ_GROUP, RELEASES_URL, type AndroidUpdateBridge, type FeedbackKind } from './utils/updateTypes';
 import { translations, type Locale } from './utils/i18n';
 
@@ -153,8 +155,17 @@ export default function DubbingStudioApp() {
   // Bug feedback + online update (entries live in the settings menu).
   const updater = useUpdater();
   const [feedbackKind, setFeedbackKind] = useState<FeedbackKind | null>(null);
+  // Release notes live behind Settings only: the row's yellow dot is the only hint, and opening the sheet clears it.
+  const [isWhatsNewOpen, setIsWhatsNewOpen] = useState(false);
+  const [unseenNotes, setUnseenNotes] = useState(false);
+  useEffect(() => {
+    // Read after mount: localStorage during the static prerender would not match the rendered HTML.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setUnseenNotes(hasUnseenNotes());
+  }, []);
   useEffect(() => { installGlobalLogging(); }, []);
   const openExternal = (url: string) => { window.open(url, '_blank', 'noopener,noreferrer'); };
+  const openWhatsNew = () => { markNotesSeen(); setUnseenNotes(false); setIsWhatsNewOpen(true); };
   const copyQqGroup = () => {
     const bridge = (window as unknown as { AndroidBridge?: Partial<AndroidUpdateBridge> }).AndroidBridge;
     try { bridge?.openQqGroup?.(QQ_GROUP); } catch { /* QQ not installed: the copied number is enough */ }
@@ -460,6 +471,8 @@ export default function DubbingStudioApp() {
       glossaryCount={glossaryEntries.length}
       onOpenLearned={() => setIsLearnedModalOpen(true)}
       onOpenGlossary={() => { advanceControllerRef.current?.abort(); setIsGlossaryOpen(true); }}
+      onOpenWhatsNew={openWhatsNew}
+      hasUnseenNotes={unseenNotes}
       onOpenReadingTools={() => readingTools.setSheetOpen(true)}
       readingToolsDetail={fillTemplate(t.toolsMenuDetail, { engine: readingTools.settings.engine === 'llm' ? t.engineLlm : t.engineMicrosoft, count: readingTools.dictionaries.length })}
       dictionaryStatus={dictionaryStatus}
@@ -647,6 +660,14 @@ export default function DubbingStudioApp() {
         learnedReadings={learnedReadings}
         onDeleteLearnedReading={idx => setDatabase(prev => deleteLearnedReading(prev, documentId, idx))}
         t={t}
+      />
+
+      {/* "更新内容" — reachable from Settings only, never popped up automatically */}
+      <WhatsNewModal
+        isOpen={isWhatsNewOpen}
+        onClose={() => setIsWhatsNewOpen(false)}
+        t={t}
+        locale={locale}
       />
 
       {/* Mobile bottom navigation */}
