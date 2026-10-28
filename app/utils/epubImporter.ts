@@ -26,7 +26,32 @@ const BLOCK_TAGS = new Set([
   'figure',
   'figcaption',
   'pre',
+  'aside',
+  'header',
+  'footer',
+  'main',
+  'nav',
+  'details',
+  'summary',
+  'caption',
+  'address',
+  'center',
+  'td',
+  'th',
+  'hr',
 ]);
+
+/** Fonts are obfuscated (not encrypted) by most editors and stores: the text stays readable. */
+const FONT_OBFUSCATION_ALGORITHMS = new Set([
+  'http://www.idpf.org/2008/embedding',
+  'http://ns.adobe.com/pdf/enc#RC',
+]);
+
+/** Emphasis dots and similar marks that publishers put in <rt>; they are not readings. */
+const MARK_ONLY_READING_RE = /^[\s・･﹅﹆●○◎◉▲△▼▽◆◇★☆※＊*•·.。、,､﹏]+$/;
+
+const INLINE_IMAGE_HINT_RE = /gaiji|emoji|glyph|\binline\b/i;
+const ALL_BLANK_RE = /^[\u3000\u00A0\s]*$/;
 
 const HEADING_TAGS = new Set(['h1', 'h2', 'h3']);
 const SKIP_TAGS = new Set(['script', 'style', 'rt', 'rp', 'head']);
@@ -60,6 +85,11 @@ function localTag(el: Element): string {
   const raw = el.localName || el.tagName || '';
   const colon = raw.indexOf(':');
   return (colon >= 0 ? raw.slice(colon + 1) : raw).toLowerCase();
+}
+
+async function readZipText(file: JSZip.JSZipObject): Promise<string> {
+  const source = await file.async('string');
+  return source.charCodeAt(0) === 0xfeff ? source.slice(1) : source;
 }
 
 function safeDecodeURI(value: string): string {
@@ -216,6 +246,7 @@ function finalizeTextLine(rawText: string, rawRubies: RawRuby[]): FinalizedTextL
   while (start < end && isAsciiWs(rawText[start])) start += 1;
   while (end > start && isAsciiWs(rawText[end - 1])) end -= 1;
   if (start >= end) return null;
+  if (ALL_BLANK_RE.test(rawText)) return null;
 
   const offsetMap = new Int32Array(rawText.length + 1);
   let out = '';
@@ -254,6 +285,77 @@ function finalizeTextLine(rawText: string, rawRubies: RawRuby[]): FinalizedTextL
     });
   }
   return { line: out, overrides };
+}
+
+function epubType(el: Element): string {
+  return (
+    el.getAttribute('epub:type') ||
+    el.getAttributeNS('http://www.idpf.org/2007/ops', 'type') ||
+    el.getAttribute('role') ||
+    ''
+  ).toLowerCase();
+}
+
+/** Page-break markers and display:none content are not part of the story text. */
+function isHiddenElement(el: Element): boolean {
+  if (el.hasAttribute('hidden')) return true;
+  if (/display\s*:\s*none/i.test(el.getAttribute('style') || '')) return true;
+  return /\bpagebreak\b/.test(epubType(el));
+}
+
+/** A declared size small enough to be a glyph (<= 64px or <= 3em) rather than an illustration. */
+function isTinySize(el: Element): boolean {
+  const small = (raw: string | null) => {
+    const m = /^\s*([\d.]+)\s*(px|em|rem|ex|%)?\s*$/i.exec(raw || '');
+    if (!m) return false;
+    const n = Number(m[1]);
+    const unit = (m[2] || 'px').toLowerCase();
+    if (unit === '%') return false;
+    return unit === 'px' ? n <= 64 : n <= 3;
+  };
+  const style = el.getAttribute('style') || '';
+  const styled = /(?:^|;)\s*(?:width|height)\s*:\s*([^;]+)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = styled.exec(style))) if (small(m[1])) return true;
+  return small(el.getAttribute('width')) || small(el.getAttribute('height'));
+}
+
+/**
+ * Gaiji / emoji / small icons sit inside a sentence and must not break the paragraph; a real
+ * illustration (no such marker) still becomes its own image line.
+ */
+function isInlineImage(el: Element, src: string): boolean {
+  if (INLINE_IMAGE_HINT_RE.test(`${el.getAttribute('class') || ''} ${src}`)) return true;
+  return isTinySize(el);
+}
+
+/** Visible text without ruby annotations or scripts. */
+function ownText(node: Node): string {
+  if (node.nodeType === 3 || node.nodeType === 4) return node.nodeValue || '';
+  if (node.nodeType !== 1) return '';
+  const el = node as Element;
+  if (SKIP_TAGS.has(localTag(el)) || isHiddenElement(el)) return '';
+  return Array.from(el.childNodes).map(ownText).join('');
+}
+
+/**
+ * A printed contents page inside the spine: almost all of its text is internal links. Importing it
+ * would put the chapter list in front of the story as if it were prose.
+ */
+function isLinkIndexPage(body: Element): boolean {
+  const compact = (value: string) => value.replace(/\s+/g, '');
+  const links = findElements(body, 'a').filter(a => {
+    const href = (a.getAttribute('href') || '').trim();
+    return href && !/^[a-z][a-z0-9+.-]*:/i.test(href);
+  });
+  if (links.length < 2) return false;
+  const headingLen = [...HEADING_TAGS].reduce(
+    (sum, tag) => sum + findElements(body, tag).reduce((n, h) => n + compact(ownText(h)).length, 0),
+    0,
+  );
+  const total = compact(ownText(body)).length - headingLen;
+  const linked = links.reduce((n, a) => n + compact(ownText(a)).length, 0);
+  return total > 0 && linked / total >= 0.8;
 }
 
 function extractRubyParts(rubyEl: Element): { base: string; reading: string } {
@@ -310,12 +412,17 @@ export async function importEpub(
 
   const encryptionFile = zip.file('META-INF/encryption.xml');
   if (encryptionFile) {
-    const encXml = await encryptionFile.async('string');
+    const encXml = await readZipText(encryptionFile);
     const encDoc = parseXml(encXml, parser);
-    if (
-      (encDoc && findElements(encDoc, 'EncryptedData').length > 0) ||
-      /<(?:\w+:)?EncryptedData\b/i.test(encXml)
-    ) {
+    const entries = encDoc ? findElements(encDoc, 'EncryptedData') : [];
+    const encrypted = encDoc
+      ? entries.some(entry => {
+          const method = findElements(entry, 'EncryptionMethod')[0];
+          return !FONT_OBFUSCATION_ALGORITHMS.has(method?.getAttribute('Algorithm')?.trim() || '');
+        })
+      : /<(?:\w+:)?EncryptedData\b/i.test(encXml) &&
+        ![...FONT_OBFUSCATION_ALGORITHMS].some(algorithm => encXml.includes(algorithm));
+    if (encrypted) {
       throw new Error('不支持加密的 EPUB');
     }
   }
@@ -324,7 +431,7 @@ export async function importEpub(
   if (!containerFile) {
     throw new Error('EPUB 中没有可读的正文');
   }
-  const containerDoc = parseXml(await containerFile.async('string'), parser);
+  const containerDoc = parseXml(await readZipText(containerFile), parser);
   if (!containerDoc) {
     throw new Error('EPUB 中没有可读的正文');
   }
@@ -339,7 +446,7 @@ export async function importEpub(
     throw new Error('EPUB 中没有可读的正文');
   }
   const opfDir = dirname(normalizeZipPath(safeDecodeURI(opfPath)));
-  const opfDoc = parseXml(await opfFile.async('string'), parser);
+  const opfDoc = parseXml(await readZipText(opfFile), parser);
   if (!opfDoc) {
     throw new Error('EPUB 中没有可读的正文');
   }
@@ -424,15 +531,22 @@ export async function importEpub(
   let textLineCount = 0;
 
   for (const spineItem of spineItems) {
+    // The generated navigation page only repeats the chapter list; reading it as story text is clutter.
+    if (spineItem.properties.includes('nav')) continue;
     const xhtmlFile = zip.file(spineItem.zipPath);
     if (!xhtmlFile) continue;
-    const xhtmlSource = await xhtmlFile.async('string');
+    const xhtmlSource = await readZipText(xhtmlFile);
     const doc = parseXhtml(xhtmlSource, parser);
     const body = findElements(doc, 'body')[0] || doc.documentElement;
     if (!body) continue;
 
     const spineDir = dirname(spineItem.zipPath);
+    if (isLinkIndexPage(body)) continue;
+
     const spineEntries: SpineEntry[] = [];
+    // Footnote bodies are collected here and appended after the chapter text instead of interrupting it.
+    const deferredEntries: SpineEntry[] = [];
+    let sink = spineEntries;
     const pendingAnchors: { id: string; entryIndex: number }[] = [];
 
     let rawLine = '';
@@ -444,7 +558,7 @@ export async function importEpub(
       rawLine = '';
       rawRubies = [];
       if (!finalized) return;
-      spineEntries.push({
+      sink.push({
         kind: 'text',
         line: finalized.line,
         overrides: finalized.overrides,
@@ -454,7 +568,7 @@ export async function importEpub(
 
     const recordIdIfPresent = (el: Element) => {
       const id = el.getAttribute('id')?.trim() || (localTag(el) === 'a' ? el.getAttribute('name')?.trim() : '');
-      if (id) {
+      if (id && sink === spineEntries) {
         pendingAnchors.push({ id, entryIndex: spineEntries.length });
       }
     };
@@ -467,10 +581,19 @@ export async function importEpub(
       if (node.nodeType !== 1) return;
       const el = node as Element;
       const tag = localTag(el);
-      if (SKIP_TAGS.has(tag)) return;
+      if (SKIP_TAGS.has(tag) || isHiddenElement(el)) return;
 
       const isBlock = BLOCK_TAGS.has(tag);
       const isHeading = HEADING_TAGS.has(tag);
+
+      if (sink === spineEntries && /\b(?:footnote|endnote|rearnote|doc-footnote|doc-endnote)\b/.test(epubType(el))) {
+        flushCurrentLine();
+        sink = deferredEntries;
+        for (const child of Array.from(el.childNodes)) walk(child);
+        flushCurrentLine();
+        sink = spineEntries;
+        return;
+      }
 
       if (isBlock) {
         flushCurrentLine();
@@ -492,9 +615,14 @@ export async function importEpub(
               el.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
         if (rawSrc) {
           const { path: imgZipPath } = resolveHref(spineDir, rawSrc);
-          if (zip.file(imgZipPath)) {
+          if (isInlineImage(el, imgZipPath)) {
+            // Keep the sentence in one piece: a gaiji glyph becomes its alt text, or 〓 when it has none.
+            const alt = collapseInlineString(el.getAttribute('alt') || '');
+            if (alt && alt.length <= 4) rawLine += alt;
+            else if (INLINE_IMAGE_HINT_RE.test(el.getAttribute('class') || '')) rawLine += '〓';
+          } else if (zip.file(imgZipPath)) {
             flushCurrentLine();
-            spineEntries.push({ kind: 'image', zipPath: imgZipPath });
+            sink.push({ kind: 'image', zipPath: imgZipPath });
           }
         }
         return;
@@ -504,7 +632,7 @@ export async function importEpub(
         const { base, reading } = extractRubyParts(el);
         if (base) {
           const hiraReading = katakanaToHiragana(reading);
-          if (hiraReading && reading !== base && hiraReading !== base) {
+          if (hiraReading && reading !== base && hiraReading !== base && !MARK_ONLY_READING_RE.test(hiraReading)) {
             rawRubies.push({
               rawStart: rawLine.length,
               surface: base,
@@ -531,6 +659,7 @@ export async function importEpub(
       walk(child);
     }
     flushCurrentLine();
+    spineEntries.push(...deferredEntries);
 
     if (
       coverZipPath &&
@@ -648,7 +777,7 @@ async function extractTocTargets(
   if (navItem) {
     const navFile = zip.file(navItem.zipPath);
     if (navFile) {
-      const navDoc = parseXhtml(await navFile.async('string'), parser);
+      const navDoc = parseXhtml(await readZipText(navFile), parser);
       const navDir = dirname(navItem.zipPath);
       const navEls = findElements(navDoc, 'nav');
       const tocNav =
@@ -690,7 +819,7 @@ async function extractTocTargets(
   if (ncxItem) {
     const ncxFile = zip.file(ncxItem.zipPath);
     if (ncxFile) {
-      const ncxDoc = parseXml(await ncxFile.async('string'), parser);
+      const ncxDoc = parseXml(await readZipText(ncxFile), parser);
       if (ncxDoc) {
         const ncxDir = dirname(ncxItem.zipPath);
         const targets: TocTarget[] = [];
