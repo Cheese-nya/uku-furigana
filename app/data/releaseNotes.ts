@@ -12,6 +12,26 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '1.7.0',
+    date: '2026-10-28',
+    items: {
+      'zh-CN': [
+        '台本库新增文件夹：可以新建、重命名、删除，把书移进不同文件夹（比如严肃文学和轻小说）。',
+        '在某个文件夹里导入文件、导入 Pixiv 或新建书，会直接放进当前文件夹；删除文件夹不会删书。',
+        '备份导出和导入会带上文件夹和书的归属。',
+        'EPUB 导入更干净：外字保留在句子里，着重点、页码标记和隐藏文字不再混入正文，目录页被跳过，脚注接在章节之后。',
+        '目录之前的扉页等内容现在会单独成章，不再读不到。',
+      ],
+      en: [
+        'The library now has folders: create, rename and delete them, and move books between them (for example literature and light novels).',
+        'Importing a file, a Pixiv novel or a new book while a folder is open puts it straight into that folder; deleting a folder keeps its books.',
+        'Library backups now include folders and which folder each book is in.',
+        'Cleaner EPUB import: gaiji stay inside the sentence, emphasis dots, page markers and hidden text no longer leak into the text, contents pages are skipped, and footnotes follow their chapter.',
+        'Front matter before the first table-of-contents entry now gets its own chapter instead of being unreachable.',
+      ],
+    },
+  },
+  {
     version: '1.6.0',
     date: '2026-10-26',
     items: {
