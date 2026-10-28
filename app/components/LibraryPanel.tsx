@@ -511,7 +511,6 @@ export function LibraryPanel({
       <Modal isOpen={!!folderDialog} onClose={() => setFolderDialog(null)} title={folderDialog?.mode === 'rename' ? t.libraryFolderRenameTitle : t.libraryFolderNew} maxWidth="sm">
         <form data-testid="library-folder-form" onSubmit={submitFolder} className="flex flex-col gap-3">
           <Field value={folderName} onChange={value => { setFolderName(value); setFolderError(''); }} placeholder={t.libraryFolderNameLabel} testId="library-folder-name" />
-          <p className="-mt-1 text-xs text-[var(--label-3)]">{t.libraryFolderNamePlaceholder}</p>
           {folderError && <p role="alert" className="text-sm text-[var(--danger)]">{folderError}</p>}
           <div className="flex gap-2">
             <button type="button" className="btn h-11 flex-1" onClick={() => setFolderDialog(null)}>{t.cancel}</button>

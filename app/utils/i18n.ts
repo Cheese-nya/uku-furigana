@@ -214,7 +214,6 @@ export interface Translations {
   libraryFilterFavorites: string;
   libraryFolderNew: string;
   libraryFolderNameLabel: string;
-  libraryFolderNamePlaceholder: string;
   libraryFolderCreate: string;
   libraryFolderAllBooks: string;
   libraryFolderRename: string;
@@ -765,7 +764,6 @@ export const translations: Record<Locale, Translations> = {
     libraryFilterFavorites: '只看收藏',
     libraryFolderNew: '新建文件夹',
     libraryFolderNameLabel: '文件夹名称',
-    libraryFolderNamePlaceholder: '例如：严肃文学、轻小说',
     libraryFolderCreate: '创建',
     libraryFolderAllBooks: '全部书籍',
     libraryFolderRename: '重命名文件夹',
@@ -1309,7 +1307,6 @@ export const translations: Record<Locale, Translations> = {
     libraryFilterFavorites: 'Favorites only',
     libraryFolderNew: 'New folder',
     libraryFolderNameLabel: 'Folder name',
-    libraryFolderNamePlaceholder: 'e.g. Literature, Light novels',
     libraryFolderCreate: 'Create',
     libraryFolderAllBooks: 'All books',
     libraryFolderRename: 'Rename folder',
