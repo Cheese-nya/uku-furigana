@@ -6,6 +6,7 @@ const {
   emptyLibraryDatabase, extractChapters, createStarterBooks, validateLibraryDatabase,
   upsertBook, deleteBook, toggleBookFavorite, updateReadingProgress, addBookmark, removeBookmark,
   exportLibraryBackup, importLibraryBackup, listBooks, updateBookMetadata,
+  createFolder, renameFolder, deleteFolder, moveBookToFolder,
 } = loadTypescript('../app/utils/libraryDatabase.ts');
 const {
   extractPixivNovelId, cleanPixivDescription, cleanPixivContent, toPixivMirrorCoverUrl,
@@ -445,4 +446,63 @@ test('EPUB/PDF books keep their table of contents through save and reload; other
 
   const script = await upsertBook(emptyLibraryDatabase(), { title: '台本', content, format: 'txt', chapters: toc, now: 1 });
   assert.equal(Object.values(script.books)[0].chapters.length, 1);
+});
+
+test('folders: create, rename, move, delete keep books and survive validation and backup', async () => {
+  let db = await upsertBook(emptyLibraryDatabase(), { title: '吾輩は猫である', content: '吾輩は猫である。', category: 'novel' });
+  db = await upsertBook(db, { title: '涼宮', content: '退屈な日常。', category: 'novel' });
+  const [a, b] = Object.keys(db.books);
+
+  assert.equal(createFolder(db, '   ').folder, null);
+  const made = createFolder(db, ' 严肃文学 ');
+  db = made.db;
+  assert.equal(made.folder.name, '严肃文学');
+  // same name (case-insensitive) returns the existing folder instead of a twin
+  assert.equal(createFolder(db, '严肃文学').folder.folderId, made.folder.folderId);
+  const light = createFolder(db, '轻小说');
+  db = light.db;
+
+  db = moveBookToFolder(db, a, made.folder.folderId);
+  db = moveBookToFolder(db, b, light.folder.folderId);
+  assert.equal(db.books[a].folderId, made.folder.folderId);
+  assert.equal(moveBookToFolder(db, a, 'folder:missing'), db);
+
+  // re-importing / saving a book keeps its folder; an explicit null clears it
+  db = await upsertBook(db, { bookId: a, title: '吾輩は猫である', content: '吾輩は猫である。続き' });
+  assert.equal(db.books[a].folderId, made.folder.folderId);
+
+  assert.equal(renameFolder(db, made.folder.folderId, '轻小说'), db, 'a taken name is rejected');
+  db = renameFolder(db, made.folder.folderId, '文学');
+  assert.equal(db.folders[made.folder.folderId].name, '文学');
+
+  const restored = validateLibraryDatabase(JSON.parse(JSON.stringify(db)));
+  assert.deepEqual(restored.folders, db.folders);
+  assert.equal(restored.books[b].folderId, light.folder.folderId);
+
+  // backup round trip into an empty library re-creates the folders and keeps membership
+  const merged = importLibraryBackup(emptyLibraryDatabase(), exportLibraryBackup(db));
+  assert.equal(Object.keys(merged.folders).length, 2);
+  assert.equal(merged.folders[merged.books[b].folderId].name, '轻小说');
+
+  // deleting a folder keeps its books at the top level
+  const after = deleteFolder(db, light.folder.folderId);
+  assert.equal(Object.keys(after.books).length, 2);
+  assert.equal(after.books[b].folderId, undefined);
+  assert.equal(after.folders[light.folder.folderId], undefined);
+
+  // a book pointing at a missing folder falls back to the top level instead of failing the library
+  const dangling = JSON.parse(JSON.stringify(db));
+  dangling.folders = {};
+  assert.equal(validateLibraryDatabase(dangling).books[a].folderId, undefined);
+  // libraries saved before folders existed still load
+  delete dangling.folders;
+  assert.deepEqual(validateLibraryDatabase(dangling).folders, {});
+});
+
+test('EPUB front matter before the first TOC entry gets its own chapter instead of becoming unreachable', async () => {
+  const db = await upsertBook(emptyLibraryDatabase(), {
+    title: '本', format: 'epub', content: lines(10), chapters: [{ title: '第一章', startLine: 3 }, { title: '第二章', startLine: 7 }],
+  });
+  const chapters = Object.values(db.books)[0].chapters;
+  assert.deepEqual(chapters.map(c => [c.startLine, c.endLine]), [[0, 2], [3, 6], [7, 9]]);
 });

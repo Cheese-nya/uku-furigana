@@ -212,6 +212,22 @@ export interface Translations {
   libraryCategorySubtitle: string;
   libraryCategoryOther: string;
   libraryFilterFavorites: string;
+  libraryFolderNew: string;
+  libraryFolderNameLabel: string;
+  libraryFolderCreate: string;
+  libraryFolderAllBooks: string;
+  libraryFolderRename: string;
+  libraryFolderRenameTitle: string;
+  libraryFolderSave: string;
+  libraryFolderDelete: string;
+  libraryFolderDeleteTitle: string;
+  libraryFolderDeleteConfirm: string;
+  libraryFolderNameTaken: string;
+  libraryMoveToFolder: string;
+  libraryMoveToFolderTitle: string;
+  libraryMoveOutOfFolder: string;
+  libraryFolderEmpty: string;
+  libraryFolderBookCount: string;
   libraryImportBook: string;
   libraryNewBook: string;
   libraryExportBackup: string;
@@ -746,6 +762,22 @@ export const translations: Record<Locale, Translations> = {
     libraryCategorySubtitle: '字幕',
     libraryCategoryOther: '其他',
     libraryFilterFavorites: '只看收藏',
+    libraryFolderNew: '新建文件夹',
+    libraryFolderNameLabel: '文件夹名称',
+    libraryFolderCreate: '创建',
+    libraryFolderAllBooks: '全部书籍',
+    libraryFolderRename: '重命名文件夹',
+    libraryFolderRenameTitle: '重命名文件夹',
+    libraryFolderSave: '保存',
+    libraryFolderDelete: '删除文件夹',
+    libraryFolderDeleteTitle: '删除文件夹？',
+    libraryFolderDeleteConfirm: '将删除文件夹「{name}」。里面的 {count} 本书不会被删除，会回到书库顶层。',
+    libraryFolderNameTaken: '已有同名文件夹',
+    libraryMoveToFolder: '移到文件夹…',
+    libraryMoveToFolderTitle: '移到文件夹',
+    libraryMoveOutOfFolder: '移出文件夹（回到顶层）',
+    libraryFolderEmpty: '这个文件夹还是空的。用右上角的“新建”导入书籍，或在书的菜单里选择“移到文件夹”。',
+    libraryFolderBookCount: '{count} 本',
     libraryImportBook: '导入文件',
     libraryNewBook: '新建 / 粘贴',
     libraryExportBackup: '导出台本库',
@@ -1273,6 +1305,22 @@ export const translations: Record<Locale, Translations> = {
     libraryCategorySubtitle: 'Subtitles',
     libraryCategoryOther: 'Other',
     libraryFilterFavorites: 'Favorites only',
+    libraryFolderNew: 'New folder',
+    libraryFolderNameLabel: 'Folder name',
+    libraryFolderCreate: 'Create',
+    libraryFolderAllBooks: 'All books',
+    libraryFolderRename: 'Rename folder',
+    libraryFolderRenameTitle: 'Rename folder',
+    libraryFolderSave: 'Save',
+    libraryFolderDelete: 'Delete folder',
+    libraryFolderDeleteTitle: 'Delete this folder?',
+    libraryFolderDeleteConfirm: 'The folder “{name}” will be deleted. Its {count} book(s) are kept and return to the top level.',
+    libraryFolderNameTaken: 'A folder with this name already exists',
+    libraryMoveToFolder: 'Move to folder…',
+    libraryMoveToFolderTitle: 'Move to folder',
+    libraryMoveOutOfFolder: 'No folder (top level)',
+    libraryFolderEmpty: 'This folder is empty. Import books with “New”, or use “Move to folder” in a book’s menu.',
+    libraryFolderBookCount: '{count}',
     libraryImportBook: 'Import file',
     libraryNewBook: 'New / paste',
     libraryExportBackup: 'Export Script Library',

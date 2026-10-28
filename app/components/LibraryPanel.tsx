@@ -11,6 +11,7 @@ import {
   IconCheck,
   IconChevronDown,
   IconEdit,
+  IconFolder,
   IconGear,
   IconImport,
   IconLink,
@@ -24,18 +25,24 @@ import {
   IconTrash,
 } from './glass/icons';
 import { downscaleCover } from '../utils/assetStore';
-import type { BookCategory, BookItem, BookMetadataPatch } from '../utils/libraryDatabase';
+import type { BookCategory, BookItem, BookMetadataPatch, LibraryFolder } from '../utils/libraryDatabase';
 import type { Translations } from '../utils/i18n';
 
 export interface LibraryPanelProps {
   t: Translations;
   books: BookItem[];
+  folders: LibraryFolder[];
+  /** Returns the new folder's id, or null when the name was blank. */
+  onCreateFolder: (name: string) => string | null;
+  onRenameFolder: (folderId: string, name: string) => void;
+  onDeleteFolder: (folderId: string) => void;
+  onMoveBook: (bookId: string, folderId: string | null) => void;
   onOpenInReader: (book: BookItem) => void;
   onOpenInEditor: (book: BookItem) => void;
-  onImportFiles: (files: FileList) => Promise<void>;
-  onImportPixivNovel: (urlOrId: string) => Promise<void>;
+  onImportFiles: (files: FileList, folderId?: string | null) => Promise<void>;
+  onImportPixivNovel: (urlOrId: string, folderId?: string | null) => Promise<void>;
   onUpdateBookMetadata: (bookId: string, patch: BookMetadataPatch) => void;
-  onCreateOrUpdateBook: (input: { title: string; author?: string; category?: BookCategory; content: string }) => void;
+  onCreateOrUpdateBook: (input: { title: string; author?: string; category?: BookCategory; folderId?: string | null; content: string }) => void;
   onToggleFavorite: (bookId: string) => void;
   onDeleteBook: (bookId: string) => void;
 }
@@ -63,11 +70,18 @@ const fill = (template: string, values: Record<string, string | number>) =>
   template.replace(/\{(\w+)\}/g, (_, key: string) => String(values[key] ?? ''));
 
 export function LibraryPanel({
-  t, books, onOpenInReader, onOpenInEditor, onImportFiles, onImportPixivNovel, onUpdateBookMetadata,
+  t, books, folders, onCreateFolder, onRenameFolder, onDeleteFolder, onMoveBook, onOpenInReader, onOpenInEditor, onImportFiles, onImportPixivNovel, onUpdateBookMetadata,
   onCreateOrUpdateBook, onToggleFavorite, onDeleteBook,
 }: LibraryPanelProps) {
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<Filter>('all');
+  // Selected folder chip; null shows every book. A folder deleted elsewhere falls back to "all" below.
+  const [folderSel, setFolderSel] = useState<string | null>(null);
+  const [folderDialog, setFolderDialog] = useState<{ mode: 'create' } | { mode: 'rename'; folderId: string } | null>(null);
+  const [folderName, setFolderName] = useState('');
+  const [folderError, setFolderError] = useState('');
+  const [confirmDeleteFolder, setConfirmDeleteFolder] = useState(false);
+  const [moveBook, setMoveBook] = useState<BookItem | null>(null);
   const [sortBy, setSortBy] = useState<SortMode>('recent');
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [sortAnchor, setSortAnchor] = useState<HTMLButtonElement | null>(null);
@@ -99,9 +113,17 @@ export function LibraryPanel({
   const sortLabel: Record<SortMode, string> = { recent: t.librarySortRecent, updated: t.librarySortUpdated, title: t.librarySortTitle };
   const categoryOptions = (list: Filter[]) => list.map(value => ({ value, label: categoryLabel[value] }));
 
+  const activeFolder = folders.find(folder => folder.folderId === folderSel) ?? null;
+  const folderCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const book of books) if (book.folderId) counts.set(book.folderId, (counts.get(book.folderId) ?? 0) + 1);
+    return counts;
+  }, [books]);
+
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return books
+      .filter(book => !activeFolder || book.folderId === activeFolder.folderId)
       .filter(book => category === 'all' || book.category === category)
       .filter(book => !favoritesOnly || book.favorite)
       .filter(book => !needle || `${book.title}\n${book.author}\n${book.content.slice(0, 200)}`.toLowerCase().includes(needle))
@@ -111,11 +133,31 @@ export function LibraryPanel({
         if (sortBy === 'updated') return b.updatedAt - a.updatedAt;
         return (b.lastReadAt || b.updatedAt) - (a.lastReadAt || a.updatedAt);
       });
-  }, [books, category, favoritesOnly, query, sortBy]);
+  }, [books, activeFolder, category, favoritesOnly, query, sortBy]);
 
   const openInfo = (book: BookItem) => {
     setInfoDraft({ title: book.title, author: book.author || '', category: book.category, coverUrl: book.coverUrl || '' });
     setInfoBook(book);
+  };
+  const openFolderDialog = (dialog: NonNullable<typeof folderDialog>) => {
+    setFolderName(dialog.mode === 'rename' ? folders.find(folder => folder.folderId === dialog.folderId)?.name ?? '' : '');
+    setFolderError('');
+    setFolderDialog(dialog);
+  };
+  const submitFolder = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!folderDialog || !folderName.trim()) return;
+    const clash = folders.some(folder =>
+      folder.name.toLowerCase() === folderName.trim().toLowerCase() && (folderDialog.mode === 'create' || folder.folderId !== folderDialog.folderId));
+    if (folderDialog.mode === 'rename') {
+      if (clash) { setFolderError(t.libraryFolderNameTaken); return; }
+      onRenameFolder(folderDialog.folderId, folderName);
+    } else {
+      // Creating a name that exists just selects that folder (the database never makes twins).
+      const id = onCreateFolder(folderName);
+      if (id) setFolderSel(id);
+    }
+    setFolderDialog(null);
   };
   const deleteTarget = books.find(book => book.bookId === confirmDeleteId) || null;
 
@@ -125,7 +167,7 @@ export function LibraryPanel({
     setPixivBusy(true);
     setPixivError('');
     try {
-      await onImportPixivNovel(pixivUrl.trim());
+      await onImportPixivNovel(pixivUrl.trim(), activeFolder?.folderId ?? null);
       setPixivOpen(false);
       setPixivUrl('');
     } catch (error) {
@@ -165,7 +207,7 @@ export function LibraryPanel({
         accept=".txt,.md,.srt,.vtt,.docx,.epub,.pdf,application/epub+zip,application/pdf,text/plain,text/markdown,application/x-subrip,text/vtt,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         className="hidden"
         onChange={event => {
-          if (event.target.files?.length) void onImportFiles(event.target.files);
+          if (event.target.files?.length) void onImportFiles(event.target.files, activeFolder?.folderId ?? null);
           event.target.value = '';
         }}
       />
@@ -237,13 +279,47 @@ export function LibraryPanel({
         />
       </div>
 
+      {/* Folder chips: the user's own shelves (e.g. literature vs light novels) */}
+      <div data-testid="library-folders" className="-mx-1 mb-3 flex items-center gap-2 overflow-x-auto px-1 pb-1" role="group" aria-label={t.libraryFolderAllBooks}>
+        <button type="button" aria-pressed={!activeFolder} className={`btn h-9 shrink-0 !px-3.5 text-[13px] ${!activeFolder ? 'btn-ink' : ''}`} onClick={() => setFolderSel(null)}>
+          {t.libraryFolderAllBooks}
+        </button>
+        {folders.map(folder => (
+          <button
+            key={folder.folderId}
+            type="button"
+            data-testid="library-folder-chip"
+            aria-pressed={activeFolder?.folderId === folder.folderId}
+            className={`btn h-9 shrink-0 !px-3.5 text-[13px] ${activeFolder?.folderId === folder.folderId ? 'btn-ink' : ''}`}
+            onClick={() => setFolderSel(folder.folderId)}
+          >
+            <IconFolder size={15} />
+            <span className="max-w-[10em] truncate">{folder.name}</span>
+            <span className="opacity-60">{folderCounts.get(folder.folderId) ?? 0}</span>
+          </button>
+        ))}
+        <button type="button" data-testid="library-folder-new" className="btn h-9 shrink-0 !px-3.5 text-[13px]" onClick={() => openFolderDialog({ mode: 'create' })}>
+          <IconPlus size={15} />{t.libraryFolderNew}
+        </button>
+        {activeFolder && (
+          <>
+            <button type="button" className="btn h-9 shrink-0 !px-3 text-[13px]" aria-label={t.libraryFolderRename} title={t.libraryFolderRename} onClick={() => openFolderDialog({ mode: 'rename', folderId: activeFolder.folderId })}>
+              <IconEdit size={15} />
+            </button>
+            <button type="button" className="btn btn-danger h-9 shrink-0 !px-3 text-[13px]" aria-label={t.libraryFolderDelete} title={t.libraryFolderDelete} onClick={() => setConfirmDeleteFolder(true)}>
+              <IconTrash size={15} />
+            </button>
+          </>
+        )}
+      </div>
+
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain -mx-1 px-1">
         {visible.length === 0 ? (
           <div className="grid min-h-full place-items-center text-center text-[var(--label-2)]">
             <div>
               <IconBooks size={46} className="mx-auto text-[var(--label-3)]" />
               <h3 className="mb-1.5 mt-3.5 text-xl font-semibold text-[var(--label)]">{books.length ? t.libraryFilteredEmptyTitle : t.libraryEmptyTitle}</h3>
-              <p className="mx-auto mb-[18px] max-w-[280px] text-sm leading-relaxed">{books.length ? t.libraryFilteredEmptyBody : t.libraryEmptyBody}</p>
+              <p className="mx-auto mb-[18px] max-w-[280px] text-sm leading-relaxed">{activeFolder && !folderCounts.get(activeFolder.folderId) ? t.libraryFolderEmpty : books.length ? t.libraryFilteredEmptyBody : t.libraryEmptyBody}</p>
               {!books.length && (
                 <div className="flex justify-center gap-2">
                   <button type="button" className="btn btn-ink" onClick={() => fileRef.current?.click()}><IconImport size={17} />{t.libraryImportBook}</button>
@@ -290,6 +366,9 @@ export function LibraryPanel({
               onClick={event => { event.stopPropagation(); setMenu(null); onToggleFavorite(menu.book.bookId); }}
             >
               {menu.book.favorite ? t.libraryRemoveFavorite : t.libraryAddFavorite}
+            </PopoverItem>
+            <PopoverItem icon={<IconFolder size={17} />} data-testid="book-move-folder-btn" onClick={event => { event.stopPropagation(); setMenu(null); setMoveBook(menu.book); }}>
+              {t.libraryMoveToFolder}
             </PopoverItem>
             <PopoverItem icon={<IconGear size={17} />} data-testid="book-settings-gear-btn" onClick={event => { event.stopPropagation(); setMenu(null); openInfo(menu.book); }}>
               {t.libraryInfoAndCategory}
@@ -385,7 +464,7 @@ export function LibraryPanel({
           onSubmit={event => {
             event.preventDefault();
             if (!draft.content.trim()) return;
-            onCreateOrUpdateBook({ title: draft.title.trim() || t.defaultScriptTitle, author: draft.author.trim(), category: draft.category, content: draft.content });
+            onCreateOrUpdateBook({ title: draft.title.trim() || t.defaultScriptTitle, author: draft.author.trim(), category: draft.category, folderId: activeFolder?.folderId ?? null, content: draft.content });
             setDraft({ title: '', author: '', category: 'script', content: '' });
             setComposerOpen(false);
           }}
@@ -426,6 +505,59 @@ export function LibraryPanel({
             </button>
           </div>
         </form>
+      </Modal>
+
+      {/* Create / rename folder */}
+      <Modal isOpen={!!folderDialog} onClose={() => setFolderDialog(null)} title={folderDialog?.mode === 'rename' ? t.libraryFolderRenameTitle : t.libraryFolderNew} maxWidth="sm">
+        <form data-testid="library-folder-form" onSubmit={submitFolder} className="flex flex-col gap-3">
+          <Field value={folderName} onChange={value => { setFolderName(value); setFolderError(''); }} placeholder={t.libraryFolderNameLabel} testId="library-folder-name" />
+          {folderError && <p role="alert" className="text-sm text-[var(--danger)]">{folderError}</p>}
+          <div className="flex gap-2">
+            <button type="button" className="btn h-11 flex-1" onClick={() => setFolderDialog(null)}>{t.cancel}</button>
+            <button type="submit" disabled={!folderName.trim()} className="btn btn-ink h-11 flex-1">{folderDialog?.mode === 'rename' ? t.libraryFolderSave : t.libraryFolderCreate}</button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Delete folder (books are kept) */}
+      <Modal isOpen={confirmDeleteFolder && !!activeFolder} onClose={() => setConfirmDeleteFolder(false)} title={t.libraryFolderDeleteTitle} maxWidth="sm">
+        {activeFolder && (
+          <div data-testid="folder-delete-dialog">
+            <p className="mb-4 text-sm leading-relaxed">{fill(t.libraryFolderDeleteConfirm, { name: activeFolder.name, count: folderCounts.get(activeFolder.folderId) ?? 0 })}</p>
+            <div className="flex gap-2">
+              <button type="button" className="btn h-11 flex-1" onClick={() => setConfirmDeleteFolder(false)}>{t.cancel}</button>
+              <button type="button" className="btn btn-danger h-11 flex-1" onClick={() => { onDeleteFolder(activeFolder.folderId); setFolderSel(null); setConfirmDeleteFolder(false); }}>
+                {t.libraryFolderDelete}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Move a book into a folder */}
+      <Modal isOpen={!!moveBook} onClose={() => setMoveBook(null)} title={t.libraryMoveToFolderTitle} maxWidth="sm">
+        {moveBook && (
+          <div data-testid="move-folder-dialog" className="flex flex-col gap-1.5">
+            {[{ id: null as string | null, name: t.libraryMoveOutOfFolder }, ...folders.map(folder => ({ id: folder.folderId as string | null, name: folder.name }))].map(option => {
+              const current = (moveBook.folderId ?? null) === option.id;
+              return (
+                <button
+                  key={option.id ?? 'none'}
+                  type="button"
+                  className="btn h-11 justify-start gap-2 !px-3.5 text-left"
+                  onClick={() => { onMoveBook(moveBook.bookId, option.id); setMoveBook(null); }}
+                >
+                  {option.id ? <IconFolder size={17} /> : <IconBooks size={17} />}
+                  <span className="min-w-0 flex-1 truncate">{option.name}</span>
+                  {current && <IconCheck size={17} />}
+                </button>
+              );
+            })}
+            <button type="button" className="btn btn-plain mt-1 h-11" onClick={() => { setMoveBook(null); openFolderDialog({ mode: 'create' }); }}>
+              <IconPlus size={16} />{t.libraryFolderNew}
+            </button>
+          </div>
+        )}
       </Modal>
 
       {/* Delete confirmation */}

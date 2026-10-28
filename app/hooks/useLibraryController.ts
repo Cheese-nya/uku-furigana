@@ -14,13 +14,17 @@ import { saveCorrections } from '../utils/correctionStorage';
 import { fingerprintText, resolveScript, type CorrectionDatabaseV2 } from '../utils/correctionDatabase';
 import {
   addBookmark,
+  createFolder,
   createStarterBooks,
   deleteBook,
+  deleteFolder,
   emptyLibraryDatabase,
   exportLibraryBackup,
   importLibraryBackup,
   listBooks,
+  moveBookToFolder,
   removeBookmark,
+  renameFolder,
   toggleBookFavorite,
   updateBookMetadata,
   updateReadingProgress,
@@ -125,6 +129,7 @@ export function useLibraryController({
   const activeBook = activeBookId ? libraryDb.books[activeBookId] ?? null : null;
   const editorBook = editorBookId ? libraryDb.books[editorBookId] ?? null : null;
   const libraryBooks = useMemo(() => Object.values(libraryDb.books), [libraryDb.books]);
+  const libraryFolders = useMemo(() => Object.values(libraryDb.folders).sort((a, b) => a.createdAt - b.createdAt), [libraryDb.folders]);
 
   // Load the persisted library once on mount and default to the most recent book.
   useEffect(() => {
@@ -232,7 +237,7 @@ export function useLibraryController({
     loadBookIntoWorkspace(book, 'reader');
   };
 
-  const importLibraryFiles = async (files: FileList) => {
+  const importLibraryFiles = async (files: FileList, folderId?: string | null) => {
     const list = Array.from(files);
     let lastBook: BookItem | null = null;
     let lastDetail = '';
@@ -248,6 +253,7 @@ export function useLibraryController({
           content: parsed.content,
           fingerprint,
           category: parsed.category,
+          ...(folderId ? { folderId } : {}),
           format: parsed.format,
           sourceOverrides: parsed.sourceOverrides,
           srtCues: parsed.srtCues,
@@ -288,7 +294,7 @@ export function useLibraryController({
     });
   };
 
-  const createOrUpdateBook = async (input: { bookId?: string; title: string; author?: string; category?: BookCategory; coverTheme?: BookCoverTheme; content: string }) => {
+  const createOrUpdateBook = async (input: { bookId?: string; title: string; author?: string; category?: BookCategory; folderId?: string | null; coverTheme?: BookCoverTheme; content: string }) => {
     const content = input.content.replace(/\r\n?/g, '\n');
     const fingerprint = await fingerprintText(content);
     const next = await upsertBook(libraryDbRef.current, { ...input, content, fingerprint });
@@ -347,7 +353,7 @@ export function useLibraryController({
     }
   };
 
-  const handleImportPixivNovel = async (urlOrId: string) => {
+  const handleImportPixivNovel = async (urlOrId: string, folderId?: string | null) => {
     const trimmed = urlOrId.trim();
     if (!trimmed) return;
     setIsPixivImporting(true);
@@ -363,6 +369,7 @@ export function useLibraryController({
         coverUrl: pixiv.coverUrl,
         sourceUrl: pixiv.sourceUrl,
         category: 'script',
+        ...(folderId ? { folderId } : {}),
         format: 'txt',
         content: pixiv.content,
         fingerprint,
@@ -404,6 +411,17 @@ export function useLibraryController({
     }
   };
 
+  const handleCreateFolder = (name: string): string | null => {
+    const { db, folder } = createFolder(libraryDbRef.current, name);
+    if (!folder) return null;
+    libraryDbRef.current = db;
+    setLibraryDb(db);
+    return folder.folderId;
+  };
+  const handleRenameFolder = (folderId: string, name: string) => setLibraryDb(previous => renameFolder(previous, folderId, name));
+  const handleDeleteFolder = (folderId: string) => setLibraryDb(previous => deleteFolder(previous, folderId));
+  const handleMoveBook = (bookId: string, folderId: string | null) => setLibraryDb(previous => moveBookToFolder(previous, bookId, folderId));
+
   const handleDeleteBook = (bookId: string) => {
     void deleteBookAssets(bookId).catch(() => undefined);
     setLibraryDb(previous => deleteBook(previous, bookId));
@@ -439,7 +457,8 @@ export function useLibraryController({
   };
 
   return {
-    libraryDb, setLibraryDb, libraryDbRef, activeBookId, activeBook, editorBook, setEditorBookId, markEditorSource, libraryBooks,
+    libraryDb, setLibraryDb, libraryDbRef, activeBookId, activeBook, editorBook, setEditorBookId, markEditorSource, libraryBooks, libraryFolders,
+    handleCreateFolder, handleRenameFolder, handleDeleteFolder, handleMoveBook,
     libraryToast, setLibraryToast, importToast, setImportToast, showImportMenu, setShowImportMenu, editorPixivUrl, setEditorPixivUrl, isPixivImporting,
     loadBookIntoWorkspace, handleSaveToLibrary, handleOpenInReader, importLibraryFiles, createOrUpdateBook,
     exportLibraryJson, importLibraryJson, restoreStarterBooks, handleToggleFavorite, handleUpdateBookMetadata,

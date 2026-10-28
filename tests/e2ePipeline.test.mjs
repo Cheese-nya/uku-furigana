@@ -529,7 +529,7 @@ test('library backup restores imported books, progress and bookmarks, and reject
   assert.equal(db.books['book:docx'].title, '放課後');
 
   const raw = exportLibraryBackup(db);
-  assert.deepEqual(Object.keys(JSON.parse(raw)).sort(), ['books', 'kind', 'version']);
+  assert.deepEqual(Object.keys(JSON.parse(raw)).sort(), ['books', 'folders', 'kind', 'version']);
   const restored = importLibraryBackup(emptyLibraryDatabase(), raw);
   assert.deepEqual(restored, db);
   assert.deepEqual(importLibraryBackup(db, raw), db, 're-importing the same backup is a no-op');
