@@ -141,7 +141,7 @@ export default function DubbingStudioApp() {
   // Built-in library state + integration. Called here so its effects keep their original
   // position (after the tab/orientation effects, before the correction-database effects).
   const {
-    libraryDb, setLibraryDb, libraryDbRef, activeBook, setEditorBookId, markEditorSource, libraryBooks,
+    libraryDb, setLibraryDb, libraryDbRef, activeBook, setEditorBookId, markEditorSource, libraryBooks, libraryFolders, handleCreateFolder, handleRenameFolder, handleDeleteFolder, handleMoveBook,
     libraryToast, setLibraryToast, importToast, setImportToast,
     loadBookIntoWorkspace, handleSaveToLibrary, importLibraryFiles, createOrUpdateBook,
     handleToggleFavorite, handleUpdateBookMetadata,
@@ -554,6 +554,11 @@ export default function DubbingStudioApp() {
           <LibraryPanel
             t={t}
             books={libraryBooks}
+            folders={libraryFolders}
+            onCreateFolder={handleCreateFolder}
+            onRenameFolder={handleRenameFolder}
+            onDeleteFolder={handleDeleteFolder}
+            onMoveBook={handleMoveBook}
             onOpenInReader={book => loadBookIntoWorkspace(book, 'reader')}
             onOpenInEditor={book => loadBookIntoWorkspace(book, 'editor')}
             onImportFiles={importLibraryFiles}

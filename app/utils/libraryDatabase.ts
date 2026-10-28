@@ -42,6 +42,13 @@ export interface BookmarkItem {
   createdAt: number;
 }
 
+/** A user-made shelf folder; a book sits in at most one (`BookItem.folderId`). */
+export interface LibraryFolder {
+  folderId: string;
+  name: string;
+  createdAt: number;
+}
+
 export interface BookItem {
   bookId: string;
   title: string;
@@ -50,6 +57,8 @@ export interface BookItem {
   coverUrl?: string;
   sourceUrl?: string;
   category: BookCategory;
+  /** The user's own shelf folder; absent when the book sits at the top level. */
+  folderId?: string;
   format: BookFormat;
   coverTheme: BookCoverTheme;
   content: string;
@@ -77,6 +86,8 @@ export const LIBRARY_VERSION = 2;
 export interface LibraryDatabase {
   version: typeof LIBRARY_VERSION;
   books: Record<string, BookItem>;
+  /** User-made folders. Older libraries have none; folders are additive, so the version stays 2. */
+  folders: Record<string, LibraryFolder>;
 }
 
 /** @deprecated Former name of {@link LibraryDatabase}; it now always holds version 2 data. */
@@ -90,7 +101,7 @@ const FINGERPRINT = /^sha256:[a-f0-9]{64}$/;
 
 
 export function emptyLibraryDatabase(): LibraryDatabase {
-  return { version: LIBRARY_VERSION, books: {} };
+  return { version: LIBRARY_VERSION, books: {}, folders: {} };
 }
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -124,6 +135,8 @@ function toBookChapters(text: string, chapters: { title: string; startLine: numb
     .sort((a, b) => a.startLine - b.startLine)
     .filter((chapter, index, list) => index === 0 || chapter.startLine !== list[index - 1].startLine);
   if (!starts.length) return extractChapters(text, fallbackTitle);
+  // Front matter before the first TOC entry (title page, preface) would belong to no chapter and be unreachable.
+  if (starts[0].startLine > 0) starts.unshift({ title: cleanScriptTitle(fallbackTitle) || '全文', startLine: 0 });
   return starts.map((chapter, index) => ({
     id: `chapter:${index + 1}`,
     title: chapter.title.trim() || `${index + 1}`,
@@ -152,6 +165,8 @@ export interface UpsertBookInput {
   coverUrl?: string;
   sourceUrl?: string;
   category?: BookCategory;
+  /** Folder to file the book in; `null` moves it to the top level, omitted keeps its current folder. */
+  folderId?: string | null;
   format?: BookFormat;
   coverTheme?: BookCoverTheme;
   content: string;
@@ -188,6 +203,8 @@ export async function upsertBook(db: LibraryDatabase, input: UpsertBookInput): P
     : (input.sourceUrl?.trim() || undefined);
   // A later save without a layout (e.g. an editor save) must not drop the imported PDF geometry.
   const pdfLayout = input.pdfLayout ?? existing?.pdfLayout;
+  const requestedFolder = input.folderId === undefined ? existing?.folderId : input.folderId;
+  const folderId = requestedFolder && db.folders[requestedFolder] ? requestedFolder : undefined;
   const book: BookItem = {
     bookId,
     title,
@@ -196,6 +213,7 @@ export async function upsertBook(db: LibraryDatabase, input: UpsertBookInput): P
     ...(coverUrl !== undefined ? { coverUrl } : {}),
     ...(sourceUrl !== undefined ? { sourceUrl } : {}),
     category: input.category ?? existing?.category ?? 'script',
+    ...(folderId ? { folderId } : {}),
     format: input.format ?? existing?.format ?? 'txt',
     coverTheme: input.coverTheme ?? existing?.coverTheme ?? themeForIndex(Object.keys(db.books).length),
     content,
@@ -214,7 +232,7 @@ export async function upsertBook(db: LibraryDatabase, input: UpsertBookInput): P
   const books = { ...db.books };
   if (existing && existing.bookId !== bookId) delete books[existing.bookId];
   books[bookId] = book;
-  return { version: LIBRARY_VERSION, books };
+  return { ...db, version: LIBRARY_VERSION, books };
 }
 
 export interface BookMetadataPatch {
@@ -251,6 +269,60 @@ export function updateBookMetadata(
     updatedAt: now,
   };
   return { ...db, books: { ...db.books, [bookId]: updated } };
+}
+
+const MAX_FOLDER_NAME = 40;
+
+function withoutFolder(book: BookItem): BookItem {
+  const copy = { ...book };
+  delete copy.folderId;
+  return copy;
+}
+
+function cleanFolderName(name: string): string {
+  return name.replace(/\s+/g, ' ').trim().slice(0, MAX_FOLDER_NAME);
+}
+
+function folderNameTaken(db: LibraryDatabase, name: string, exceptId?: string): boolean {
+  const key = name.toLowerCase();
+  return Object.values(db.folders).some(folder => folder.folderId !== exceptId && folder.name.toLowerCase() === key);
+}
+
+/** Add a folder. A blank name is rejected; a name already in use returns the existing folder instead of a twin. */
+export function createFolder(db: LibraryDatabase, name: string, now = Date.now()): { db: LibraryDatabase; folder: LibraryFolder | null } {
+  const clean = cleanFolderName(name);
+  if (!clean) return { db, folder: null };
+  const same = Object.values(db.folders).find(folder => folder.name.toLowerCase() === clean.toLowerCase());
+  if (same) return { db, folder: same };
+  const folder: LibraryFolder = { folderId: `folder:${crypto.randomUUID()}`, name: clean, createdAt: now };
+  return { db: { ...db, folders: { ...db.folders, [folder.folderId]: folder } }, folder };
+}
+
+export function renameFolder(db: LibraryDatabase, folderId: string, name: string): LibraryDatabase {
+  const folder = db.folders[folderId];
+  const clean = cleanFolderName(name);
+  if (!folder || !clean || clean === folder.name || folderNameTaken(db, clean, folderId)) return db;
+  return { ...db, folders: { ...db.folders, [folderId]: { ...folder, name: clean } } };
+}
+
+/** Delete a folder only; its books are kept and return to the top level. */
+export function deleteFolder(db: LibraryDatabase, folderId: string): LibraryDatabase {
+  if (!db.folders[folderId]) return db;
+  const folders = { ...db.folders };
+  delete folders[folderId];
+  const books = Object.fromEntries(Object.entries(db.books).map(([id, book]) => {
+    return [id, book.folderId === folderId ? withoutFolder(book) : book];
+  }));
+  return { ...db, books, folders };
+}
+
+/** File a book in a folder, or at the top level with `null`. An unknown folder is ignored. */
+export function moveBookToFolder(db: LibraryDatabase, bookId: string, folderId: string | null): LibraryDatabase {
+  const book = db.books[bookId];
+  if (!book || (folderId !== null && !db.folders[folderId])) return db;
+  if ((book.folderId ?? null) === folderId) return db;
+  const moved = withoutFolder(book);
+  return { ...db, books: { ...db.books, [bookId]: folderId ? { ...moved, folderId } : moved } };
 }
 
 /** Return all books ordered by last read time descending, falling back to update time. */
@@ -391,6 +463,7 @@ function validateBook(id: string, value: unknown, version: number): BookItem {
   const description = typeof value.description === 'string' ? value.description : undefined;
   const coverUrl = typeof value.coverUrl === 'string' ? value.coverUrl : undefined;
   const sourceUrl = typeof value.sourceUrl === 'string' ? value.sourceUrl : undefined;
+  const folderId = typeof value.folderId === 'string' && value.folderId ? value.folderId : undefined;
   const category = version === 1 ? legacyCategory(id, value.category as BookCategory, sourceUrl) : value.category as BookCategory;
   const book: BookItem = {
     bookId: id,
@@ -400,6 +473,7 @@ function validateBook(id: string, value: unknown, version: number): BookItem {
     ...(coverUrl !== undefined ? { coverUrl } : {}),
     ...(sourceUrl !== undefined ? { sourceUrl } : {}),
     category,
+    ...(folderId ? { folderId } : {}),
     format: value.format as BookFormat,
     coverTheme: value.coverTheme as BookCoverTheme,
     content,
@@ -422,6 +496,19 @@ function validateBook(id: string, value: unknown, version: number): BookItem {
   return book;
 }
 
+/** Folders are optional and cosmetic: a malformed entry is dropped rather than failing the whole library. */
+function validateFolders(value: unknown): Record<string, LibraryFolder> {
+  if (!object(value)) return {};
+  const folders: Record<string, LibraryFolder> = {};
+  for (const [id, raw] of Object.entries(value)) {
+    if (!object(raw) || raw.folderId !== id || typeof raw.name !== 'string') continue;
+    const name = cleanFolderName(raw.name);
+    if (!name) continue;
+    folders[id] = { folderId: id, name, createdAt: typeof raw.createdAt === 'number' && Number.isFinite(raw.createdAt) ? raw.createdAt : 0 };
+  }
+  return folders;
+}
+
 /** The version 1 normalization, applied once: `other` and Pixiv books become `script`, built-in books keep theirs. */
 function legacyCategory(id: string, category: BookCategory, sourceUrl: string | undefined): BookCategory {
   if (id.startsWith('book:starter-')) return category;
@@ -437,9 +524,15 @@ export function validateLibraryDatabase(value: unknown): LibraryDatabase {
   const version = value.version;
   if (version !== 1 && version !== LIBRARY_VERSION) throw new Error(`不支持书库版本：${String(version)}`);
   if (!object(value.books)) throw new Error('书库台本格式无效');
+  const folders = validateFolders(value.folders);
   return {
     version: LIBRARY_VERSION,
-    books: Object.fromEntries(Object.entries(value.books).map(([id, book]) => [id, validateBook(id, book, version)])),
+    // A book pointing at a folder that no longer exists goes back to the top level instead of vanishing.
+    books: Object.fromEntries(Object.entries(value.books).map(([id, raw]) => {
+      const { folderId, ...book } = validateBook(id, raw, version);
+      return [id, folderId && folders[folderId] ? { ...book, folderId } : book];
+    })),
+    folders,
   };
 }
 
@@ -522,7 +615,7 @@ export async function createStarterBooks(now = Date.now()): Promise<LibraryDatab
 
 export function exportLibraryBackup(db: LibraryDatabase): string {
   const valid = validateLibraryDatabase(db);
-  return JSON.stringify({ kind: 'furigana-library', version: valid.version, books: valid.books });
+  return JSON.stringify({ kind: 'furigana-library', version: valid.version, books: valid.books, folders: valid.folders });
 }
 
 /** Version 1 backups are migrated like version 1 libraries; version 2 backups keep their categories. */
@@ -534,11 +627,26 @@ export function importLibraryBackup(db: LibraryDatabase, rawJson: string): Libra
     !object(parsed.books)) {
     throw new Error('书库备份格式无效');
   }
-  const incoming = validateLibraryDatabase({ version: parsed.version, books: parsed.books });
+  const incoming = validateLibraryDatabase({ version: parsed.version, books: parsed.books, folders: parsed.folders });
   const current = validateLibraryDatabase(db);
   const books = { ...current.books };
-  for (const book of Object.values(incoming.books)) {
-    const existing = books[book.bookId] || findByFingerprint({ version: LIBRARY_VERSION, books }, book.fingerprint);
+  // Same-named folders merge; incoming books follow their folder to the surviving id.
+  const folders = { ...current.folders };
+  const folderIdMap = new Map<string, string>();
+  for (const folder of Object.values(incoming.folders)) {
+    const same = folders[folder.folderId] ?? Object.values(folders).find(f => f.name.toLowerCase() === folder.name.toLowerCase());
+    if (same) folderIdMap.set(folder.folderId, same.folderId);
+    else { folders[folder.folderId] = folder; folderIdMap.set(folder.folderId, folder.folderId); }
+  }
+  const remap = (book: BookItem): BookItem => {
+    if (!book.folderId) return book;
+    const target = folderIdMap.get(book.folderId);
+    const moved = withoutFolder(book);
+    return target ? { ...moved, folderId: target } : moved;
+  };
+  for (const original of Object.values(incoming.books)) {
+    const book = remap(original);
+    const existing = books[book.bookId] || findByFingerprint({ ...current, books }, book.fingerprint);
     if (!existing) {
       books[book.bookId] = book;
       continue;
@@ -553,5 +661,5 @@ export function importLibraryBackup(db: LibraryDatabase, rawJson: string): Libra
         lastReadAt: Math.max(existing.lastReadAt, book.lastReadAt) };
     if (existing.bookId !== book.bookId && books[book.bookId] && books[book.bookId] !== books[existing.bookId]) delete books[book.bookId];
   }
-  return validateLibraryDatabase({ version: LIBRARY_VERSION, books });
+  return validateLibraryDatabase({ version: LIBRARY_VERSION, books, folders });
 }
