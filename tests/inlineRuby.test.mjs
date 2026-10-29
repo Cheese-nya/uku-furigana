@@ -170,11 +170,12 @@ test('editor, library and batch import all go through importTextScript; batch bo
   assert.match(batch, /importTextScript\(item\.name, await item\.file\.text\(\)\)/);
   for (const source of [page, library, batch, bookImport]) assert.equal(/\bparseSRT\(|\bparseVtt\b/.test(source), false, 'no private subtitle parsing left');
   assert.match(bookImport, /format: scriptSourceFormat\(file\.name\)/);
-  assert.match(batch, /format: scriptSourceFormat\(item\.name\)/);
+  // A content:// pick can arrive without an extension: the detected format then wins.
+  assert.match(batch, /format: detectedFormat \?\? scriptSourceFormat\(item\.name\)/);
   assert.equal(/batchTargetFormat === 'docx' \? 'docx'/.test(batch), false, 'the export target must not decide the book format');
   assert.match(page, /return generateTXT\(lines\);/);
   // The editor's "Save to Library" keeps the format of the file the script came from (a DOCX stays docx).
-  assert.match(page, /markEditorSource\(resolved\.scriptId, scriptSourceFormat\(file\.name\)\)/);
+  assert.match(page, /markEditorSource\(resolved\.scriptId, format \?\? scriptSourceFormat\(file\.name\)\)/);
   assert.match(library, /markEditorSource\(resolved\.scriptId, book\.format\)/);
   assert.match(library, /format: editorFormat,/);
   assert.equal(/format: srtCues\.length \? 'srt' : 'txt'/.test(library), false, 'cue presence must not decide the editor book format');

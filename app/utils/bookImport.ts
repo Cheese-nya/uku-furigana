@@ -20,7 +20,47 @@ export interface ParsedBookFile {
   pdfLayout?: PdfLayout;
 }
 
-export const isBookFile = (name: string) => /\.(?:epub|pdf)$/i.test(name);
+const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+// The pickers also offer text/plain, so an extension-less text pick must pass the queue filter too.
+const IMPORTABLE_MIMES = new Set(['application/pdf', 'application/epub+zip', DOCX_MIME, 'text/plain']);
+const IMPORTABLE_NAME = /\.(?:txt|md|srt|vtt|docx|epub|pdf)$/i;
+
+export type DetectedBookFormat = 'epub' | 'pdf' | 'docx' | null;
+
+/** Whether the batch queue should take the file: a known extension or a known document MIME type. */
+export const isImportableFile = (file: File) =>
+  IMPORTABLE_NAME.test(file.name) || IMPORTABLE_MIMES.has((file.type || '').toLowerCase());
+
+/**
+ * Which structured parser a picked file needs. The name alone is not enough: an Android
+ * document provider hands the WebView a `content://` URI whose File name can be a document id
+ * ("document:1234", "msf:42") with no extension, so the MIME type and the first bytes decide.
+ * A PDF read as plain text is binary garbage that crashes annotation; this routes it to the
+ * PDF parser instead.
+ */
+export async function detectBookFormat(file: File): Promise<DetectedBookFormat> {
+  const lower = file.name.toLowerCase();
+  if (lower.endsWith('.epub')) return 'epub';
+  if (lower.endsWith('.pdf')) return 'pdf';
+  if (lower.endsWith('.docx')) return 'docx';
+
+  const type = (file.type || '').toLowerCase();
+  if (type === 'application/epub+zip') return 'epub';
+  if (type === 'application/pdf') return 'pdf';
+  if (type === DOCX_MIME) return 'docx';
+
+  const head = new Uint8Array(await file.slice(0, 512).arrayBuffer());
+  if (head.length >= 5 && head[0] === 0x25 && head[1] === 0x50 && head[2] === 0x44 && head[3] === 0x46 && head[4] === 0x2d) {
+    return 'pdf'; // %PDF-
+  }
+  if (head.length >= 4 && head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04) {
+    // EPUB and DOCX are both ZIP files; an EPUB must open with a stored `mimetype` entry.
+    // ASCII bytes survive UTF-8 decoding unchanged, so the marker is safe to look for here.
+    const zipHead = new TextDecoder().decode(head);
+    return zipHead.includes('application/epub+zip') ? 'epub' : 'docx';
+  }
+  return null;
+}
 
 function fromImportedBook(book: ImportedBook, format: 'epub' | 'pdf'): ParsedBookFile {
   return {
@@ -41,16 +81,16 @@ function fromImportedBook(book: ImportedBook, format: 'epub' | 'pdf'): ParsedBoo
 /** Parse a picked file (TXT/MD/SRT/VTT/DOCX/EPUB/PDF) into a library-ready book. EPUB and PDF load their parsers on demand. */
 export async function parseBookFile(file: File): Promise<ParsedBookFile> {
   const title = file.name.replace(/\.[^/.]+$/, '') || 'Untitled';
-  const lower = file.name.toLowerCase();
-  if (lower.endsWith('.epub')) {
+  const format = await detectBookFormat(file);
+  if (format === 'epub') {
     const { importEpub } = await import('./epubImporter');
     return fromImportedBook(await importEpub(await file.arrayBuffer(), file.name), 'epub');
   }
-  if (lower.endsWith('.pdf')) {
+  if (format === 'pdf') {
     const { importPdf } = await import('./pdfImporter');
     return fromImportedBook(await importPdf(await file.arrayBuffer(), file.name), 'pdf');
   }
-  if (lower.endsWith('.docx')) {
+  if (format === 'docx') {
     const imported = await importDocx(await file.arrayBuffer());
     return { title, content: imported.text, format: 'docx', category: 'script', sourceOverrides: imported.overrides, srtCues: [], images: [] };
   }

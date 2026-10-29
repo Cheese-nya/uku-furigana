@@ -13,7 +13,7 @@ import { upsertBook, type BookItem, type LibraryDatabaseV1, type PdfLayout } fro
 import { buildDocxBlob } from '../utils/docxExporter';
 import { buildEpubBlob } from '../utils/epubExporter';
 import { buildPdfBlob } from '../utils/pdfExporter';
-import { isBookFile, parseBookFile } from '../utils/bookImport';
+import { detectBookFormat, isImportableFile, parseBookFile } from '../utils/bookImport';
 import { withoutImageLines } from '../utils/bookAssets';
 import { buildBatchZipBlob, pickBatchDirectory, saveBlob, saveBlobToDirectory, type BatchSaveMode } from '../utils/fileSave';
 import type { Translations } from '../utils/i18n';
@@ -70,9 +70,9 @@ export function useBatchProcessing({
   };
 
   const addFilesToQueue = (files: File[]) => {
-    const validExts = ['.txt', '.srt', '.docx', '.epub', '.pdf'];
+    // An Android content:// pick can arrive without an extension; its MIME type still names it.
     const newItems: BatchFileItem[] = files
-      .filter(f => validExts.some(ext => f.name.toLowerCase().endsWith(ext)))
+      .filter(isImportableFile)
       .map(f => ({
         id: Math.random().toString(36).substring(2, 9),
         file: f,
@@ -154,6 +154,8 @@ export function useBatchProcessing({
         let importedCues: SrtCue[] = [];
         // Source PDF layout travels with the item: from the imported file, or from the library book.
         let pdfLayout: PdfLayout | undefined;
+        // Format detected from the bytes when the picked name carries no usable extension.
+        let detectedFormat: 'epub' | 'pdf' | 'docx' | null = null;
         // A queued library book is already parsed: read its text, overrides and cues straight from the library.
         const libraryBook = item.bookId ? libraryDbRef.current.books[item.bookId] : undefined;
         if (item.bookId) {
@@ -165,23 +167,29 @@ export function useBatchProcessing({
           pdfLayout = libraryBook.pdfLayout;
         } else if (!item.file) {
           throw new Error('未找到待处理的文件');
-        } else if (isBookFile(item.name)) {
-          const parsed = await parseBookFile(item.file);
-          textContent = withoutImageLines(parsed.content);
-          importedOverrides = parsed.sourceOverrides;
-          pdfLayout = parsed.pdfLayout;
-        } else if (item.name.toLowerCase().endsWith('.docx')) {
-          const arrayBuffer = await item.file.arrayBuffer();
-          const imported = await importDocx(arrayBuffer);
-          textContent = imported.text;
-          importedOverrides = imported.overrides;
         } else {
-          // Same text import as the editor: inline 漢字(かな) readings become source overrides.
-          const imported = importTextScript(item.name, await item.file.text());
-          if (item.name.toLowerCase().endsWith('.srt') && !imported.cues.length) throw new Error('未找到有效的 SRT 时间轴');
-          textContent = imported.text;
-          importedOverrides = imported.overrides;
-          importedCues = imported.cues;
+          // Same routing as the editor: the MIME type and magic bytes decide when the name has
+          // no extension (an Android content:// pick).
+          const format = await detectBookFormat(item.file);
+          detectedFormat = format;
+          if (format === 'epub' || format === 'pdf') {
+            const parsed = await parseBookFile(item.file);
+            textContent = withoutImageLines(parsed.content);
+            importedOverrides = parsed.sourceOverrides;
+            pdfLayout = parsed.pdfLayout;
+          } else if (format === 'docx') {
+            const arrayBuffer = await item.file.arrayBuffer();
+            const imported = await importDocx(arrayBuffer);
+            textContent = imported.text;
+            importedOverrides = imported.overrides;
+          } else {
+            // Same text import as the editor: inline 漢字(かな) readings become source overrides.
+            const imported = importTextScript(item.name, await item.file.text());
+            if (item.name.toLowerCase().endsWith('.srt') && !imported.cues.length) throw new Error('未找到有效的 SRT 时间轴');
+            textContent = imported.text;
+            importedOverrides = imported.overrides;
+            importedCues = imported.cues;
+          }
         }
         const itemTitle = item.bookId
           ? (libraryBook?.title || item.name.replace(/\.[^/.]+$/, ''))
@@ -224,7 +232,7 @@ export function useBatchProcessing({
             title: cleanScriptTitle(itemTitle) || t.untitledScript,
             content: textContent,
             fingerprint,
-            format: scriptSourceFormat(item.name),
+            format: detectedFormat ?? scriptSourceFormat(item.name),
             sourceOverrides: withLfLineKeys(importedOverrides),
             srtCues: importedCues,
             ...(pdfLayout ? { pdfLayout } : {}),

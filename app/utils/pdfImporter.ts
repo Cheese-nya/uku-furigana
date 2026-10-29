@@ -1,5 +1,6 @@
 import { ScannedPdfError, type ImportedBook } from './bookAssets';
 import type { PdfLayout } from './libraryDatabase';
+import { sanitizeText } from './textSanitize';
 
 export interface PdfTextItem {
   str: string;
@@ -185,11 +186,15 @@ export async function importPdf(
 
     for (const item of content.items) {
       if (!item || typeof item.str !== 'string') continue;
-      if (item.str === '') {
+      // pdf.js writes "\u0000" for glyphs whose font has no Unicode mapping (CID 0 / .notdef).
+      // Those bytes are not text: they crash the tokenizer, count toward the scanned-PDF
+      // threshold and would travel into the stored book, so they are dropped on extraction.
+      const str = sanitizeText(item.str);
+      if (str === '') {
         if (item.hasEOL) flushVisualLine();
         continue;
       }
-      const charCount = item.str.replace(/\s+/g, '').length;
+      const charCount = str.replace(/\s+/g, '').length;
       nonWhitespaceCount += charCount;
       // Vertical detection is per font: a CJK vertical font renders glyphs rotated 90° via its own metrics.
       if (charCount > 0) {
@@ -200,7 +205,7 @@ export async function importPdf(
           if (glyphWidth > 0) verticalGlyphWidths.push(glyphWidth);
         }
       }
-      currentItems.push(item);
+      currentItems.push({ ...item, str });
       if (item.hasEOL) {
         flushVisualLine();
       }
@@ -307,11 +312,11 @@ export async function importPdf(
   let author = '';
   try {
     const metadata = await doc.getMetadata();
-    const rawTitle = metadata?.info?.Title?.trim() || '';
+    const rawTitle = sanitizeText(metadata?.info?.Title ?? '').trim();
     if (rawTitle && !isLikelyFilePath(rawTitle)) {
       title = rawTitle;
     }
-    author = metadata?.info?.Author?.trim() || '';
+    author = sanitizeText(metadata?.info?.Author ?? '').trim();
   } catch {
     // Ignore metadata failures and keep fallback title/author.
   }
@@ -321,7 +326,7 @@ export async function importPdf(
     const outline = await doc.getOutline();
     if (Array.isArray(outline)) {
       for (const item of outline) {
-        const chapterTitle = item?.title?.trim() || '';
+        const chapterTitle = sanitizeText(item?.title ?? '').trim();
         if (!chapterTitle) continue;
         try {
           let destArray: unknown[] | null = null;

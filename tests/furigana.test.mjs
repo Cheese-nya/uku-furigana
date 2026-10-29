@@ -18,6 +18,26 @@ before(async () => {
 });
 
 const readingOf = text => annotateLine(text).tokens.map(token => token.ruby || token.surface).join('');
+const surfaceOf = text => annotateLine(text).tokens.map(token => token.surface).join('');
+
+// pdf.js writes U+0000 for glyphs without a Unicode mapping (CID 0 / .notdef fonts); a PDF
+// opened on Android used to kill the whole annotation job with
+// `Cannot read properties of undefined (reading 'length')`.
+test('PDF 文本层残留：NUL 与孤立代理项不再让注音崩溃', () => {
+  const nul = annotateLine('吾輩は猫である。\u0000名前はまだ無い。');
+  assert.equal(nul.cleanText, '吾輩は猫である。名前はまだ無い。');
+  assert.equal(nul.rawText, nul.cleanText, 'exporters read chapter titles from rawText');
+  assert.equal(surfaceOf('吾輩は猫である。\u0000名前はまだ無い。'), nul.cleanText);
+  const surrogate = annotateLine('あ\uD800い\uDC00う');
+  assert.equal(surrogate.cleanText, 'あいう');
+  assert.equal(surfaceOf('あ\uD800い\uDC00う'), 'あいう');
+});
+
+test('增补平面字符连续出现时不丢字（😀😀連続絵文字 曾丢掉 連続）', () => {
+  const text = '😀😀連続絵文字';
+  assert.equal(surfaceOf(text), text);
+  assert.equal(annotateLine(text).cleanText, text);
+});
 
 for (const [text, reading] of [
   ['二人で行っておいで', 'ふたりでいっておいで'],

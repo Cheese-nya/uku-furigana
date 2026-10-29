@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { GlassToast } from './components/GlassToast';
 import { ReadingToolsSheet } from './components/ReadingToolsSheet';
 import { useReadingTools } from './hooks/useReadingTools';
-import { isBookFile, parseBookFile } from './utils/bookImport';
+import { detectBookFormat, parseBookFile } from './utils/bookImport';
 import { withoutImageLines } from './utils/bookAssets';
 import { Sidebar } from './components/Sidebar';
 import { SettingsMenu } from './components/SettingsMenu';
@@ -392,11 +392,14 @@ export default function DubbingStudioApp() {
       let content = '';
       let importedRuby: RubyOverride[] = [];
       let importedCues: SrtCue[] = [];
-      if (isBookFile(file.name)) {
+      // The file name is not enough on Android: a content:// pick can arrive as a document id
+      // with no extension, so the MIME type and magic bytes decide which parser runs.
+      const format = await detectBookFormat(file);
+      if (format === 'epub' || format === 'pdf') {
         const parsed = await parseBookFile(file);
         content = withoutImageLines(parsed.content);
         importedRuby = parsed.sourceOverrides;
-      } else if (file.name.toLowerCase().endsWith('.docx')) {
+      } else if (format === 'docx') {
         const arrayBuffer = await file.arrayBuffer();
         const imported = await importDocx(arrayBuffer);
         content = imported.text;
@@ -415,7 +418,7 @@ export default function DubbingStudioApp() {
       const resolved = resolveScript(databaseRef.current, baseName, content, fingerprint);
       setDatabase(resolved.database);
       setDocumentId(resolved.scriptId);
-      markEditorSource(resolved.scriptId, scriptSourceFormat(file.name));
+      markEditorSource(resolved.scriptId, format ?? scriptSourceFormat(file.name));
       setEditingToken(null);
       setSourceOverrides(importedRuby);
       setSrtCues(importedCues);
@@ -584,6 +587,7 @@ export default function DubbingStudioApp() {
             tools={readingTools.tools}
             dictTitles={readingTools.dictTitles}
             locale={locale}
+            error={annotationError}
           />
         )}
 
