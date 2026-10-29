@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { loadTypescript } from './loadTypescript.mjs';
+
+const { plainScriptLines } = loadTypescript('../app/utils/plainScript.ts');
 
 const source = readFileSync(
   fileURLToPath(new URL('../app/components/ReaderPanel.tsx', import.meta.url)),
@@ -69,12 +72,26 @@ test('阅读器：说话人标签与正文开头去重', () => {
   assert.ok(line.includes('text.startsWith(speaker)'));
 });
 
+test('阅读器：注音失败时显示台本库原文，而不是空白页', () => {
+  assert.ok(source.includes('plainScriptLines'), 'ReaderPanel falls back to the stored text');
+  // Only on failure: a fallback while annotating keeps the line count from dropping to 0, and
+  // then a ruby-type switch no longer brings the reader back to their line (500 → 44).
+  assert.ok(source.includes("Boolean(error) && !isProcessing && annotatedLines.length === 0"), 'fallback only when annotation failed');
+  assert.ok(source.includes('failed ? plainLines : annotatedLines'));
+  assert.ok(source.includes('readerPlainTextNote'), 'and says why the text is plain');
+  assert.deepEqual(
+    plainScriptLines('第一行\n\n第三行').map(entry => [entry.cleanText, entry.tokens.map(token => token.surface).join('')]),
+    [['第一行', '第一行'], ['', ''], ['第三行', '第三行']],
+  );
+});
+
 test('工作台：样稿工具条 + 导出选格式（含存入台本库）+ 右上角导入（文件 / 台本库）', () => {
   assert.ok(editor.includes('data-testid="workbench-export-submit-btn"'));
   assert.ok(editor.includes('export-format-option-'));
   assert.ok(editor.includes('handleExport(format)'));
   assert.ok(editor.includes('handleSaveToLibrary()'), 'save to library lives in the export menu');
   assert.ok(editor.includes('t.importFromLibrary') && editor.includes('t.chooseFile'), 'import: choose file or from library');
+  assert.ok(editor.includes('t.annotateErrorTitle'), 'annotation failure is not reported as a dictionary failure');
   assert.ok(editor.includes('<IconMoreVertical'), 'round ⋮ settings button at top-left on phones');
   assert.ok(editor.includes('t.tapKanjiHint') && editor.includes('t.statAuto'), 'preview card header and stats');
   for (const removed of ['setPreviewWritingMode', 'rubyColor', 'setLineSpacing', 'editor-pixiv-toggle', 't.clearButton', "'split'", 'handleOpenInReader']) {

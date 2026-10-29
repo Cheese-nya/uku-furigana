@@ -220,7 +220,13 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
         </GlassButton>
       </div>
 
-      <input type="file" ref={editorFileInputRef} onChange={handleEditorFileImport} accept=".txt,.srt,.docx,.epub,.pdf" className="hidden" />
+      <input
+        type="file"
+        ref={editorFileInputRef}
+        onChange={handleEditorFileImport}
+        accept=".txt,.srt,.docx,.epub,.pdf,text/plain,application/pdf,application/epub+zip,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        className="hidden"
+      />
 
       <h1 className="mx-1 mb-3.5 mt-1.5 text-[34px] font-bold tracking-[-0.02em] md:hidden">{t.mobileNavEditor}</h1>
       <div className="mb-3 md:hidden">
@@ -350,7 +356,10 @@ function PreviewCard({
     },
     { auto: 0, glossary: 0, manual: 0 },
   );
-  const failed = dictionaryStatus === 'degraded' || Boolean(annotationError || reviewError || correctionError);
+  // A failed annotation is not a failed dictionary: say which one it is, so a PDF that made
+  // annotation fail does not read as "the dictionary did not load".
+  const dictionaryDown = dictionaryStatus === 'degraded';
+  const failed = dictionaryDown || Boolean(annotationError || reviewError || correctionError);
   const loading = !failed && (isKuromojiLoading || isAnnotating);
 
   return (
@@ -389,8 +398,8 @@ function PreviewCard({
           <div className="grid min-h-[300px] place-items-center text-center text-[var(--label-2)]">
             <div>
               <IconWarning size={46} className="mx-auto text-[var(--label-3)]" />
-              <h3 className="mb-1.5 mt-3.5 text-xl font-semibold text-[var(--label)]">{t.dictErrorTitle}</h3>
-              <p className="mx-auto mb-[18px] max-w-[280px] text-sm leading-relaxed">{t.dictErrorBody}</p>
+              <h3 className="mb-1.5 mt-3.5 text-xl font-semibold text-[var(--label)]">{dictionaryDown ? t.dictErrorTitle : t.annotateErrorTitle}</h3>
+              <p className="mx-auto mb-[18px] max-w-[280px] text-sm leading-relaxed">{dictionaryDown ? t.dictErrorBody : t.annotateErrorBody}</p>
               <button type="button" className="btn btn-ink" onClick={() => { void runDependencyRepair(); }}>{t.retry}</button>
             </div>
           </div>
@@ -426,7 +435,7 @@ function PreviewCard({
                     >
                       {token.surface}
                       {token.ruby && (
-                        <rt className="select-none text-[0.5em] font-medium tracking-[0.02em]" style={{ color: rtColor, visibility: previewShowRuby ? 'visible' : 'hidden' }}>
+                        <rt className="select-none text-[0.56em] font-semibold tracking-[0.02em]" style={{ color: rtColor, visibility: previewShowRuby ? 'visible' : 'hidden' }}>
                           {token.ruby}
                         </rt>
                       )}

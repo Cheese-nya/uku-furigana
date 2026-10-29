@@ -85,6 +85,44 @@ test('importPdf joins wrapped Japanese/ASCII lines, respects paragraph breaks, a
   ]);
 });
 
+test('importPdf drops NUL, control characters and lone surrogates from text and metadata', async () => {
+  const fakeLoader = {
+    numPages: 1,
+    getPage() {
+      return {
+        getTextContent() {
+          return {
+            items: [
+              // pdf.js writes "\u0000" for unmapped glyphs (.notdef / CID 0 fonts); the stray
+              // bytes used to travel into the book and crash the tokenizer.
+              makeItem('　第一章の冒頭テキストです。\u0000十分な文字数を確保します。', { y: 750 }),
+              makeItem('次の行に\u0007制御文字が混ざっています。', { y: 736 }),
+            ],
+          };
+        },
+      };
+    },
+    getMetadata() {
+      return { info: { Title: 'タイトル\u0000', Author: '著者\uD800' } };
+    },
+    getOutline() {
+      return null;
+    },
+    getPageIndex() {
+      return 0;
+    },
+    getDestination() {
+      return null;
+    },
+  };
+
+  const book = await importPdf(new ArrayBuffer(8), 'scan.pdf', fakeLoader);
+  assert.equal(book.title, 'タイトル');
+  assert.equal(book.author, '著者');
+  assert.equal(book.text, '　第一章の冒頭テキストです。十分な文字数を確保します。\n次の行に制御文字が混ざっています。');
+  assert.equal(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uD800-\uDFFF]/u.test(book.text), false);
+});
+
 test('importPdf resolves outline chapters and falls back when info.Title is a file path', async () => {
   const pages = [
     [

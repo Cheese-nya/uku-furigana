@@ -7,6 +7,7 @@
 
 import { getTokenizer, isKuromojiReady, type KuromojiToken } from './kuromojiEngine';
 import { findCounterCompound } from './counterReadings';
+import { sanitizeText } from './textSanitize';
 
 export type RubyType = 'hiragana' | 'katakana' | 'romaji';
 
@@ -569,7 +570,10 @@ export function annotateLine(
   rawLine: string,
   rubyType: RubyType = 'hiragana'
 ): ScriptLine {
-  const content = rawLine;
+  // A PDF text layer or a paste can carry NUL bytes and broken surrogate halves; kuromoji
+  // throws on them (see textSanitize). The tokens are built from the cleaned line, so the
+  // reader and exports never show the leftover bytes.
+  const content = sanitizeText(rawLine);
   const tokens: Token[] = [];
 
   // Check for pre-segmented phrases (e.g. 一日中)
@@ -728,7 +732,8 @@ export function annotateLine(
 
   return {
     id: Math.random().toString(36).substring(2, 9),
-    rawText: rawLine,
+    // The PDF/EPUB exporters read chapter titles from rawText; a stray NUL there is invalid XML.
+    rawText: content,
     cleanText: content,
     tokens: tokens.map(token => {
       if (token.hasKanji && !token.ruby) return { ...token, needsReview: true };

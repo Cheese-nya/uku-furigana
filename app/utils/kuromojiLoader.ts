@@ -1,4 +1,9 @@
 import BrowserDictionaryLoader from 'kuromoji/src/loader/BrowserDictionaryLoader';
+import ViterbiBuilder from 'kuromoji/src/viterbi/ViterbiBuilder';
+import ViterbiLattice from 'kuromoji/src/viterbi/ViterbiLattice';
+import ViterbiNode from 'kuromoji/src/viterbi/ViterbiNode';
+import SurrogateAwareString from 'kuromoji/src/util/SurrogateAwareString';
+import { sanitizeText } from './textSanitize';
 
 type LoadCallback = (err: unknown, buffer: ArrayBuffer | null) => void;
 
@@ -64,4 +69,95 @@ proto.loadArrayBuffer = function (this: unknown, url: string, callback: LoadCall
     .then(run)
     .then(buffer => callback(null, buffer), err => callback(err, null))
     .catch(() => undefined);
+};
+
+interface UnknownClass {
+  class_name: string;
+  class_id: number;
+  is_always_invoke: number;
+  is_grouping: number;
+}
+
+interface BuilderInternals {
+  trie: { commonPrefixSearch(key: string): { k: string; v?: number }[] };
+  token_info_dictionary: {
+    target_map: Record<number, string[] | undefined>;
+    dictionary: { getShort(index: number): number };
+  };
+  unknown_dictionary: {
+    lookup(text: string): UnknownClass;
+    target_map: Record<number, string[] | undefined>;
+    dictionary: { getShort(index: number): number };
+  };
+}
+
+/**
+ * kuromoji's own ViterbiBuilder, with the lattice lengths kept in code points. Stock kuromoji
+ * does `key += next_char` on a SurrogateAwareString while grouping an unknown word, which turns
+ * key into a primitive string: the node's length then counts UTF-16 units while lattice
+ * positions count code points, so a run of supplementary-plane characters (rare kanji, emoji)
+ * makes the lattice skip the characters that follow it (「😀😀連続」 tokenizes as 「😀😀」 and
+ * 連続 disappears). The word-id guard also covers a trie entry without a word id, which is what
+ * doublearray answers for the U+0000 terminator.
+ */
+function buildLattice(this: BuilderInternals, sentenceStr: string) {
+  const lattice = new ViterbiLattice();
+  const sentence = new SurrogateAwareString(sentenceStr);
+
+  for (let pos = 0; pos < sentence.length; pos += 1) {
+    const tail = sentence.slice(pos);
+    const vocabulary = this.trie.commonPrefixSearch(tail);
+    for (const entry of vocabulary) {
+      const tokenInfoIds = entry.v === undefined ? undefined : this.token_info_dictionary.target_map[entry.v];
+      if (!tokenInfoIds) continue;
+      for (const tokenInfoId of tokenInfoIds) {
+        const id = parseInt(tokenInfoId);
+        const leftId = this.token_info_dictionary.dictionary.getShort(id);
+        const rightId = this.token_info_dictionary.dictionary.getShort(id + 2);
+        const wordCost = this.token_info_dictionary.dictionary.getShort(id + 4);
+        lattice.append(new ViterbiNode(id, wordCost, pos + 1, entry.k.length, 'KNOWN', leftId, rightId, entry.k));
+      }
+    }
+
+    // Unknown word processing
+    const surrogateAwareTail = new SurrogateAwareString(tail);
+    const headChar = new SurrogateAwareString(surrogateAwareTail.charAt(0));
+    const headClass = this.unknown_dictionary.lookup(headChar.toString());
+    if (!vocabulary || vocabulary.length === 0 || headClass.is_always_invoke === 1) {
+      let key = headChar.toString();
+      let keyLength = headChar.length;
+      if (headClass.is_grouping === 1 && surrogateAwareTail.length > 1) {
+        for (let k = 1; k < surrogateAwareTail.length; k += 1) {
+          const nextChar = surrogateAwareTail.charAt(k);
+          const nextClass = this.unknown_dictionary.lookup(nextChar);
+          if (headClass.class_name !== nextClass.class_name) break;
+          key += nextChar;
+          // charAt returns a whole code point: two UTF-16 units only for a surrogate pair.
+          keyLength += nextChar.length === 2 ? 1 : nextChar.length;
+        }
+      }
+
+      const unknownIds = this.unknown_dictionary.target_map[headClass.class_id] ?? [];
+      for (const unknownId of unknownIds) {
+        const id = parseInt(unknownId);
+        const leftId = this.unknown_dictionary.dictionary.getShort(id);
+        const rightId = this.unknown_dictionary.dictionary.getShort(id + 2);
+        const wordCost = this.unknown_dictionary.dictionary.getShort(id + 4);
+        lattice.append(new ViterbiNode(id, wordCost, pos + 1, keyLength, 'UNKNOWN', leftId, rightId, key));
+      }
+    }
+  }
+  lattice.appendEos();
+
+  return lattice;
+}
+
+const builderProto = ViterbiBuilder.prototype as { build: (this: BuilderInternals, sentence: string) => unknown };
+const stockBuild = builderProto.build;
+
+builderProto.build = function (sentence: string) {
+  // Control characters and unpaired surrogates crash the stock lattice builder (see
+  // textSanitize); text that holds none of them takes the untouched stock path.
+  const clean = sanitizeText(sentence);
+  return /[\u{10000}-\u{10FFFF}]/u.test(clean) ? buildLattice.call(this, clean) : stockBuild.call(this, clean);
 };

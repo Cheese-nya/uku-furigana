@@ -380,6 +380,11 @@ export interface Translations {
   dictLoadFailed: string;
   dictErrorTitle: string;
   dictErrorBody: string;
+  /** Annotation failed although the dictionary is ready (e.g. a document made the tokenizer throw). */
+  annotateErrorTitle: string;
+  annotateErrorBody: string;
+  /** Reader falls back to the stored plain text when annotation did not finish. */
+  readerPlainTextNote: string;
   retry: string;
   learnedReadingsMenu: string;
   libraryEmptyPick: string;
@@ -927,6 +932,9 @@ export const translations: Record<Locale, Translations> = {
     dictLoadFailed: '词典加载失败 · 重试',
     dictErrorTitle: '词典没有加载成功',
     dictErrorBody: '原文已保留。检查存储空间后重试，或先导出不带注音的版本。',
+    annotateErrorTitle: '注音没有完成',
+    annotateErrorBody: '原文已保留。可以继续编辑原文，或点重试重新注音。',
+    readerPlainTextNote: '注音没有完成，当前显示原文。',
     retry: '重试',
     learnedReadingsMenu: '学到的读音',
     libraryEmptyPick: '台本库里还没有作品',
@@ -1470,6 +1478,9 @@ export const translations: Record<Locale, Translations> = {
     dictLoadFailed: 'Dictionary failed · Retry',
     dictErrorTitle: 'The dictionary did not load',
     dictErrorBody: 'Your text is kept. Check storage and retry, or export without ruby for now.',
+    annotateErrorTitle: 'Annotation did not finish',
+    annotateErrorBody: 'Your text is kept. Keep editing the source, or retry to annotate again.',
+    readerPlainTextNote: 'Annotation did not finish; showing the plain text.',
     retry: 'Retry',
     learnedReadingsMenu: 'Learned Readings',
     libraryEmptyPick: 'The library is empty',

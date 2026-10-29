@@ -13,6 +13,7 @@ import { logEvent } from '../utils/appLog';
 import { LookupCard, type LookupState } from './LookupCard';
 import { ReaderLine, bilingualSignature } from './ReaderLine';
 import { useBilingual } from '../hooks/useBilingual';
+import { plainScriptLines } from '../utils/plainScript';
 import type { ReaderTools } from '../utils/readingTools';
 
 type RubyMode = 'hiragana' | 'katakana' | 'romaji';
@@ -32,6 +33,8 @@ export interface ReaderPanelProps {
   tools: ReaderTools | null;
   dictTitles: Record<string, string>;
   locale: string;
+  /** Annotation failure message; the reader then falls back to the book's plain text. */
+  error?: string;
 }
 
 interface ReaderPrefs {
@@ -75,7 +78,7 @@ const fill = (template: string, values: Record<string, string | number>) =>
  * and trackpads deliver many tiny deltas — and a 2px progress line takes its
  * place; scrolling up, reaching the top/bottom or tapping the page brings it back.
  */
-export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, onRubyTypeChange, onUpdateProgress, onGoToLibrary, tools, dictTitles, locale }: ReaderPanelProps) {
+export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, onRubyTypeChange, onUpdateProgress, onGoToLibrary, tools, dictTitles, locale, error }: ReaderPanelProps) {
   const [prefs, setPrefs] = useState<ReaderPrefs>(loadPrefs);
   const [hudVisible, setHudVisible] = useState(true);
   const [scrollPercent, setScrollPercent] = useState(0);
@@ -111,7 +114,16 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
     query.addEventListener('change', update);
     return () => query.removeEventListener('change', update);
   }, []);
-  const lineTexts = React.useMemo(() => annotatedLines.map(line => line.tokens.map(token => token.surface).join('')), [annotatedLines]);
+  // Annotation failed: read the stored text, so a book opened from the shelf is never a blank
+  // page. Only on failure: while annotation runs, the lines must stay empty and then grow back
+  // chunk by chunk, which is what brings the reader back to their place after a re-annotation.
+  const failed = Boolean(error) && !isProcessing && annotatedLines.length === 0;
+  const plainLines = React.useMemo(
+    () => (failed && book ? plainScriptLines(book.content) : []),
+    [failed, book],
+  );
+  const lines = failed ? plainLines : annotatedLines;
+  const lineTexts = React.useMemo(() => lines.map(line => line.tokens.map(token => token.surface).join('')), [lines]);
   // Books with a table of contents (EPUB/PDF) are read one chapter at a time: only that chapter is rendered.
   const chapters = React.useMemo(() => book?.chapters ?? [], [book?.chapters]);
   const chaptered = chapters.length > 1;
@@ -124,7 +136,7 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
   const [tocOpen, setTocOpen] = useState(false);
   const range = chaptered && chapters[chapter]
     ? { start: chapters[chapter].startLine, end: chapters[chapter].endLine }
-    : { start: 0, end: annotatedLines.length - 1 };
+    : { start: 0, end: lines.length - 1 };
   const bilingual = useBilingual({
     enabled: prefs.bilingual, wantCount: aaOpen, bookId: book?.bookId ?? null, content: book?.content ?? '', lineTexts, articleRef, tools,
   });
@@ -200,9 +212,9 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
     if (placedLineRef.current !== null && !userMovedRef.current) return;
     if (index !== lastLineRef.current) {
       lastLineRef.current = index;
-      onUpdateProgress(chapterOf(index), index, annotatedLines.length);
+      onUpdateProgress(chapterOf(index), index, lines.length);
     }
-  }, [isVertical, onUpdateProgress, chapterOf, annotatedLines.length]);
+  }, [isVertical, onUpdateProgress, chapterOf, lines.length]);
 
   const handleScroll = useCallback(() => {
     if (frameRef.current !== null) return;
@@ -242,7 +254,7 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
   }, []);
 
   // The lines were emptied by a re-annotation: remember where the reader was so they land back there.
-  const lineTotal = annotatedLines.length;
+  const lineTotal = lines.length;
   useEffect(() => {
     if (lineTotal === 0 && lastLineRef.current > 0) resumeLineRef.current = lastLineRef.current;
   }, [lineTotal]);
@@ -304,7 +316,7 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
     placedLineRef.current = null;
     lastLineRef.current = target.startLine;
     setScrollPercent(0);
-    onUpdateProgress(index, target.startLine, annotatedLines.length);
+    onUpdateProgress(index, target.startLine, lines.length);
     // The new chapter renders on the next frame; start it from the top.
     requestAnimationFrame(() => {
       if (articleRef.current) articleRef.current.scrollLeft = 0;
@@ -384,7 +396,7 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
     );
   }
 
-  const lineCount = annotatedLines.length;
+  const lineCount = lines.length;
 
   return (
     <section className="relative flex h-full min-h-0 flex-1 flex-col">
@@ -417,8 +429,11 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
           </header>
 
           {isProcessing && <p className="mb-4 font-sans text-xs text-[var(--label-2)]">{t.annotatingProgress}</p>}
+          {failed && (
+            <p className="mb-4 font-sans text-xs text-[var(--label-2)]">{t.readerPlainTextNote}</p>
+          )}
 
-          {annotatedLines.slice(range.start, range.end + 1).map((line, offset) => {
+          {lines.slice(range.start, range.end + 1).map((line, offset) => {
             const lineIndex = range.start + offset;
             return (
               <ReaderLine
