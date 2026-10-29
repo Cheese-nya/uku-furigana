@@ -12,6 +12,24 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '1.7.1',
+    date: '2026-10-29',
+    items: {
+      'zh-CN': [
+        '修复安卓上从文件管理器选择 PDF 后注音失败、阅读器空白的问题：没有扩展名的文件也能按内容识别为 PDF、EPUB 或 DOCX。',
+        'PDF 文本层里的无效字符不再让整篇注音失败；连续的 emoji 或生僻字后面的文字不再丢失。',
+        '注音没有完成时，阅读器显示原文并说明原因，不再是空白页。',
+        '注音颜色更深、字号略大，手机上更容易看清。',
+      ],
+      en: [
+        'Fixed PDFs picked from the Android file manager failing to annotate and leaving the reader blank: files without an extension are now recognised as PDF, EPUB or DOCX by their content.',
+        'Invalid characters in a PDF text layer no longer make the whole annotation fail, and text after a run of emoji or rare kanji is no longer lost.',
+        'When annotation does not finish, the reader shows the plain text and says why instead of a blank page.',
+        'Furigana is darker and slightly larger, easier to read on a phone.',
+      ],
+    },
+  },
+  {
     version: '1.7.0',
     date: '2026-10-28',
     items: {
