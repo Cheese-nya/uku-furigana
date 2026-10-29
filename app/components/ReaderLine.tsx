@@ -101,7 +101,7 @@ export const ReaderLine = memo(function ReaderLine({ line, lineIndex, bookId, ve
       return (
         <ruby key={start} data-o={start} className={lit || undefined}>
           {value}
-          <rt className="text-[0.5em]" style={rtStyle}>{piece.ruby}</rt>
+          <rt className="text-[0.56em] font-semibold tracking-[0.01em]" style={rtStyle}>{piece.ruby}</rt>
         </ruby>
       );
     });

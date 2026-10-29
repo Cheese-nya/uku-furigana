@@ -426,7 +426,7 @@ function PreviewCard({
                     >
                       {token.surface}
                       {token.ruby && (
-                        <rt className="select-none text-[0.5em] font-medium tracking-[0.02em]" style={{ color: rtColor, visibility: previewShowRuby ? 'visible' : 'hidden' }}>
+                        <rt className="select-none text-[0.56em] font-semibold tracking-[0.02em]" style={{ color: rtColor, visibility: previewShowRuby ? 'visible' : 'hidden' }}>
                           {token.ruby}
                         </rt>
                       )}
