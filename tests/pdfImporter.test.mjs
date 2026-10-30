@@ -238,3 +238,58 @@ test('importPdf (real Chrome-printed layout): wide line spacing joins, indented 
     'そこで、そうかね、と聞いて見たのである',
   ]);
 });
+
+test('importPdf (tategaki, one glyph per item): rebuilds columns instead of one character per line', async () => {
+  // A vertical page set with a horizontal font reaches pdf.js as one item per glyph, each ending its
+  // own "line". Glyphs of a column share an x and descend; columns run right to left. The paragraph
+  // joiner used to see every glyph as a paragraph, so the reader showed one character per line.
+  const glyph = (ch, x, y) => ({ str: ch, transform: [12, 0, 0, 12, x, y], width: 12, height: 12, hasEOL: true, fontName: 'f1' });
+  const column = (text, x, top) => Array.from(text).map((ch, row) => glyph(ch, x, top - row * 14));
+  const doc = {
+    numPages: 1,
+    getPage: () => ({
+      getTextContent: () => ({
+        items: [
+          // The second paragraph starts one glyph below the top margin, as a tategaki indent does.
+          ...column('最初の段落の文章がここに続きます', 520, 780),
+          ...column('次の段落です。もっと続きます。', 506, 766),
+        ],
+        styles: { f1: { vertical: false } },
+      }),
+      getViewport: () => ({ width: 595, height: 842 }),
+    }),
+    getMetadata: () => ({ info: {} }),
+    getOutline: () => null,
+    getPageIndex: () => 0,
+    getDestination: () => null,
+  };
+  const book = await importPdf(new ArrayBuffer(8), 'tate.pdf', doc);
+  assert.deepEqual(book.text.split('\n'), ['最初の段落の文章がここに続きます', '次の段落です。もっと続きます。']);
+  assert.equal(book.pdfLayout?.vertical, true);
+});
+
+test('importPdf (tategaki, one item per column): joins columns into paragraphs right to left', async () => {
+  // pdf.js already groups a vertical font into one item per column; the columns arrive top-aligned
+  // and are read right to left, and an x-indent check meant for horizontal text used to split them.
+  const at = (str, x, y) => ({ str, transform: [14, 0, 0, 14, x, y], width: 14, height: 14, hasEOL: true, fontName: 'v1' });
+  const doc = {
+    numPages: 1,
+    getPage: () => ({
+      getTextContent: () => ({
+        items: [
+          at('三列目の文章がここから', 476, 780),
+          at('最初の列の文章がここに', 520, 780),
+          at('二列目の文章が続いて', 498, 780),
+        ],
+        styles: { v1: { vertical: true } },
+      }),
+      getViewport: () => ({ width: 595, height: 842 }),
+    }),
+    getMetadata: () => ({ info: {} }),
+    getOutline: () => null,
+    getPageIndex: () => 0,
+    getDestination: () => null,
+  };
+  const book = await importPdf(new ArrayBuffer(8), 'tate-columns.pdf', doc);
+  assert.deepEqual(book.text.split('\n'), ['最初の列の文章がここに二列目の文章が続いて三列目の文章がここから']);
+});
