@@ -293,3 +293,111 @@ test('importPdf (tategaki, one item per column): joins columns into paragraphs r
   const book = await importPdf(new ArrayBuffer(8), 'tate-columns.pdf', doc);
   assert.deepEqual(book.text.split('\n'), ['最初の列の文章がここに二列目の文章が続いて三列目の文章がここから']);
 });
+
+test('importPdf (tategaki, one item per column): an indented column starts the next paragraph', async () => {
+  // A paragraph's first column begins one glyph below the top margin. Most columns still share the
+  // margin, so the page counts as columns, and the indent is where the paragraph breaks.
+  const at = (str, x, y) => ({ str, transform: [14, 0, 0, 14, x, y], width: 14, height: 14, hasEOL: true, fontName: 'v1' });
+  const doc = {
+    numPages: 1,
+    getPage: () => ({
+      getTextContent: () => ({
+        items: [
+          at('四列目の段落も続きます', 454, 766),
+          at('最初の列の文章がここに', 520, 780),
+          at('三列目の文章がここから', 476, 780),
+          at('二列目の文章が続いて', 498, 780),
+        ],
+        styles: { v1: { vertical: true } },
+      }),
+      getViewport: () => ({ width: 595, height: 842 }),
+    }),
+    getMetadata: () => ({ info: {} }),
+    getOutline: () => null,
+    getPageIndex: () => 0,
+    getDestination: () => null,
+  };
+  const book = await importPdf(new ArrayBuffer(8), 'tate-indent.pdf', doc);
+  assert.deepEqual(book.text.split('\n'), ['最初の列の文章がここに二列目の文章が続いて三列目の文章がここから', '四列目の段落も続きます']);
+});
+
+test('importPdf (horizontal, one glyph per item): rejoins the runs instead of one item per line', async () => {
+  // Some fonts reach pdf.js as one item per glyph with hasEOL on each, even in horizontal text.
+  // The glyph x positions then repeat from line to line, which used to look like tategaki columns.
+  const glyph = (ch, x, y) => ({ str: ch, transform: [12, 0, 0, 12, x, y], width: 12, height: 12, hasEOL: true, fontName: 'f1' });
+  const row = (text, y) => Array.from(text).map((ch, index) => glyph(ch, 60 + index * 12, y));
+  const doc = {
+    numPages: 1,
+    getPage: () => ({
+      getTextContent: () => ({
+        items: [
+          ...row('最初の行の文章がここに続きます', 760),
+          ...row('次の行の文章もここに続きます', 744),
+          // A gap of well over one line step starts a new paragraph.
+          ...row('新しい段落の文章がここから続きます', 660),
+        ],
+        styles: { f1: { vertical: false } },
+      }),
+      getViewport: () => ({ width: 595, height: 842 }),
+    }),
+    getMetadata: () => ({ info: {} }),
+    getOutline: () => null,
+    getPageIndex: () => 0,
+    getDestination: () => null,
+  };
+  const book = await importPdf(new ArrayBuffer(8), 'yoko.pdf', doc);
+  assert.deepEqual(book.text.split('\n'), ['最初の行の文章がここに続きます次の行の文章もここに続きます', '新しい段落の文章がここから続きます']);
+  assert.notEqual(book.pdfLayout?.vertical, true);
+});
+
+test('importPdf (horizontal, justified glyphs): wide inter-character spacing stays inside the line', async () => {
+  // Justification stretches the gaps between glyphs; the run must not break apart at every gap.
+  const glyph = (ch, x, y) => ({ str: ch, transform: [12, 0, 0, 12, x, y], width: 12, height: 12, hasEOL: true, fontName: 'f1' });
+  const row = (text, y) => Array.from(text).map((ch, index) => glyph(ch, 60 + index * 24, y));
+  const doc = {
+    numPages: 1,
+    getPage: () => ({
+      getTextContent: () => ({
+        items: [...row('均等割りの行がここに続いていきます', 760), ...row('次の行も均等割りで続いていきます', 744)],
+        styles: { f1: { vertical: false } },
+      }),
+      getViewport: () => ({ width: 595, height: 842 }),
+    }),
+    getMetadata: () => ({ info: {} }),
+    getOutline: () => null,
+    getPageIndex: () => 0,
+    getDestination: () => null,
+  };
+  const book = await importPdf(new ArrayBuffer(8), 'yoko-justified.pdf', doc);
+  assert.deepEqual(book.text.split('\n'), ['均等割りの行がここに続いていきます次の行も均等割りで続いていきます']);
+});
+
+test('importPdf (horizontal, a line split after a long run): rejoins the split tail', async () => {
+  // pdf.js can switch granularity inside one line: a long run, then one item per glyph.
+  const at = (str, x, y) => ({ str, transform: [12, 0, 0, 12, x, y], width: str.length * 12, height: 12, hasEOL: false, fontName: 'f1' });
+  const glyphTail = (ch, x, y) => ({ str: ch, transform: [12, 0, 0, 12, x, y], width: 12, height: 12, hasEOL: true, fontName: 'f1' });
+  const doc = {
+    numPages: 1,
+    getPage: () => ({
+      getTextContent: () => ({
+        items: [
+          at('途中から一文字ずつになっていく', 60, 760),
+          glyphTail('に', 60 + 15 * 12, 760),
+          glyphTail('な', 72 + 15 * 12, 760),
+          at('次の行も同じように続いていく', 60, 744),
+          glyphTail('な', 60 + 15 * 12, 744),
+          glyphTail('る', 72 + 15 * 12, 744),
+        ],
+        styles: { f1: { vertical: false } },
+      }),
+      getViewport: () => ({ width: 595, height: 842 }),
+    }),
+    getMetadata: () => ({ info: {} }),
+    getOutline: () => null,
+    getPageIndex: () => 0,
+    getDestination: () => null,
+  };
+  const book = await importPdf(new ArrayBuffer(8), 'yoko-mixed.pdf', doc);
+  assert.deepEqual(book.text.split('\n'), ['途中から一文字ずつになっていくにな次の行も同じように続いていくなる']);
+  assert.notEqual(book.pdfLayout?.vertical, true);
+});
