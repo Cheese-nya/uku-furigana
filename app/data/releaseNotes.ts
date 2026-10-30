@@ -12,6 +12,20 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '1.7.2',
+    date: '2026-10-30',
+    items: {
+      'zh-CN': [
+        '修复导入竖排（縦書き）PDF 后正文变成一行一个字的问题：竖排文字现在会按从右到左的列重新拼成段落。',
+        '竖排 PDF 里的空列和段首缩进现在也能正确分段。',
+      ],
+      en: [
+        'Fixed vertical (tategaki) PDFs importing one character per line: the columns are now rebuilt and read right to left into paragraphs.',
+        'Blank columns and indented first lines in a vertical PDF now start new paragraphs.',
+      ],
+    },
+  },
+  {
     version: '1.7.1',
     date: '2026-10-29',
     items: {
