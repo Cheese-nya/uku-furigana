@@ -12,6 +12,20 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '1.7.3',
+    date: '2026-10-30',
+    items: {
+      'zh-CN': [
+        '修复部分横排 PDF 导入后一行一个字的问题：被拆成单个字符的文字会重新拼回整行，两端对齐的宽字距也不会再被拆开。',
+        '行数较少的横排页面不再被误判成竖排、读起来顺序错乱。',
+      ],
+      en: [
+        'Fixed some horizontal PDFs importing one character per line: runs split into single glyphs are rejoined, and the wide spacing of justified text no longer breaks a line apart.',
+        'Short horizontal pages are no longer mistaken for vertical columns and read out of order.',
+      ],
+    },
+  },
+  {
     version: '1.7.2',
     date: '2026-10-30',
     items: {

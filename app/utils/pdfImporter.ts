@@ -106,6 +106,8 @@ interface VisualLine {
   x: number;
   y: number;
   height: number;
+  /** Right edge of the line on the page, so the next item can be tested for continuing it. */
+  endX?: number;
   rotated: boolean;
   /** A tategaki column rebuilt from the page, read down the column and right to left across columns. */
   vertical?: boolean;
@@ -152,24 +154,35 @@ function bodyGlyphHeight(heights: number[]): number {
 }
 
 /**
- * A tategaki page whose font pdf.js does not report as vertical arrives as one single-character
- * item per glyph: every glyph ends its own "line". Its glyphs still repeat a few x positions (the
- * columns), with the rest of the page long horizontal lines, so both signals must hold.
+ * Whether a page reads in tategaki columns. A page whose font pdf.js does not report as vertical
+ * arrives as one single-character item per glyph; those glyphs step down a column, never right
+ * along a row. A page pdf.js already reports column by column (a vertical font) steps left from
+ * column to column at the top margin instead. A horizontal page does neither — its glyphs step
+ * right along a row — so its runs must never be rebuilt into columns.
  */
-function isGlyphColumnPage(lines: VisualLine[], tolerance: number): boolean {
-  const candidates = lines.filter(line => !line.rotated && glyphLength(line.text) > 0);
-  if (candidates.length < 8) return false;
-  const singles = candidates.filter(line => glyphLength(line.text) === 1).length;
-  if (singles / candidates.length < 0.6) return false;
-  const columns = new Map<number, number>();
-  for (const line of candidates) {
-    const key = Math.round(line.x / tolerance);
-    columns.set(key, (columns.get(key) ?? 0) + 1);
+function pageIsVertical(lines: VisualLine[], bodyHeight: number): boolean {
+  const step = Math.max(1, bodyHeight * 0.5);
+  const textLines = lines.filter(line => !line.rotated && line.text.trim().length > 0);
+  const singles = textLines.filter(line => glyphLength(line.text) === 1);
+  let down = 0;
+  let across = 0;
+  for (let index = 1; index < singles.length; index += 1) {
+    const dx = Math.abs(singles[index].x - singles[index - 1].x);
+    const dy = Math.abs(singles[index].y - singles[index - 1].y);
+    if (dy > step && dx <= step) down += 1;
+    else if (dx > step && dy <= step) across += 1;
   }
-  if (columns.size < 2) return false;
-  let stacked = 0;
-  for (const count of columns.values()) if (count >= 3) stacked += count;
-  return stacked / candidates.length >= 0.7;
+  if (down >= 8 && down > across * 1.5) return true;
+  // Whole columns as items: they step left at the same top margin, where horizontal lines step down.
+  let columns = 0;
+  let rows = 0;
+  for (let index = 1; index < textLines.length; index += 1) {
+    const dx = textLines[index].x - textLines[index - 1].x;
+    const dy = textLines[index].y - textLines[index - 1].y;
+    if (Math.abs(dy) <= step && dx < -step) columns += 1;
+    else if (dy < -step) rows += 1;
+  }
+  return columns >= 3 && columns >= rows;
 }
 
 /**
@@ -185,12 +198,62 @@ function isTopAlignedColumnPage(lines: VisualLine[]): boolean {
   // Source ruby is set much smaller than the body: its short runs start wherever their word is, not at the margin.
   const body = bodyHeight > 0 ? candidates.filter(line => line.height >= bodyHeight * 0.6) : candidates;
   if (body.length < 3) return false;
+  // Columns arrive as whole runs. A page of single glyphs is the per-glyph case, never this one.
+  if (body.filter(line => glyphLength(line.text) === 1).length * 2 > body.length) return false;
   const xs = body.map(line => line.x);
   const ys = body.map(line => line.y);
   const xSpread = Math.max(...xs) - Math.min(...xs);
   const ySpread = Math.max(...ys) - Math.min(...ys);
   if (xSpread <= 0 || ySpread >= xSpread) return false;
+  // Columns begin at (or one indent below) the top margin; horizontal lines march down the page.
+  // A short horizontal page can also spread further in x than in y (its last run ends far right),
+  // so the page only counts as columns where nearly every line begins at the top.
+  const top = Math.max(...ys);
+  const aligned = body.filter(line => line.y >= top - Math.max(1, bodyHeight * 1.1)).length;
+  if (aligned * 2 <= body.length) return false;
   return new Set(xs.map(x => Math.round(x / Math.max(1, bodyHeight * 0.5)))).size >= 2;
+}
+
+/** The right edge of a line, so the next item can be tested for continuing it. */
+function lineEndX(line: VisualLine, bodyHeight: number): number {
+  if (line.endX !== undefined && line.endX > line.x) return line.endX;
+  return line.x + glyphLength(line.text) * (line.height || bodyHeight);
+}
+
+/**
+ * pdf.js can split one horizontal line into one item per glyph, each ending its own "line" — the
+ * mirror image of a tategaki page. Rejoin the items that continue each other along the baseline;
+ * a wrapped line starts back at the margin, so the gap test leaves it alone.
+ */
+function mergeGlyphRuns(lines: VisualLine[], bodyHeight: number): VisualLine[] {
+  const merged: VisualLine[] = [];
+  const rowTolerance = Math.max(1, bodyHeight * 0.35);
+  // Justified Japanese text stretches the gap between glyphs, sometimes past a full em at punctuation.
+  const gapTolerance = Math.max(1, bodyHeight * 1.2);
+  for (const line of lines) {
+    const previous = merged[merged.length - 1];
+    const gap = previous ? line.x - lineEndX(previous, bodyHeight) : 0;
+    const continues = previous !== undefined
+      && previous.pageIndex === line.pageIndex
+      && !previous.rotated
+      && !line.rotated
+      && Math.abs(previous.y - line.y) <= rowTolerance
+      && gap >= -gapTolerance
+      && gap <= gapTolerance;
+    if (!continues) {
+      merged.push(line);
+      continue;
+    }
+    const previousText = previous.text;
+    const joiner = ASCII_ALNUM_RE.test(previousText.slice(-1)) && ASCII_ALNUM_RE.test(line.text[0] ?? '') ? ' ' : '';
+    merged[merged.length - 1] = {
+      ...previous,
+      text: previousText + joiner + line.text,
+      endX: Math.max(lineEndX(previous, bodyHeight), lineEndX(line, bodyHeight)),
+      height: Math.max(previous.height, line.height),
+    };
+  }
+  return merged;
 }
 
 /** Rebuild tategaki columns from per-glyph items: glyphs sharing an x, read top to bottom. */
@@ -273,12 +336,16 @@ export async function importPdf(
       const x = items[0].transform?.[4] ?? 0;
       const y = items[0].transform?.[5] ?? 0;
       let height = 0;
+      let endX = x;
       for (const it of items) {
         const h = it.height || Math.abs(it.transform?.[3] ?? it.transform?.[0] ?? 0);
         if (h > height) height = h;
+        const width = typeof it.width === 'number' && it.width > 0 ? it.width : 0;
+        const right = (it.transform?.[4] ?? 0) + width;
+        if (right > endX) endX = right;
       }
       const rotated = items.some(it => (it.transform?.[1] ?? 0) !== 0);
-      visualLines.push({ pageIndex, text, x, y, height, rotated });
+      visualLines.push({ pageIndex, text, x, y, height, endX, rotated });
     };
 
     for (const item of content.items) {
@@ -332,10 +399,12 @@ export async function importPdf(
     const bodyLines = pageLines.filter(line => !line.rotated && (bodyHeight <= 0 || line.height >= bodyHeight * 0.6));
     const rotatedLines = pageLines.filter(line => line.rotated);
     let columns: VisualLine[] | null = null;
-    if (isGlyphColumnPage(pageLines, tolerance)) columns = glyphColumns(bodyLines, tolerance);
+    if (pageIsVertical(pageLines, bodyHeight)) columns = glyphColumns(bodyLines, tolerance);
     else if (isTopAlignedColumnPage(pageLines)) columns = bodyLines;
     if (!columns) {
-      logicalLines.push(...pageLines);
+      // A horizontal page split into one item per glyph: rejoin the runs that continue each
+      // other along the baseline, then let the horizontal paragraph rules below do the rest.
+      logicalLines.push(...mergeGlyphRuns(pageLines, bodyHeight));
       continue;
     }
     columns.sort((a, b) => b.x - a.x);
