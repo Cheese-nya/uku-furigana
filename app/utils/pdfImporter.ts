@@ -107,6 +107,8 @@ interface VisualLine {
   y: number;
   height: number;
   rotated: boolean;
+  /** A tategaki column rebuilt from the page, read down the column and right to left across columns. */
+  vertical?: boolean;
 }
 
 function computeMedian(values: number[]): number {
@@ -135,6 +137,101 @@ function readPageSize(page: PdfPageLike): { width: number; height: number } | nu
   } catch {
     return null;
   }
+}
+
+/** Text characters in a line, ignoring whitespace. */
+function glyphLength(text: string): number {
+  return Array.from(text.replace(/\s+/g, '')).length;
+}
+
+/** The body size of a page: the median of the upper half, so source ruby (about half the body size) cannot pull it down. */
+function bodyGlyphHeight(heights: number[]): number {
+  const median = computeMedian(heights);
+  if (median <= 0) return median;
+  return computeMedian(heights.filter(height => height >= median)) || median;
+}
+
+/**
+ * A tategaki page whose font pdf.js does not report as vertical arrives as one single-character
+ * item per glyph: every glyph ends its own "line". Its glyphs still repeat a few x positions (the
+ * columns), with the rest of the page long horizontal lines, so both signals must hold.
+ */
+function isGlyphColumnPage(lines: VisualLine[], tolerance: number): boolean {
+  const candidates = lines.filter(line => !line.rotated && glyphLength(line.text) > 0);
+  if (candidates.length < 8) return false;
+  const singles = candidates.filter(line => glyphLength(line.text) === 1).length;
+  if (singles / candidates.length < 0.6) return false;
+  const columns = new Map<number, number>();
+  for (const line of candidates) {
+    const key = Math.round(line.x / tolerance);
+    columns.set(key, (columns.get(key) ?? 0) + 1);
+  }
+  if (columns.size < 2) return false;
+  let stacked = 0;
+  for (const count of columns.values()) if (count >= 3) stacked += count;
+  return stacked / candidates.length >= 0.7;
+}
+
+/**
+ * A tategaki page pdf.js already reports column by column (a vertical font): the columns share the
+ * top margin and spread across the page in x, the mirror image of horizontal lines, which share the
+ * left margin and spread down the page in y.
+ */
+function isTopAlignedColumnPage(lines: VisualLine[]): boolean {
+  const candidates = lines.filter(line => !line.rotated && line.text.trim().length > 0);
+  if (candidates.length < 3) return false;
+  const heights = candidates.map(line => line.height).filter(height => height > 0);
+  const bodyHeight = bodyGlyphHeight(heights);
+  // Source ruby is set much smaller than the body: its short runs start wherever their word is, not at the margin.
+  const body = bodyHeight > 0 ? candidates.filter(line => line.height >= bodyHeight * 0.6) : candidates;
+  if (body.length < 3) return false;
+  const xs = body.map(line => line.x);
+  const ys = body.map(line => line.y);
+  const xSpread = Math.max(...xs) - Math.min(...xs);
+  const ySpread = Math.max(...ys) - Math.min(...ys);
+  if (xSpread <= 0 || ySpread >= xSpread) return false;
+  return new Set(xs.map(x => Math.round(x / Math.max(1, bodyHeight * 0.5)))).size >= 2;
+}
+
+/** Rebuild tategaki columns from per-glyph items: glyphs sharing an x, read top to bottom. */
+function glyphColumns(lines: VisualLine[], tolerance: number): VisualLine[] {
+  const groups: { x: number; lines: VisualLine[] }[] = [];
+  for (const line of lines) {
+    let nearest: { x: number; lines: VisualLine[] } | null = null;
+    let nearestDistance = Infinity;
+    for (const group of groups) {
+      const distance = Math.abs(group.x - line.x);
+      if (distance <= tolerance && distance < nearestDistance) {
+        nearest = group;
+        nearestDistance = distance;
+      }
+    }
+    if (nearest) {
+      // A column's x can jitter by a fraction of a point; track its mean so the group stays put.
+      nearest.x = (nearest.x * nearest.lines.length + line.x) / (nearest.lines.length + 1);
+      nearest.lines.push(line);
+    } else {
+      groups.push({ x: line.x, lines: [line] });
+    }
+  }
+  return groups.sort((a, b) => b.x - a.x).map(group => {
+    const glyphs = [...group.lines].sort((a, b) => b.y - a.y);
+    let text = '';
+    for (const glyph of glyphs) {
+      const previous = text[text.length - 1] || '';
+      const next = glyph.text[0] || '';
+      text += `${ASCII_ALNUM_RE.test(previous) && ASCII_ALNUM_RE.test(next) ? ' ' : ''}${glyph.text}`;
+    }
+    return {
+      pageIndex: glyphs[0].pageIndex,
+      text,
+      x: group.x,
+      y: Math.max(...glyphs.map(glyph => glyph.y)),
+      height: computeMedian(glyphs.map(glyph => glyph.height).filter(height => height > 0)),
+      rotated: false,
+      vertical: true,
+    };
+  });
 }
 
 export async function importPdf(
@@ -218,32 +315,79 @@ export async function importPdf(
     throw new ScannedPdfError('这是扫描版 PDF，没有可提取的文字');
   }
 
+  // A tategaki page drawn with a horizontal font arrives as one glyph per item, so the paragraph
+  // joiner would otherwise turn every character into its own line. Rebuild the columns first:
+  // glyphs at one x read top to bottom, columns right to left. A page pdf.js already reports
+  // column by column only needs the reading order fixed.
+  const logicalLines: VisualLine[] = [];
+  const verticalTop = new Map<number, number>();
+  const verticalStep = new Map<number, number>();
+  for (const pageIndex of [...new Set(visualLines.map(line => line.pageIndex))]) {
+    const pageLines = visualLines.filter(line => line.pageIndex === pageIndex);
+    const pageHeights = pageLines.filter(line => !line.rotated && line.height > 0).map(line => line.height);
+    const bodyHeight = bodyGlyphHeight(pageHeights);
+    const tolerance = Math.max(1, bodyHeight * 0.25);
+    // Source ruby is set much smaller than the body; the app annotates the text again, so those
+    // glyphs are left out of the columns instead of being read as text.
+    const bodyLines = pageLines.filter(line => !line.rotated && (bodyHeight <= 0 || line.height >= bodyHeight * 0.6));
+    const rotatedLines = pageLines.filter(line => line.rotated);
+    let columns: VisualLine[] | null = null;
+    if (isGlyphColumnPage(pageLines, tolerance)) columns = glyphColumns(bodyLines, tolerance);
+    else if (isTopAlignedColumnPage(pageLines)) columns = bodyLines;
+    if (!columns) {
+      logicalLines.push(...pageLines);
+      continue;
+    }
+    columns.sort((a, b) => b.x - a.x);
+    const verticalColumns = columns.map(line => ({ ...line, vertical: true }));
+    logicalLines.push(...verticalColumns, ...rotatedLines);
+    verticalTop.set(pageIndex, Math.max(...verticalColumns.map(line => line.y)));
+    const steps: number[] = [];
+    for (let index = 1; index < verticalColumns.length; index += 1) {
+      steps.push(Math.abs(verticalColumns[index - 1].x - verticalColumns[index].x));
+    }
+    verticalStep.set(pageIndex, computeMedian(steps.filter(step => step > 0)));
+  }
+
   // Source layout for batch export: page size from page 1, direction by character majority, and the
   // median glyph size (vertical glyphs are rotated, so their size lives in transform[0]).
-  const vertical = textCharCount > 0 && verticalCharCount * 2 > textCharCount;
+  const verticalByFont = textCharCount > 0 && verticalCharCount * 2 > textCharCount;
+  const verticalChars = logicalLines
+    .filter(line => line.vertical)
+    .reduce((sum, line) => sum + glyphLength(line.text), 0);
+  const vertical = verticalByFont || (textCharCount > 0 && verticalChars * 2 > textCharCount);
 
   // Layout measures for horizontal text: the usual distance between baselines (a paragraph gap is clearly
   // more than that) and each page's left margin (a first line set in from it is a paragraph indent).
-  const horizontalHeights = visualLines
-    .filter(line => !line.rotated && line.height > 0)
-    .map(line => line.height);
-  const medianLineHeight = computeMedian(horizontalHeights);
+  const horizontalLines = logicalLines.filter(line => !line.rotated && !line.vertical && line.height > 0);
+  const medianLineHeight = computeMedian(horizontalLines.map(line => line.height));
+  const medianVerticalHeight = computeMedian(
+    logicalLines.filter(line => line.vertical && line.height > 0).map(line => line.height),
+  );
+  // Indentation of a tategaki paragraph is measured against the same glyph size as a horizontal one.
+  const paragraphHeight = medianLineHeight || medianVerticalHeight;
   const baselineSteps: number[] = [];
   const leftMargin = new Map<number, number>();
-  visualLines.forEach((line, index) => {
-    if (line.rotated) return;
+  let previousHorizontal: VisualLine | null = null;
+  for (const line of logicalLines) {
+    if (line.rotated || line.vertical) {
+      previousHorizontal = null;
+      continue;
+    }
     leftMargin.set(line.pageIndex, Math.min(leftMargin.get(line.pageIndex) ?? Infinity, line.x));
-    const previous = visualLines[index - 1];
-    if (previous && previous.pageIndex === line.pageIndex && !previous.rotated) baselineSteps.push(Math.abs(previous.y - line.y));
-  });
+    if (previousHorizontal && previousHorizontal.pageIndex === line.pageIndex) {
+      baselineSteps.push(Math.abs(previousHorizontal.y - line.y));
+    }
+    previousHorizontal = line;
+  }
   const medianStep = computeMedian(baselineSteps.filter(step => step > 0));
 
   // A layout is only worth storing when both the page size and a glyph size are known.
   // Horizontal text measures its size as the visual line height; vertical glyphs are rotated, so their
   // size lives in transform[0]. The fallback keeps a vertical page with no measured advance usable.
   const layoutFontSize = vertical
-    ? (computeMedian(verticalGlyphWidths) || computeMedian(visualLines.map(line => line.height).filter(height => height > 0)))
-    : computeMedian(horizontalHeights);
+    ? (computeMedian(verticalGlyphWidths) || medianVerticalHeight || computeMedian(logicalLines.map(line => line.height).filter(height => height > 0)))
+    : medianLineHeight;
   // Rounded to 0.1 so a stored layout survives a JSON round-trip without float noise.
   const pdfLayout: PdfLayout | undefined = pageSize && layoutFontSize > 0
     ? {
@@ -259,7 +403,7 @@ export async function importPdf(
   const firstParaTouchingPage = new Map<number, number>();
   let prevLine: VisualLine | null = null;
 
-  for (const line of visualLines) {
+  for (const line of logicalLines) {
     let startNewParagraph = false;
     if (!prevLine) {
       startNewParagraph = true;
@@ -267,7 +411,19 @@ export async function importPdf(
       startNewParagraph = true;
     } else if (PARA_END_RE.test(prevLine.text)) {
       startNewParagraph = true;
+    } else if (line.vertical && prevLine.vertical && line.pageIndex === prevLine.pageIndex) {
+      // Tategaki columns: a blank column is a paragraph gap, and a column that starts below the top
+      // margin is an indented first line — the vertical counterparts of the two rules below.
+      const columnStep = verticalStep.get(line.pageIndex) ?? 0;
+      const top = verticalTop.get(line.pageIndex);
+      if (columnStep > 0 && Math.abs(prevLine.x - line.x) > 1.5 * columnStep) {
+        startNewParagraph = true;
+      } else if (top !== undefined && paragraphHeight > 0 && top - line.y > 0.5 * paragraphHeight) {
+        startNewParagraph = true;
+      }
     } else if (
+      !prevLine.vertical &&
+      !line.vertical &&
       prevLine.pageIndex === line.pageIndex &&
       !prevLine.rotated &&
       !line.rotated &&
@@ -276,6 +432,7 @@ export async function importPdf(
     ) {
       startNewParagraph = true;
     } else if (
+      !line.vertical &&
       !line.rotated &&
       medianLineHeight > 0 &&
       line.x - (leftMargin.get(line.pageIndex) ?? line.x) > 0.5 * medianLineHeight
