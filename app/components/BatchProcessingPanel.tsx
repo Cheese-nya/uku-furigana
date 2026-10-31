@@ -89,7 +89,7 @@ export function BatchProcessingPanel({
         ref={fileInputRef}
         type="file"
         multiple
-        accept=".txt,.srt,.docx,.epub,.pdf,text/plain,application/pdf,application/epub+zip,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        accept=".txt,.md,.srt,.vtt,.docx,.epub,.pdf,text/plain,text/markdown,application/x-subrip,text/vtt,application/pdf,application/epub+zip,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         className="hidden"
         onChange={event => { handleFileSelect(event); event.target.value = ''; }}
       />

@@ -224,7 +224,7 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
         type="file"
         ref={editorFileInputRef}
         onChange={handleEditorFileImport}
-        accept=".txt,.srt,.docx,.epub,.pdf,text/plain,application/pdf,application/epub+zip,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        accept=".txt,.md,.srt,.vtt,.docx,.epub,.pdf,text/plain,text/markdown,application/x-subrip,text/vtt,application/pdf,application/epub+zip,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         className="hidden"
       />
 
@@ -394,7 +394,7 @@ function PreviewCard({
               <div key={width} className="my-[22px] h-3.5 animate-pulse rounded-full bg-[var(--fill)]" style={{ width: `${width}%` }} />
             ))}
           </div>
-        ) : failed ? (
+        ) : failed && (dictionaryDown || Boolean(annotationError) || annotatedLines.length === 0) ? (
           <div className="grid min-h-[300px] place-items-center text-center text-[var(--label-2)]">
             <div>
               <IconWarning size={46} className="mx-auto text-[var(--label-3)]" />

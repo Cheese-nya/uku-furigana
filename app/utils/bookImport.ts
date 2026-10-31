@@ -1,5 +1,5 @@
 import type { ImportedBook } from './bookAssets';
-import { importDocx } from './docxImporter';
+import { cleanScriptTitle, importDocx } from './docxImporter';
 import { importTextScript, scriptSourceFormat } from './inlineRuby';
 import type { BookCategory, BookFormat, PdfLayout } from './libraryDatabase';
 import type { RubyOverride } from './rubyOverrides';
@@ -21,15 +21,33 @@ export interface ParsedBookFile {
 }
 
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-// The pickers also offer text/plain, so an extension-less text pick must pass the queue filter too.
-const IMPORTABLE_MIMES = new Set(['application/pdf', 'application/epub+zip', DOCX_MIME, 'text/plain']);
+// The pickers also offer text/plain and subtitle/markdown/archive MIMEs, so an extension-less pick must pass the queue filter too.
+const IMPORTABLE_MIMES = new Set([
+  'application/pdf',
+  'application/epub+zip',
+  DOCX_MIME,
+  'text/plain',
+  'text/markdown',
+  'application/x-subrip',
+  'text/vtt',
+  'application/zip',
+  'application/octet-stream',
+]);
 const IMPORTABLE_NAME = /\.(?:txt|md|srt|vtt|docx|epub|pdf)$/i;
 
 export type DetectedBookFormat = 'epub' | 'pdf' | 'docx' | null;
 
-/** Whether the batch queue should take the file: a known extension or a known document MIME type. */
-export const isImportableFile = (file: File) =>
-  IMPORTABLE_NAME.test(file.name) || IMPORTABLE_MIMES.has((file.type || '').toLowerCase());
+/**
+ * Whether the batch queue should take the file: a known extension, a known document MIME
+ * type, or an extensionless Android `content://` pick whose MIME type was left blank by the
+ * document provider (its magic bytes are checked when the queue runs).
+ */
+export const isImportableFile = (file: File) => {
+  if (IMPORTABLE_NAME.test(file.name)) return true;
+  const mime = (file.type || '').toLowerCase();
+  if (IMPORTABLE_MIMES.has(mime)) return true;
+  return !file.name.includes('.') && mime === '';
+};
 
 /**
  * Which structured parser a picked file needs. The name alone is not enough: an Android
@@ -49,15 +67,14 @@ export async function detectBookFormat(file: File): Promise<DetectedBookFormat> 
   if (type === 'application/pdf') return 'pdf';
   if (type === DOCX_MIME) return 'docx';
 
-  const head = new Uint8Array(await file.slice(0, 512).arrayBuffer());
-  if (head.length >= 5 && head[0] === 0x25 && head[1] === 0x50 && head[2] === 0x44 && head[3] === 0x46 && head[4] === 0x2d) {
-    return 'pdf'; // %PDF-
+  const head = new Uint8Array(await file.slice(0, 1024).arrayBuffer());
+  const headAscii = new TextDecoder('latin1').decode(head);
+  if (headAscii.includes('%PDF-')) {
+    return 'pdf'; // %PDF- within the first 1024 bytes
   }
   if (head.length >= 4 && head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04) {
-    // EPUB and DOCX are both ZIP files; an EPUB must open with a stored `mimetype` entry.
-    // ASCII bytes survive UTF-8 decoding unchanged, so the marker is safe to look for here.
-    const zipHead = new TextDecoder().decode(head);
-    return zipHead.includes('application/epub+zip') ? 'epub' : 'docx';
+    // EPUB and DOCX are both ZIP files; an EPUB opens with a stored `mimetype` entry or `META-INF/`.
+    return headAscii.includes('application/epub+zip') || headAscii.includes('META-INF/') ? 'epub' : 'docx';
   }
   return null;
 }
@@ -80,7 +97,7 @@ function fromImportedBook(book: ImportedBook, format: 'epub' | 'pdf'): ParsedBoo
 
 /** Parse a picked file (TXT/MD/SRT/VTT/DOCX/EPUB/PDF) into a library-ready book. EPUB and PDF load their parsers on demand. */
 export async function parseBookFile(file: File): Promise<ParsedBookFile> {
-  const title = file.name.replace(/\.[^/.]+$/, '') || 'Untitled';
+  const title = cleanScriptTitle(file.name.replace(/\.[^/.]+$/, '')) || 'Untitled';
   const format = await detectBookFormat(file);
   if (format === 'epub') {
     const { importEpub } = await import('./epubImporter');

@@ -1,6 +1,7 @@
 import JSZip from 'jszip';
 import { katakanaToHiragana } from './furigana';
 import type { RubyOverride } from './rubyOverrides';
+import { sanitizeText } from './textSanitize';
 
 const WORD_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 
@@ -25,11 +26,12 @@ export function stripExportWatermark(text: string): string {
   return kept.slice(start, end).join('\n');
 }
 
-/** Strip file extensions and any trailing `_dubbing` / `-dubbing` suffixes from a script title. */
+/** Strip file extensions, Android content:// document-id placeholders, and trailing `_dubbing` / `-dubbing` suffixes. */
 export function cleanScriptTitle(title: string): string {
-  let cleaned = title.trim().replace(/\.(?:docx|txt|srt|vtt)$/i, '');
+  let cleaned = title.trim().replace(/\.(?:docx|txt|srt|vtt|epub|pdf|md)$/i, '');
   cleaned = cleaned.replace(/(?:[_-]dubbing)+$/i, '');
-  return cleaned.trim();
+  if (/^(?:document|msf|primary|raw|image|video|audio|downloads?):\d+$/i.test(cleaned)) return '';
+  return cleaned.replace(/[\\/:*?"<>|]+/g, '_').trim();
 }
 
 /** Read body text and phonetic guides, including legacy paragraph-level ruby.
@@ -44,7 +46,7 @@ export async function importDocx(arrayBuffer: ArrayBuffer): Promise<ImportedScri
 }
 
 export function parseDocxXml(source: string): ImportedScript {
-  const doc = new DOMParser().parseFromString(source, 'application/xml');
+  const doc = new DOMParser().parseFromString(sanitizeText(source), 'application/xml');
   if (doc.getElementsByTagName('parsererror').length) throw new Error('Invalid Word XML');
   const body = doc.getElementsByTagNameNS(WORD_NS, 'body')[0];
   if (!body) throw new Error('Word document body is missing');

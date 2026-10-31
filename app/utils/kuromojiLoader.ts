@@ -110,12 +110,13 @@ function buildLattice(this: BuilderInternals, sentenceStr: string) {
     for (const entry of vocabulary) {
       const tokenInfoIds = entry.v === undefined ? undefined : this.token_info_dictionary.target_map[entry.v];
       if (!tokenInfoIds) continue;
+      const keyLength = new SurrogateAwareString(entry.k).length;
       for (const tokenInfoId of tokenInfoIds) {
         const id = parseInt(tokenInfoId);
         const leftId = this.token_info_dictionary.dictionary.getShort(id);
         const rightId = this.token_info_dictionary.dictionary.getShort(id + 2);
         const wordCost = this.token_info_dictionary.dictionary.getShort(id + 4);
-        lattice.append(new ViterbiNode(id, wordCost, pos + 1, entry.k.length, 'KNOWN', leftId, rightId, entry.k));
+        lattice.append(new ViterbiNode(id, wordCost, pos + 1, keyLength, 'KNOWN', leftId, rightId, entry.k));
       }
     }
 
@@ -153,11 +154,7 @@ function buildLattice(this: BuilderInternals, sentenceStr: string) {
 }
 
 const builderProto = ViterbiBuilder.prototype as { build: (this: BuilderInternals, sentence: string) => unknown };
-const stockBuild = builderProto.build;
 
 builderProto.build = function (sentence: string) {
-  // Control characters and unpaired surrogates crash the stock lattice builder (see
-  // textSanitize); text that holds none of them takes the untouched stock path.
-  const clean = sanitizeText(sentence);
-  return /[\u{10000}-\u{10FFFF}]/u.test(clean) ? buildLattice.call(this, clean) : stockBuild.call(this, clean);
+  return buildLattice.call(this, sanitizeText(sentence));
 };

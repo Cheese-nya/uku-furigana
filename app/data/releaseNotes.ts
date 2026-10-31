@@ -12,6 +12,22 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '1.7.4',
+    date: '2026-10-31',
+    items: {
+      'zh-CN': [
+        '修复部分竖排轻小说与文库本 PDF 导入后假名、标点缺失或注音失败的问题：使用 Type3 字形与 /ActualText 标记的 PDF 现在能完整还原正文。',
+        '修复竖排 PDF 中原书自带的小号注音混入正文汉字、旋转的省略号与破折号脱离所在竖列，以及行内数字被误删的问题。',
+        '优化安卓无扩展名文件导入时的书名提取与特殊字符文本清理。',
+      ],
+      en: [
+        'Fixed vertical light-novel and bunkobon PDFs losing kana and punctuation or failing annotation when text is stored in Type3 glyphs and /ActualText spans.',
+        'Prevented small source ruby in vertical PDFs from merging into base kanji, kept rotated ellipses and dashes inside their columns, and preserved inline numbers.',
+        'Cleaned up Android content:// placeholder titles and hardened control-character sanitization across importers.',
+      ],
+    },
+  },
+  {
     version: '1.7.3',
     date: '2026-10-30',
     items: {

@@ -1,6 +1,6 @@
 {
   "name": "uku-furigana",
-  "version": "1.7.3",
+  "version": "1.7.4",
   "license": "PolyForm-Noncommercial-1.0.0",
   "private": true,
   "scripts": {
@@ -17,6 +17,7 @@
     "build:web": "node scripts/build-web.mjs",
     "package:exe": "node scripts/build-web.mjs && python -m PyInstaller --noconfirm --onefile --windowed --icon=\"app_icon.ico\" --name UkuFurigana --add-data \"out;out\" desktop_runner.py && copy /y dist\\UkuFurigana.exe .\\UkuFurigana.exe",
     "lint": "eslint",
+    "pretest": "node scripts/vendor-assets.mjs",
     "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
@@ -28,7 +29,7 @@
     "kuromoji": "^0.1.2",
     "next": "16.2.12",
     "pdf-lib": "^1.17.1",
-    "pdfjs-dist": "^6.4.299",
+    "pdfjs-dist": "6.4.299",
     "react": "19.2.4",
     "react-dom": "19.2.4"
   },

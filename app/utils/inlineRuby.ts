@@ -2,6 +2,7 @@ import { katakanaToHiragana } from './furigana';
 import type { BookFormat } from './libraryDatabase';
 import type { RubyOverride } from './rubyOverrides';
 import { parseSRT, parseVTT, type ParsedSrt, type SrtCue } from './srt';
+import { sanitizeText } from './textSanitize';
 
 // TXT/SRT export writes readings on the kanji only, `辛(つら)い` (inlineRubyText in srt.ts). Read back
 // verbatim, those readings become script text and the next annotation doubles them:
@@ -91,10 +92,11 @@ export function stripInlineRuby(line: string): { text: string; rubies: InlineRub
  * the annotator splits them, so a CRLF file keys its overrides by the same `line\r` text it annotates.
  */
 export function extractInlineRuby(source: string): InlineRubyImport {
-  if (!source.includes('(')) return { text: source, overrides: [] };
+  const clean = sanitizeText(source);
+  if (!clean.includes('(')) return { text: clean, overrides: [] };
   const overrides: RubyOverride[] = [];
   const byLine = new Map<string, RubyOverride[]>();
-  const text = source.split('\n').map(row => {
+  const text = clean.split('\n').map(row => {
     const { text: line, rubies } = stripInlineRuby(row);
     const taken = byLine.get(line) || [];
     for (const ruby of rubies) {
@@ -125,12 +127,13 @@ export function extractSubtitleInlineRuby(parsed: ParsedSrt): ParsedSrt & Inline
  * falls back to plain text; callers that require timings check `cues` themselves.
  */
 export function importTextScript(fileName: string, source: string): TextScriptImport {
+  const clean = sanitizeText(source);
   const lower = fileName.toLowerCase();
   if (lower.endsWith('.srt') || lower.endsWith('.vtt')) {
-    const parsed = lower.endsWith('.vtt') ? parseVTT(source) : parseSRT(source);
+    const parsed = lower.endsWith('.vtt') ? parseVTT(clean) : parseSRT(clean);
     if (parsed.cues.length) return extractSubtitleInlineRuby(parsed);
   }
-  return { ...extractInlineRuby(source), cues: [] };
+  return { ...extractInlineRuby(clean), cues: [] };
 }
 
 /** Library format of an imported file, judged by the source file: .docx, .srt/.vtt, everything else txt. */
