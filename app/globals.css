@@ -460,6 +460,7 @@ ruby {
   ruby-align: center;
 }
 
+ruby rt,
 .script-line rt {
   text-align: center;
   line-height: 1;

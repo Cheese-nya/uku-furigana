@@ -4,6 +4,7 @@ import { applyGlossary } from './glossary';
 import type { LearnedReading, ProperNounEntry } from './correctionDatabase';
 import { checkLine, type ReadingTable } from './readingCheck';
 import { learnedOverrides } from './review';
+import { sanitizeText } from './textSanitize';
 
 export interface AnnotationInput {
   text: string;
@@ -18,9 +19,23 @@ export interface AnnotationChunk { offset: number; lines: ScriptLine[]; total: n
 
 export const yieldTask = () => new Promise<void>(resolve => setTimeout(resolve, 0));
 
+function sanitizeOverride(entry: RubyOverride): RubyOverride {
+  const line = sanitizeText(entry.line);
+  if (line === entry.line) return entry;
+  return {
+    ...entry,
+    line,
+    start: sanitizeText(entry.line.slice(0, entry.start)).length,
+    surface: sanitizeText(entry.surface),
+  };
+}
+
 function groupOverrides(entries: RubyOverride[]) {
   const grouped = new Map<string, RubyOverride[]>();
-  for (const entry of entries) grouped.set(entry.line, [...(grouped.get(entry.line) || []), entry]);
+  for (const raw of entries) {
+    const entry = sanitizeOverride(raw);
+    grouped.set(entry.line, [...(grouped.get(entry.line) || []), entry]);
+  }
   return grouped;
 }
 
@@ -58,7 +73,7 @@ export function createAnnotator(getTable?: () => ReadingTable | null) {
             ...(token.alternatives ? { alternatives: token.alternatives.map(value => formatRuby(value, input.rubyType)) } : {}),
           })) };
           return applyRubyOverrides(applyRubyOverrides(applyLearned(applyGlossary(line, input.glossary, input.rubyType), input.learned, input.rubyType),
-            source.get(text) || [], input.rubyType, 'source'), overrides.get(text) || [], input.rubyType, 'manual');
+            source.get(line.cleanText) || [], input.rubyType, 'source'), overrides.get(line.cleanText) || [], input.rubyType, 'manual');
         });
         onChunk({ offset, lines, total: texts.length });
         // Give CANCEL/ANNOTATE messages an opportunity to run between chunks.

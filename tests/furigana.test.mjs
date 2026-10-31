@@ -4,6 +4,7 @@ import { loadTypescript } from './loadTypescript.mjs';
 const { annotateLine, parseCompoundToTokens, kanaToRomaji } = loadTypescript('../app/utils/furigana.ts');
 const { initKuromoji } = loadTypescript('../app/utils/kuromojiEngine.ts');
 const { collectReviewGroups } = loadTypescript('../app/utils/review.ts');
+const { createAnnotator } = loadTypescript('../app/utils/annotationTask.ts');
 
 // Kuromoji's Node loader takes a filesystem path, while the app uses /dict.
 before(async () => {
@@ -34,9 +35,32 @@ test('PDF 文本层残留：NUL 与孤立代理项不再让注音崩溃', () => 
 });
 
 test('增补平面字符连续出现时不丢字（😀😀連続絵文字 曾丢掉 連続）', () => {
-  const text = '😀😀連続絵文字';
-  assert.equal(surfaceOf(text), text);
-  assert.equal(annotateLine(text).cleanText, text);
+  for (const text of ['😀😀連続絵文字', '𠮟咤激励する', '𠮷野家の約束']) {
+    assert.equal(surfaceOf(text), text);
+    assert.equal(annotateLine(text).cleanText, text);
+  }
+  assert.equal(readingOf('𠮟𠮟約束'), '𠮟𠮟やくそく');
+});
+
+test('createAnnotator：含 NUL 字符的行仍能命中 sourceOverrides 与手动 overrides', async () => {
+  const annotator = createAnnotator();
+  const chunks = [];
+  await annotator.run(
+    {
+      text: '\u0000山田先生と未来',
+      rubyType: 'hiragana',
+      glossary: [],
+      sourceOverrides: [{ line: '\u0000山田先生と未来', start: 1, surface: '山田', reading: 'やまだ', type: 'hiragana' }],
+      overrides: [{ line: '山田先生と未来', start: 5, surface: '未来', reading: 'あす', type: 'hiragana' }],
+    },
+    () => false,
+    chunk => chunks.push(...chunk.lines),
+  );
+  assert.equal(chunks.length, 1);
+  assert.equal(chunks[0].cleanText, '山田先生と未来');
+  const bySurface = Object.fromEntries(chunks[0].tokens.map(token => [token.surface, [token.ruby, token.readingSource]]));
+  assert.deepEqual(bySurface['山田'], ['やまだ', 'source']);
+  assert.deepEqual(bySurface['未来'], ['あす', 'manual']);
 });
 
 for (const [text, reading] of [

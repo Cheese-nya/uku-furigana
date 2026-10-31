@@ -2,6 +2,7 @@ import JSZip from 'jszip';
 import { imageLine, type ImportedBook, type ImportedBookImage } from './bookAssets';
 import { katakanaToHiragana } from './furigana';
 import type { RubyOverride } from './rubyOverrides';
+import { sanitizeText } from './textSanitize';
 
 export interface DomParserLike {
   parseFromString(source: string, type: string): Document;
@@ -89,7 +90,7 @@ function localTag(el: Element): string {
 
 async function readZipText(file: JSZip.JSZipObject): Promise<string> {
   const source = await file.async('string');
-  return source.charCodeAt(0) === 0xfeff ? source.slice(1) : source;
+  return sanitizeText(source.charCodeAt(0) === 0xfeff ? source.slice(1) : source);
 }
 
 function safeDecodeURI(value: string): string {
@@ -137,7 +138,8 @@ function resolveHref(baseDir: string, href: string): { path: string; fragment: s
 
 function stripExtension(fileName: string): string {
   const base = fileName.replace(/^.*[/\\]/, '');
-  return base.replace(/\.[^.]+$/, '').trim() || base;
+  const stripped = base.replace(/\.[^.]+$/, '').trim() || base;
+  return /^(?:document|msf|primary|raw|image|video|audio|downloads?):\d+$/i.test(stripped) ? 'Untitled' : stripped;
 }
 
 function mimeFromExtension(path: string): string {

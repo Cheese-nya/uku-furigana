@@ -13,7 +13,7 @@ import { upsertBook, type BookItem, type LibraryDatabaseV1, type PdfLayout } fro
 import { buildDocxBlob } from '../utils/docxExporter';
 import { buildEpubBlob } from '../utils/epubExporter';
 import { buildPdfBlob } from '../utils/pdfExporter';
-import { detectBookFormat, isImportableFile, parseBookFile } from '../utils/bookImport';
+import { detectBookFormat, isImportableFile, parseBookFile, type ParsedBookFile } from '../utils/bookImport';
 import { withoutImageLines } from '../utils/bookAssets';
 import { buildBatchZipBlob, pickBatchDirectory, saveBlob, saveBlobToDirectory, type BatchSaveMode } from '../utils/fileSave';
 import type { Translations } from '../utils/i18n';
@@ -156,6 +156,7 @@ export function useBatchProcessing({
         let pdfLayout: PdfLayout | undefined;
         // Format detected from the bytes when the picked name carries no usable extension.
         let detectedFormat: 'epub' | 'pdf' | 'docx' | null = null;
+        let parsedBookMeta: Pick<ParsedBookFile, 'title' | 'author' | 'category' | 'chapters'> | undefined;
         // A queued library book is already parsed: read its text, overrides and cues straight from the library.
         const libraryBook = item.bookId ? libraryDbRef.current.books[item.bookId] : undefined;
         if (item.bookId) {
@@ -177,6 +178,7 @@ export function useBatchProcessing({
             textContent = withoutImageLines(parsed.content);
             importedOverrides = parsed.sourceOverrides;
             pdfLayout = parsed.pdfLayout;
+            parsedBookMeta = { title: parsed.title, author: parsed.author, category: parsed.category, chapters: parsed.chapters };
           } else if (format === 'docx') {
             const arrayBuffer = await item.file.arrayBuffer();
             const imported = await importDocx(arrayBuffer);
@@ -191,9 +193,10 @@ export function useBatchProcessing({
             importedCues = imported.cues;
           }
         }
+        const cleanedFileName = cleanScriptTitle(item.name.replace(/\.[^/.]+$/, ''));
         const itemTitle = item.bookId
-          ? (libraryBook?.title || item.name.replace(/\.[^/.]+$/, ''))
-          : item.name.replace(/\.[^/.]+$/, "") || '日语假名配音台本';
+          ? (libraryBook?.title || cleanedFileName)
+          : (parsedBookMeta?.title && parsedBookMeta.title !== 'Untitled' ? parsedBookMeta.title : cleanedFileName) || '日语假名配音台本';
         const fingerprint = await fingerprintText(textContent);
         const resolved = resolveScript(batchDatabase, itemTitle, textContent, fingerprint);
         batchDatabase = resolved.database;
@@ -230,9 +233,12 @@ export function useBatchProcessing({
           // The book's format describes its source file (as in the library importer), not the export.
           librarySnapshot = await upsertBook(librarySnapshot, {
             title: cleanScriptTitle(itemTitle) || t.untitledScript,
+            ...(parsedBookMeta?.author ? { author: parsedBookMeta.author } : {}),
             content: textContent,
             fingerprint,
             format: detectedFormat ?? scriptSourceFormat(item.name),
+            ...(parsedBookMeta?.category ? { category: parsedBookMeta.category } : {}),
+            ...(parsedBookMeta?.chapters ? { chapters: parsedBookMeta.chapters } : {}),
             sourceOverrides: withLfLineKeys(importedOverrides),
             srtCues: importedCues,
             ...(pdfLayout ? { pdfLayout } : {}),

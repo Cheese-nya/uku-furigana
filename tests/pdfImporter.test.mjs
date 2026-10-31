@@ -401,3 +401,138 @@ test('importPdf (horizontal, a line split after a long run): rejoins the split t
   assert.deepEqual(book.text.split('\n'), ['途中から一文字ずつになっていくにな次の行も同じように続いていくなる']);
   assert.notEqual(book.pdfLayout?.vertical, true);
 });
+
+test('importPdf (tategaki Type3 /ActualText): recovers kana from MarkedContent, drops un-EOL ruby, and keeps inline numbers and rotated ellipsis', async () => {
+  // Real vertical bunko PDFs (e.g. Type3 subset fonts) emit "\u0000" for kana and store the character in
+  // /Span <</ActualText (...)>> BDC ... EMC. Source ruby (7.5pt) often has hasEOL:false right before the
+  // 15pt base kanji, inline numbers (2015, 11) sit inside columns, and "……" / "───" are rotated 90°.
+  const spanGlyph = (actualText, rawStr, x, y, height = 15, hasEOL = false) => [
+    { type: 'beginMarkedContentProps', tag: 'Span', actualText },
+    { str: '', transform: [height, 0, 0, height, x, y], width: 0, height: 0, hasEOL: true },
+    { str: rawStr, transform: [height, 0, 0, height, x, y], width: height, height, hasEOL },
+    { type: 'endMarkedContent' },
+  ];
+  const plainGlyph = (str, x, y, height = 15, hasEOL = true) => ({
+    str,
+    transform: [height, 0, 0, height, x, y],
+    width: height,
+    height,
+    hasEOL,
+  });
+  const rotatedInline = (str, x, y, height = 15) => ({
+    str,
+    transform: [0, -height, height, 0, x, y],
+    width: height * str.length,
+    height,
+    hasEOL: false,
+  });
+
+  // Column 1 (x = 380): "問い・人は平等であるか否か。" with 7.5pt ruby "い","な" at x = 395.5 (hasEOL:false before "否")
+  const col1 = [
+    plainGlyph('問', 380, 700),
+    ...spanGlyph('い', '\u0000', 380, 685),
+    plainGlyph('・', 380, 670),
+    plainGlyph('人', 380, 655),
+    ...spanGlyph('は', '\u0000', 380, 640),
+    plainGlyph('平', 380, 625),
+    plainGlyph('等', 380, 610),
+    ...spanGlyph('で', '\u0000', 380, 595),
+    ...spanGlyph('あ', '\u0000', 380, 580),
+    ...spanGlyph('る', '\u0000', 380, 565),
+    ...spanGlyph('か', '\u0000', 380, 550),
+    // Source ruby "い", "な" at 7.5pt without EOL before the 15pt base kanji "否",
+    // including a non-zero width+height synthetic space inherited from the unrotated 15pt glyph above.
+    { type: 'beginMarkedContentProps', tag: 'Span', actualText: 'い' },
+    { str: ' ', transform: [15, 0, 0, 15, 380, 542], width: 15, height: 15, hasEOL: false },
+    { str: '\u0000', transform: [7.5, 0, 0, 7.5, 395.5, 542], width: 7.5, height: 7.5, hasEOL: false },
+    { type: 'endMarkedContent' },
+    ...spanGlyph('な', '\u0000', 395.5, 534.5, 7.5, false),
+    plainGlyph('否', 380, 535, 15, false),
+    ...spanGlyph('か', '\u0000', 380, 520),
+    ...spanGlyph('。', '︒', 380, 505),
+  ];
+
+  // Column 2 (x = 350, indented at y = 685): "２０１５年の交響曲11番が……。"
+  const col2 = [
+    plainGlyph('２', 350, 685),
+    plainGlyph('０', 350, 670),
+    plainGlyph('１', 350, 655),
+    plainGlyph('５', 350, 640),
+    plainGlyph('年', 350, 625),
+    ...spanGlyph('の', '\u0000', 350, 610),
+    plainGlyph('交', 350, 595),
+    plainGlyph('響', 350, 580),
+    plainGlyph('曲', 350, 565, 15, false),
+    plainGlyph('11', 349.2, 550, 15, false),
+    plainGlyph('番', 350, 535, 15, false),
+    ...spanGlyph('が', '\u0000', 350, 520),
+    // Synthetic 0-height space before rotated inline ellipsis, followed by vertical period
+    { str: ' ', transform: [15, 0, 0, 15, 365, 520], width: 2.4, height: 0, hasEOL: false },
+    rotatedInline('……', 351.1, 518, 15),
+    // 2-char rotated 7.5pt ruby (advance height = 15, but glyph font size = 7.5) must still be dropped
+    { str: '・・', transform: [0, -7.5, 7.5, 0, 365.5, 518], width: 15, height: 15, hasEOL: false },
+    // Ruby with synthetic space inside MarkedContent span right after rotated ellipsis
+    { type: 'beginMarkedContentProps', tag: 'Span', actualText: 'わ' },
+    { str: ' ', transform: [0, -15, 15, 0, 351.1, 488], width: 19.5, height: 0, hasEOL: false },
+    { str: '\u0000', transform: [7.5, 0, 0, 7.5, 365.5, 480], width: 7.5, height: 7.5, hasEOL: false },
+    { type: 'endMarkedContent' },
+    ...spanGlyph('。', '︒', 350, 475),
+    // Multi-glyph bottom-margin folio ("1", "2") aligned with column 2's x, separated by a wide gap (> 2.5 * 15)
+    plainGlyph('1', 350, 45),
+    plainGlyph('2', 350, 30),
+  ];
+
+  // Column 3 (x = 320, top-aligned numeric section heading "１" that must NOT be dropped as a page number)
+  const col3 = [plainGlyph('１', 320, 685)];
+
+  const doc = {
+    numPages: 1,
+    getPage: () => ({
+      getTextContent: () => ({ items: [...col1, ...col2, ...col3], styles: {} }),
+      getViewport: () => ({ width: 595, height: 842 }),
+    }),
+    getMetadata: () => ({ info: {} }),
+    getOutline: () => null,
+    getPageIndex: () => 0,
+    getDestination: () => null,
+  };
+
+  const book = await importPdf(new ArrayBuffer(8), 'tate-actualtext.pdf', doc);
+  assert.deepEqual(book.text.split('\n'), [
+    '問い・人は平等であるか否か。',
+    '２０１５年の交響曲11番が……。',
+    '１',
+  ]);
+  assert.equal(book.pdfLayout?.vertical, true);
+});
+
+test('importPdf (horizontal Tagged PDF): preserves spaces across non-ActualText spans and merges inline superscripts', async () => {
+  const items = [
+    { type: 'beginMarkedContentProps', tag: 'P', actualText: null },
+    { type: 'beginMarkedContentProps', tag: 'Span', actualText: null },
+    { str: 'Hello, ', transform: [12, 0, 0, 12, 60, 760], width: 42, height: 12, hasEOL: false },
+    { type: 'endMarkedContent' },
+    { type: 'beginMarkedContentProps', tag: 'Span', actualText: null },
+    { str: 'world! ', transform: [12, 0, 0, 12, 102, 760], width: 42, height: 12, hasEOL: false },
+    { type: 'endMarkedContent' },
+    // Inline superscript "1" mid-sentence must not be dropped as a page number or split the paragraph
+    { str: 'これは例文', transform: [12, 0, 0, 12, 144, 760], width: 60, height: 12, hasEOL: false },
+    { str: '1', transform: [8, 0, 0, 8, 204, 765], width: 8, height: 8, hasEOL: false },
+    { str: 'です。十分な文字数を確保します。', transform: [12, 0, 0, 12, 212, 760], width: 192, height: 12, hasEOL: true },
+    { type: 'endMarkedContent' },
+  ];
+  const doc = {
+    numPages: 1,
+    getPage: () => ({
+      getTextContent: () => ({ items, styles: {} }),
+      getViewport: () => ({ width: 595, height: 842 }),
+    }),
+    getMetadata: () => ({ info: {} }),
+    getOutline: () => null,
+    getPageIndex: () => 0,
+    getDestination: () => null,
+  };
+  const book = await importPdf(new ArrayBuffer(8), 'tagged-horizontal.pdf', doc);
+  assert.deepEqual(book.text.split('\n'), ['Hello, world! これは例文1です。十分な文字数を確保します。']);
+});
+

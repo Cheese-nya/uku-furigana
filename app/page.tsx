@@ -386,6 +386,7 @@ export default function DubbingStudioApp() {
     advanceControllerRef.current?.abort();
     const file = e.target.files[0];
     const baseName = file.name.replace(/\.[^/.]+$/, "");
+    let importedTitle = cleanScriptTitle(baseName) || baseName;
     setImportError('');
 
     try {
@@ -399,6 +400,7 @@ export default function DubbingStudioApp() {
         const parsed = await parseBookFile(file);
         content = withoutImageLines(parsed.content);
         importedRuby = parsed.sourceOverrides;
+        if (parsed.title && parsed.title !== 'Untitled') importedTitle = parsed.title;
       } else if (format === 'docx') {
         const arrayBuffer = await file.arrayBuffer();
         const imported = await importDocx(arrayBuffer);
@@ -415,14 +417,14 @@ export default function DubbingStudioApp() {
       const fingerprint = await fingerprintText(content);
       if (request !== importSequenceRef.current) return;
       // Reconcile with current state; metadata saves may finish while DOCX parses.
-      const resolved = resolveScript(databaseRef.current, baseName, content, fingerprint);
+      const resolved = resolveScript(databaseRef.current, importedTitle, content, fingerprint);
       setDatabase(resolved.database);
       setDocumentId(resolved.scriptId);
       markEditorSource(resolved.scriptId, format ?? scriptSourceFormat(file.name));
       setEditingToken(null);
       setSourceOverrides(importedRuby);
       setSrtCues(importedCues);
-      setDocTitle(baseName);
+      setDocTitle(importedTitle);
       setRawText(content);
       // An imported file is a fresh script: unlink it from the previous library book so
       // "Save to Library" creates a new book instead of overwriting the linked one.

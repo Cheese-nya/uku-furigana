@@ -9,6 +9,8 @@ export interface PdfTextItem {
   height: number;
   hasEOL?: boolean;
   fontName?: string;
+  type?: string;
+  actualText?: string | null;
 }
 
 /** Only `vertical` is used: it marks the fonts of a vertically set (tategaki) PDF. */
@@ -27,7 +29,7 @@ export interface PdfViewportLike {
 }
 
 export interface PdfPageLike {
-  getTextContent(): Promise<PdfTextContentLike> | PdfTextContentLike;
+  getTextContent(params?: { includeMarkedContent?: boolean }): Promise<PdfTextContentLike> | PdfTextContentLike;
   /** Optional: fake loaders in tests only provide getTextContent, so a missing viewport skips the layout. */
   getViewport?(params: { scale: number }): PdfViewportLike;
 }
@@ -62,8 +64,13 @@ const ASCII_ALNUM_RE = /^[A-Za-z0-9]$/;
 // The CJK Radicals Supplement (⻑ ⻄ ⻝ …) has no NFKC mapping; this is Unicode's EquivalentUnifiedIdeograph.txt for it.
 const SUPPLEMENT_FROM = Array.from('⺁⺂⺃⺄⺅⺆⺇⺈⺉⺊⺋⺌⺍⺎⺏⺐⺑⺒⺓⺔⺕⺖⺗⺘⺙⺛⺜⺝⺞⺟⺠⺡⺢⺣⺤⺥⺦⺧⺨⺩⺪⺫⺬⺭⺮⺯⺰⺱⺲⺳⺴⺵⺶⺷⺸⺹⺺⺻⺼⺽⺾⺿⻀⻁⻂⻃⻄⻅⻆⻇⻈⻉⻊⻋⻌⻍⻎⻏⻐⻑⻒⻓⻔⻕⻖⻗⻘⻙⻚⻛⻜⻝⻞⻟⻠⻡⻢⻣⻤⻥⻦⻧⻨⻩⻪⻫⻬⻭⻮⻯⻰⻱⻲⻳');
 const SUPPLEMENT_TO = Array.from('厂乛乚乙亻冂𠘨刀刂卜㔾小小兀尣尢𡯂巳幺彑𫜹忄心扌攵旡日月歺母民氵氺灬爫爫丬牛犭王𤴔目示礻𥫗糹纟罓罒㓁冗𦉫羊𦍌𦍋耂肀聿肉𦥑艹艹艹虎衤覀西见角𧢲讠贝𧾷车辶辶辶邑钅長镸长门𨸏阝雨青韦页风飞食𩙿飠饣𩠐马骨鬼鱼鸟卤麦黄黾斉齐歯齿竜龙龜亀龟');
-const SUPPLEMENT = new Map(SUPPLEMENT_FROM.map((char, index) => [char, SUPPLEMENT_TO[index]]));
-const RADICALS = /[\u2E80-\u2FDF\uF900-\uFAFF]/g;
+const VERTICAL_PUNCTUATION_FROM = Array.from('\uFE11\uFE12\uFE13\uFE14\uFE15\uFE16\uFE17\uFE18\uFE19\uFE31\uFE32\uFE35\uFE36\uFE37\uFE38\uFE39\uFE3A\uFE3B\uFE3C\uFE3D\uFE3E\uFE3F\uFE40\uFE41\uFE42\uFE43\uFE44\uFE47\uFE48');
+const VERTICAL_PUNCTUATION_TO = Array.from('\u3001\u3002\uFF1A\uFF1B\uFF01\uFF1F\u3016\u3017\u2026\u2014\u2015\uFF08\uFF09\uFF5B\uFF5D\u3014\u3015\u3010\u3011\u300A\u300B\u3008\u3009\u300C\u300D\u300E\u300F\uFF3B\uFF3D');
+const SUPPLEMENT = new Map([
+  ...SUPPLEMENT_FROM.map((char, index) => [char, SUPPLEMENT_TO[index]] as const),
+  ...VERTICAL_PUNCTUATION_FROM.map((char, index) => [char, VERTICAL_PUNCTUATION_TO[index]] as const),
+]);
+const RADICALS = /[\u2E80-\u2FDF\uF900-\uFAFF\uFE10-\uFE19\uFE30-\uFE4F]/g;
 function foldRadicals(text: string): string {
   return text.replace(RADICALS, char => SUPPLEMENT.get(char) ?? char.normalize('NFKC'));
 }
@@ -74,7 +81,8 @@ function trimAscii(text: string): string {
 
 function stripExtension(fileName: string): string {
   const base = fileName.replace(/^.*[/\\]/, '');
-  return base.replace(/\.[^.]+$/, '').trim() || base;
+  const stripped = base.replace(/\.[^.]+$/, '').trim() || base;
+  return /^(?:document|msf|primary|raw|image|video|audio|downloads?):\d+$/i.test(stripped) ? 'Untitled' : stripped;
 }
 
 function isLikelyFilePath(value: string): boolean {
@@ -87,7 +95,14 @@ function isLikelyFilePath(value: string): boolean {
 async function defaultLoadPdf(data: ArrayBuffer): Promise<PdfDocumentLike> {
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
   // Copied next to the page by scripts/vendor-assets.mjs; relative, so a build served under a sub-path works too.
-  const base = new URL('./vendor/pdfjs/', window.location.href.split('?')[0]).href;
+  let base: string;
+  if (typeof window !== 'undefined' && window.location?.href) {
+    base = new URL('./vendor/pdfjs/', window.location.href.split(/[?#]/)[0]).href;
+  } else {
+    const { pathToFileURL } = await import('node:url');
+    const { join } = await import('node:path');
+    base = `${pathToFileURL(join(process.cwd(), 'public', 'vendor', 'pdfjs')).href}/`;
+  }
   pdfjs.GlobalWorkerOptions.workerSrc = `${base}pdf.worker.min.js`;
   const params: Record<string, unknown> = {
     data: new Uint8Array(data),
@@ -198,8 +213,12 @@ function isTopAlignedColumnPage(lines: VisualLine[]): boolean {
   // Source ruby is set much smaller than the body: its short runs start wherever their word is, not at the margin.
   const body = bodyHeight > 0 ? candidates.filter(line => line.height >= bodyHeight * 0.6) : candidates;
   if (body.length < 3) return false;
-  // Columns arrive as whole runs. A page of single glyphs is the per-glyph case, never this one.
+  // Columns arrive as whole runs, each one glyph wide horizontally. A page of single glyphs is the
+  // per-glyph case, and a run whose horizontal span exceeds ~1.8 em is a horizontal line, never a column.
   if (body.filter(line => glyphLength(line.text) === 1).length * 2 > body.length) return false;
+  if (bodyHeight > 0 && body.some(line => glyphLength(line.text) >= 2 && (line.endX ?? line.x) - line.x > bodyHeight * 1.8)) {
+    return false;
+  }
   const xs = body.map(line => line.x);
   const ys = body.map(line => line.y);
   const xSpread = Math.max(...xs) - Math.min(...xs);
@@ -228,16 +247,23 @@ function lineEndX(line: VisualLine, bodyHeight: number): number {
 function mergeGlyphRuns(lines: VisualLine[], bodyHeight: number): VisualLine[] {
   const merged: VisualLine[] = [];
   const rowTolerance = Math.max(1, bodyHeight * 0.35);
+  const inlineScriptTolerance = Math.max(1, bodyHeight * 0.65);
   // Justified Japanese text stretches the gap between glyphs, sometimes past a full em at punctuation.
   const gapTolerance = Math.max(1, bodyHeight * 1.2);
   for (const line of lines) {
     const previous = merged[merged.length - 1];
     const gap = previous ? line.x - lineEndX(previous, bodyHeight) : 0;
+    const dy = previous ? Math.abs(previous.y - line.y) : Infinity;
+    const isInlineScript =
+      previous !== undefined &&
+      line.x >= previous.x &&
+      (line.height < previous.height * 0.85 || previous.height < line.height * 0.85) &&
+      dy <= inlineScriptTolerance;
     const continues = previous !== undefined
       && previous.pageIndex === line.pageIndex
       && !previous.rotated
       && !line.rotated
-      && Math.abs(previous.y - line.y) <= rowTolerance
+      && (dy <= rowTolerance || isInlineScript)
       && gap >= -gapTolerance
       && gap <= gapTolerance;
     if (!continues) {
@@ -246,8 +272,10 @@ function mergeGlyphRuns(lines: VisualLine[], bodyHeight: number): VisualLine[] {
     }
     const previousText = previous.text;
     const joiner = ASCII_ALNUM_RE.test(previousText.slice(-1)) && ASCII_ALNUM_RE.test(line.text[0] ?? '') ? ' ' : '';
+    const keepPreviousBaseline = line.height < previous.height * 0.85;
     merged[merged.length - 1] = {
       ...previous,
+      y: keepPreviousBaseline ? previous.y : (previous.height < line.height * 0.85 ? line.y : previous.y),
       text: previousText + joiner + line.text,
       endX: Math.max(lineEndX(previous, bodyHeight), lineEndX(line, bodyHeight)),
       height: Math.max(previous.height, line.height),
@@ -256,15 +284,26 @@ function mergeGlyphRuns(lines: VisualLine[], bodyHeight: number): VisualLine[] {
   return merged;
 }
 
+function itemGlyphHeight(item: PdfTextItem): number {
+  const t = item.transform;
+  if (Array.isArray(t) && (t[1] ?? 0) !== 0) {
+    return Math.abs(t[3] || t[0] || t[2] || t[1] || 0) || (typeof item.height === 'number' && item.height > 0 ? item.height : 0);
+  }
+  if (typeof item.height === 'number' && item.height > 0) return item.height;
+  if (!Array.isArray(t)) return 0;
+  return Math.abs(t[3] || t[0] || t[2] || t[1] || 0);
+}
+
 /** Rebuild tategaki columns from per-glyph items: glyphs sharing an x, read top to bottom. */
-function glyphColumns(lines: VisualLine[], tolerance: number): VisualLine[] {
+function glyphColumns(lines: VisualLine[], tolerance: number, bodyHeight: number): VisualLine[] {
   const groups: { x: number; lines: VisualLine[] }[] = [];
   for (const line of lines) {
+    const matchTolerance = line.rotated ? tolerance * 1.5 : tolerance;
     let nearest: { x: number; lines: VisualLine[] } | null = null;
     let nearestDistance = Infinity;
     for (const group of groups) {
       const distance = Math.abs(group.x - line.x);
-      if (distance <= tolerance && distance < nearestDistance) {
+      if (distance <= matchTolerance && distance < nearestDistance) {
         nearest = group;
         nearestDistance = distance;
       }
@@ -277,24 +316,44 @@ function glyphColumns(lines: VisualLine[], tolerance: number): VisualLine[] {
       groups.push({ x: line.x, lines: [line] });
     }
   }
-  return groups.sort((a, b) => b.x - a.x).map(group => {
-    const glyphs = [...group.lines].sort((a, b) => b.y - a.y);
-    let text = '';
-    for (const glyph of glyphs) {
-      const previous = text[text.length - 1] || '';
-      const next = glyph.text[0] || '';
-      text += `${ASCII_ALNUM_RE.test(previous) && ASCII_ALNUM_RE.test(next) ? ' ' : ''}${glyph.text}`;
-    }
-    return {
-      pageIndex: glyphs[0].pageIndex,
-      text,
-      x: group.x,
-      y: Math.max(...glyphs.map(glyph => glyph.y)),
-      height: computeMedian(glyphs.map(glyph => glyph.height).filter(height => height > 0)),
-      rotated: false,
-      vertical: true,
-    };
-  });
+  return groups
+    .sort((a, b) => b.x - a.x)
+    .map(group => {
+      const glyphs = [...group.lines].sort((a, b) => b.y - a.y);
+      // If a bottom-margin folio (single item or per-digit glyphs) happens to align with a column's x,
+      // drop the trailing cluster after the margin gap before joining the column.
+      if (glyphs.length > 1 && bodyHeight > 0) {
+        let splitIndex = -1;
+        const minSplit = Math.max(1, glyphs.length - 6);
+        for (let index = glyphs.length - 1; index >= minSplit; index -= 1) {
+          if (glyphs[index - 1].y - glyphs[index].y > bodyHeight * 2.5) {
+            splitIndex = index;
+            break;
+          }
+        }
+        if (splitIndex > 0) {
+          const tailText = glyphs.slice(splitIndex).map(glyph => glyph.text).join('');
+          if (PAGE_NUMBER_RE.test(tailText)) {
+            glyphs.splice(splitIndex);
+          }
+        }
+      }
+      let text = '';
+      for (const glyph of glyphs) {
+        const previous = text[text.length - 1] || '';
+        const next = glyph.text[0] || '';
+        text += `${ASCII_ALNUM_RE.test(previous) && ASCII_ALNUM_RE.test(next) ? ' ' : ''}${glyph.text}`;
+      }
+      return {
+        pageIndex: glyphs[0].pageIndex,
+        text,
+        x: group.x,
+        y: Math.max(...glyphs.map(glyph => glyph.y)),
+        height: computeMedian(glyphs.map(glyph => glyph.height).filter(height => height > 0)),
+        rotated: false,
+        vertical: true,
+      };
+    });
 }
 
 export async function importPdf(
@@ -320,9 +379,10 @@ export async function importPdf(
     const pageIndex = pageNum - 1;
     const page = await doc.getPage(pageNum);
     if (pageNum === 1) pageSize = readPageSize(page);
-    const content = await page.getTextContent();
+    const content = await page.getTextContent({ includeMarkedContent: true });
     const styles: Record<string, PdfTextStyleLike> = content.styles ?? {};
     let currentItems: PdfTextItem[] = [];
+    const mcStack: { actualText: string | null; consumed: boolean }[] = [];
 
     const flushVisualLine = () => {
       if (currentItems.length === 0) return;
@@ -331,14 +391,13 @@ export async function importPdf(
       const items = currentItems;
       currentItems = [];
       if (!text || text.trim().length === 0) return;
-      if (PAGE_NUMBER_RE.test(text)) return;
 
       const x = items[0].transform?.[4] ?? 0;
       const y = items[0].transform?.[5] ?? 0;
       let height = 0;
       let endX = x;
       for (const it of items) {
-        const h = it.height || Math.abs(it.transform?.[3] ?? it.transform?.[0] ?? 0);
+        const h = itemGlyphHeight(it);
         if (h > height) height = h;
         const width = typeof it.width === 'number' && it.width > 0 ? it.width : 0;
         const right = (it.transform?.[4] ?? 0) + width;
@@ -349,11 +408,44 @@ export async function importPdf(
     };
 
     for (const item of content.items) {
-      if (!item || typeof item.str !== 'string') continue;
-      // pdf.js writes "\u0000" for glyphs whose font has no Unicode mapping (CID 0 / .notdef).
-      // Those bytes are not text: they crash the tokenizer, count toward the scanned-PDF
-      // threshold and would travel into the stored book, so they are dropped on extraction.
-      const str = sanitizeText(item.str);
+      if (!item) continue;
+      if (item.type === 'beginMarkedContent' || item.type === 'beginMarkedContentProps') {
+        const sanitizedActual = typeof item.actualText === 'string' ? sanitizeText(item.actualText) : null;
+        const actualText = sanitizedActual && sanitizedActual.length > 0 ? sanitizedActual : null;
+        if (actualText !== null) flushVisualLine();
+        mcStack.push({ actualText, consumed: false });
+        continue;
+      }
+      if (item.type === 'endMarkedContent') {
+        const popped = mcStack.pop();
+        if (popped?.actualText !== null && popped?.actualText !== undefined) flushVisualLine();
+        continue;
+      }
+      if (typeof item.str !== 'string') continue;
+
+      const topSpan = mcStack.length > 0 ? mcStack[mcStack.length - 1] : null;
+      const activeSpan = topSpan && topSpan.actualText !== null ? topSpan : null;
+      // pdf.js can emit a synthetic whitespace/EOL item before the real glyph inside a
+      // /Span <</ActualText ...>> BDC block; reserve actualText for the glyph itself.
+      const isSyntheticSpace =
+        item.str.trim() === '' &&
+        (item.width === 0 || item.height === 0 || (activeSpan !== null && activeSpan.actualText?.trim() !== ''));
+      let str = '';
+      if (activeSpan && !isSyntheticSpace) {
+        if (!activeSpan.consumed) {
+          str = activeSpan.actualText ?? '';
+          activeSpan.consumed = true;
+        } else if (currentItems.length > 0) {
+          currentItems.push({ ...item, str: '' });
+          if (item.hasEOL) flushVisualLine();
+          continue;
+        }
+      } else if (!activeSpan) {
+        // pdf.js writes "\u0000" for glyphs whose font has no Unicode mapping (CID 0 / .notdef).
+        // Those bytes are not text: they crash the tokenizer, count toward the scanned-PDF
+        // threshold and would travel into the stored book, so they are dropped on extraction.
+        str = sanitizeText(item.str);
+      }
       if (str === '') {
         if (item.hasEOL) flushVisualLine();
         continue;
@@ -361,12 +453,32 @@ export async function importPdf(
       const charCount = str.replace(/\s+/g, '').length;
       nonWhitespaceCount += charCount;
       // Vertical detection is per font: a CJK vertical font renders glyphs rotated 90° via its own metrics.
+      const isVerticalFont = Boolean(item.fontName && styles[item.fontName]?.vertical === true);
       if (charCount > 0) {
         textCharCount += charCount;
-        if (item.fontName && styles[item.fontName]?.vertical === true) {
+        if (isVerticalFont) {
           verticalCharCount += charCount;
           const glyphWidth = Math.abs(item.transform?.[0] ?? 0);
           if (glyphWidth > 0) verticalGlyphWidths.push(glyphWidth);
+        }
+      }
+      if (currentItems.length > 0) {
+        const prev = currentItems[currentItems.length - 1];
+        const prevRot = (prev.transform?.[1] ?? 0) !== 0;
+        const currRot = (item.transform?.[1] ?? 0) !== 0;
+        const prevH = itemGlyphHeight(prev);
+        const currH = itemGlyphHeight(item);
+        const refH = Math.max(prevH, currH, 1);
+        const prevY = prev.transform?.[5] ?? 0;
+        const currY = item.transform?.[5] ?? 0;
+        const prevX = prev.transform?.[4] ?? 0;
+        const currX = item.transform?.[4] ?? 0;
+        if (
+          prevRot !== currRot ||
+          (prevH > 0 && currH > 0 && Math.abs(prevH - currH) > Math.min(prevH, currH) * 0.25) ||
+          (!prevRot && !currRot && !isVerticalFont && (Math.abs(prevY - currY) > refH * 0.35 || currX < prevX - refH * 0.25))
+        ) {
+          flushVisualLine();
         }
       }
       currentItems.push({ ...item, str });
@@ -399,18 +511,38 @@ export async function importPdf(
     const bodyLines = pageLines.filter(line => !line.rotated && (bodyHeight <= 0 || line.height >= bodyHeight * 0.6));
     const rotatedLines = pageLines.filter(line => line.rotated);
     let columns: VisualLine[] | null = null;
-    if (pageIsVertical(pageLines, bodyHeight)) columns = glyphColumns(bodyLines, tolerance);
-    else if (isTopAlignedColumnPage(pageLines)) columns = bodyLines;
+    let remainingRotated: VisualLine[] = rotatedLines;
+    if (pageIsVertical(pageLines, bodyHeight)) {
+      const verticalBodyLines = pageLines.filter(line => bodyHeight <= 0 || line.height >= bodyHeight * 0.6);
+      columns = glyphColumns(verticalBodyLines, tolerance, bodyHeight);
+      remainingRotated = [];
+    } else if (isTopAlignedColumnPage(pageLines)) {
+      columns = bodyLines;
+    }
     if (!columns) {
       // A horizontal page split into one item per glyph: rejoin the runs that continue each
       // other along the baseline, then let the horizontal paragraph rules below do the rest.
-      logicalLines.push(...mergeGlyphRuns(pageLines, bodyHeight));
+      logicalLines.push(
+        ...mergeGlyphRuns(pageLines, bodyHeight).filter(line => !PAGE_NUMBER_RE.test(line.text)),
+      );
       continue;
     }
     columns.sort((a, b) => b.x - a.x);
-    const verticalColumns = columns.map(line => ({ ...line, vertical: true }));
-    logicalLines.push(...verticalColumns, ...rotatedLines);
-    verticalTop.set(pageIndex, Math.max(...verticalColumns.map(line => line.y)));
+    const rawPageTop = columns.length > 0 ? Math.max(...columns.map(line => line.y)) : 0;
+    const verticalColumns = columns
+      .map(line => ({ ...line, vertical: true }))
+      .filter(
+        line =>
+          !PAGE_NUMBER_RE.test(line.text) ||
+          (columns.length > 1 && bodyHeight > 0 && rawPageTop - line.y <= bodyHeight * 3),
+      );
+    logicalLines.push(
+      ...verticalColumns,
+      ...remainingRotated.filter(line => !PAGE_NUMBER_RE.test(line.text)),
+    );
+    if (verticalColumns.length > 0) {
+      verticalTop.set(pageIndex, Math.max(...verticalColumns.map(line => line.y)));
+    }
     const steps: number[] = [];
     for (let index = 1; index < verticalColumns.length; index += 1) {
       steps.push(Math.abs(verticalColumns[index - 1].x - verticalColumns[index].x));
@@ -424,7 +556,8 @@ export async function importPdf(
   const verticalChars = logicalLines
     .filter(line => line.vertical)
     .reduce((sum, line) => sum + glyphLength(line.text), 0);
-  const vertical = verticalByFont || (textCharCount > 0 && verticalChars * 2 > textCharCount);
+  const totalLogicalChars = logicalLines.reduce((sum, line) => sum + glyphLength(line.text), 0);
+  const vertical = verticalByFont || (totalLogicalChars > 0 && verticalChars * 2 > totalLogicalChars);
 
   // Layout measures for horizontal text: the usual distance between baselines (a paragraph gap is clearly
   // more than that) and each page's left margin (a first line set in from it is a paragraph indent).
@@ -480,12 +613,13 @@ export async function importPdf(
       startNewParagraph = true;
     } else if (PARA_END_RE.test(prevLine.text)) {
       startNewParagraph = true;
-    } else if (line.vertical && prevLine.vertical && line.pageIndex === prevLine.pageIndex) {
-      // Tategaki columns: a blank column is a paragraph gap, and a column that starts below the top
-      // margin is an indented first line — the vertical counterparts of the two rules below.
+    } else if (line.vertical && prevLine.vertical) {
+      // Tategaki columns: a blank column on the same page is a paragraph gap, and a column that
+      // starts below the page's top margin is an indented first line — the vertical counterparts
+      // of the two horizontal rules below.
       const columnStep = verticalStep.get(line.pageIndex) ?? 0;
       const top = verticalTop.get(line.pageIndex);
-      if (columnStep > 0 && Math.abs(prevLine.x - line.x) > 1.5 * columnStep) {
+      if (line.pageIndex === prevLine.pageIndex && columnStep > 0 && Math.abs(prevLine.x - line.x) > 1.5 * columnStep) {
         startNewParagraph = true;
       } else if (top !== undefined && paragraphHeight > 0 && top - line.y > 0.5 * paragraphHeight) {
         startNewParagraph = true;
@@ -531,6 +665,11 @@ export async function importPdf(
     }
 
     prevLine = line;
+  }
+
+  const extractedChars = paragraphs.reduce((sum, para) => sum + para.replace(/\s+/g, '').length, 0);
+  if (extractedChars < minChars) {
+    throw new ScannedPdfError('这是扫描版 PDF，没有可提取的文字');
   }
 
   const fallbackTitle = stripExtension(fileName);
