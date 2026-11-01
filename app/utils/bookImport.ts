@@ -1,5 +1,6 @@
-import type { ImportedBook } from './bookAssets';
+import type { ImportOptions, ImportWarning, ImportedBook } from './bookAssets';
 import { cleanScriptTitle, importDocx } from './docxImporter';
+import { toImportError, throwIfAborted } from './importErrors';
 import { importTextScript, scriptSourceFormat } from './inlineRuby';
 import type { BookCategory, BookFormat, PdfLayout } from './libraryDatabase';
 import type { RubyOverride } from './rubyOverrides';
@@ -8,16 +9,29 @@ import type { SrtCue } from './srt';
 export interface ParsedBookFile {
   title: string;
   author?: string;
+  description?: string;
+  language?: string;
+  publisher?: string;
+  publishedAt?: string;
+  series?: string;
+  seriesIndex?: string;
+  identifier?: string;
   content: string;
   format: BookFormat;
   category: BookCategory;
   sourceOverrides: RubyOverride[];
   srtCues: SrtCue[];
-  chapters?: { title: string; startLine: number }[];
+  chapters?: { title: string; startLine: number; level?: number; page?: number }[];
   images: ImportedBook['images'];
   cover?: Blob;
   /** Source PDF layout, forwarded so batch export can reproduce it. */
   pdfLayout?: PdfLayout;
+  /** PDF line→page mapping, index = page - 1. */
+  pageStarts?: number[];
+  pageLabels?: string[];
+  warnings: ImportWarning[];
+  /** Structural count of source pages, for the preview. */
+  pageCount?: number;
 }
 
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -90,32 +104,65 @@ function fromImportedBook(book: ImportedBook, format: 'epub' | 'pdf'): ParsedBoo
     srtCues: [],
     chapters: book.chapters,
     images: book.images,
+    warnings: book.warnings,
+    ...(book.description ? { description: book.description } : {}),
+    ...(book.language ? { language: book.language } : {}),
+    ...(book.publisher ? { publisher: book.publisher } : {}),
+    ...(book.publishedAt ? { publishedAt: book.publishedAt } : {}),
+    ...(book.series ? { series: book.series } : {}),
+    ...(book.seriesIndex ? { seriesIndex: book.seriesIndex } : {}),
+    ...(book.identifier ? { identifier: book.identifier } : {}),
     ...(book.pdfLayout ? { pdfLayout: book.pdfLayout } : {}),
+    ...(book.pageStarts ? { pageStarts: book.pageStarts } : {}),
+    ...(book.pageLabels ? { pageLabels: book.pageLabels } : {}),
+    ...(book.pageStarts ? { pageCount: book.pageStarts.length } : {}),
     ...(book.cover ? { cover: new Blob([book.cover.data as BlobPart], { type: book.cover.mime }) } : {}),
   };
 }
 
 /** Parse a picked file (TXT/MD/SRT/VTT/DOCX/EPUB/PDF) into a library-ready book. EPUB and PDF load their parsers on demand. */
-export async function parseBookFile(file: File): Promise<ParsedBookFile> {
+export async function parseBookFile(file: File, options: ImportOptions = {}): Promise<ParsedBookFile> {
+  throwIfAborted(options.signal);
   const title = cleanScriptTitle(file.name.replace(/\.[^/.]+$/, '')) || 'Untitled';
-  const format = await detectBookFormat(file);
+  let format: Awaited<ReturnType<typeof detectBookFormat>>;
+  try {
+    format = await detectBookFormat(file);
+  } catch (error) {
+    throw toImportError(error);
+  }
   if (format === 'epub') {
     const { importEpub } = await import('./epubImporter');
-    return fromImportedBook(await importEpub(await file.arrayBuffer(), file.name), 'epub');
+    try {
+      return fromImportedBook(await importEpub(await file.arrayBuffer(), file.name, undefined, options), 'epub');
+    } catch (error) {
+      throw toImportError(error);
+    }
   }
   if (format === 'pdf') {
     const { importPdf } = await import('./pdfImporter');
-    return fromImportedBook(await importPdf(await file.arrayBuffer(), file.name), 'pdf');
+    try {
+      return fromImportedBook(await importPdf(await file.arrayBuffer(), file.name, undefined, options), 'pdf');
+    } catch (error) {
+      throw toImportError(error);
+    }
   }
   if (format === 'docx') {
-    const imported = await importDocx(await file.arrayBuffer());
-    return { title, content: imported.text, format: 'docx', category: 'script', sourceOverrides: imported.overrides, srtCues: [], images: [] };
+    try {
+      const imported = await importDocx(await file.arrayBuffer());
+      return { title, content: imported.text, format: 'docx', category: 'script', sourceOverrides: imported.overrides, srtCues: [], images: [], warnings: [] };
+    } catch (error) {
+      throw toImportError(error);
+    }
   }
   // SRT via parseSRT, VTT via parseVTT; a subtitle file without valid cues is kept as plain text.
   // Books store LF-only text, so key the inline readings by LF lines from the start.
-  const imported = importTextScript(file.name, (await file.text()).replace(/\r\n?/g, '\n'));
-  return {
-    title, content: imported.text, format: scriptSourceFormat(file.name), category: 'script',
-    sourceOverrides: imported.overrides, srtCues: imported.cues, images: [],
-  };
+  try {
+    const imported = importTextScript(file.name, (await file.text()).replace(/\r\n?/g, '\n'));
+    return {
+      title, content: imported.text, format: scriptSourceFormat(file.name), category: 'script',
+      sourceOverrides: imported.overrides, srtCues: imported.cues, images: [], warnings: [],
+    };
+  } catch (error) {
+    throw toImportError(error);
+  }
 }

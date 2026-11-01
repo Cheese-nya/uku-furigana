@@ -166,7 +166,7 @@ test('editor, library and batch import all go through importTextScript; batch bo
   const batch = read('../app/hooks/useBatchProcessing.ts');
   assert.match(page, /importTextScript\(file\.name, await file\.text\(\)\)/);
   assert.match(bookImport, /importTextScript\(file\.name, /);
-  assert.match(library, /parseBookFile\(file\)/);
+  assert.match(library, /parse: parseBookFile,/);
   assert.match(batch, /importTextScript\(item\.name, await item\.file\.text\(\)\)/);
   for (const source of [page, library, batch, bookImport]) assert.equal(/\bparseSRT\(|\bparseVtt\b/.test(source), false, 'no private subtitle parsing left');
   assert.match(bookImport, /format: scriptSourceFormat\(file\.name\)/);

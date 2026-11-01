@@ -19,6 +19,10 @@ const eslintConfig = defineConfig([
     "ios/**",
     "android/**",
     "next-env.d.ts",
+    // Local scratch, vendored assets, and the app's own session worktrees are not source.
+    ".claude/**",
+    "public/vendor/**",
+    "tests/.tmp/**",
   ]),
 ]);
 

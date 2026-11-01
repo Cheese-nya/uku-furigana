@@ -1,5 +1,14 @@
 import JSZip from 'jszip';
-import { imageLine, type ImportedBook, type ImportedBookImage } from './bookAssets';
+import {
+  imageLine,
+  type ImportOptions,
+  type ImportProgress,
+  type ImportWarning,
+  type ImportedBook,
+  type ImportedBookImage,
+  type ImportedChapter,
+} from './bookAssets';
+import { ImportError, throwIfAborted } from './importErrors';
 import { katakanaToHiragana } from './furigana';
 import type { RubyOverride } from './rubyOverrides';
 import { sanitizeText } from './textSanitize';
@@ -298,11 +307,40 @@ function epubType(el: Element): string {
   ).toLowerCase();
 }
 
-/** Page-break markers and display:none content are not part of the story text. */
-function isHiddenElement(el: Element): boolean {
+function report(options: ImportOptions, progress: ImportProgress): void {
+  options.onProgress?.(progress);
+}
+
+function directChildren(el: Element, name: string): Element[] {
+  const target = name.toLowerCase();
+  return Array.from(el.childNodes).filter(
+    (node): node is Element => node.nodeType === 1 && localTag(node as Element) === target,
+  );
+}
+
+/**
+ * Class selectors whose rules hide content (`display:none` / `visibility:hidden`). Publishers use
+ * these for page-break scaffolding and duplicate alt text; inline styles cover the rest.
+ */
+function collectHiddenClasses(source: string, hidden: Set<string>): void {
+  const rule = /([^{}]+)\{([^}]*)\}/g;
+  let match: RegExpExecArray | null;
+  while ((match = rule.exec(source))) {
+    const declarations = match[2];
+    if (!/(?:display\s*:\s*none|visibility\s*:\s*hidden)/i.test(declarations)) continue;
+    const classNames = match[1].match(/\.([A-Za-z_][\w-]*)/g) ?? [];
+    for (const className of classNames) hidden.add(className.slice(1));
+  }
+}
+
+/** Page-break markers, inline hidden styles and publisher-hidden classes are not story text. */
+function isHiddenElement(el: Element, hiddenClasses: Set<string>): boolean {
   if (el.hasAttribute('hidden')) return true;
-  if (/display\s*:\s*none/i.test(el.getAttribute('style') || '')) return true;
-  return /\bpagebreak\b/.test(epubType(el));
+  const style = el.getAttribute('style') || '';
+  if (/display\s*:\s*none|visibility\s*:\s*hidden/i.test(style)) return true;
+  if (/\bpagebreak\b/.test(epubType(el))) return true;
+  const classes = (el.getAttribute('class') || '').split(/\s+/).filter(Boolean);
+  return classes.some(className => hiddenClasses.has(className));
 }
 
 /** A declared size small enough to be a glyph (<= 64px or <= 3em) rather than an illustration. */
@@ -332,19 +370,19 @@ function isInlineImage(el: Element, src: string): boolean {
 }
 
 /** Visible text without ruby annotations or scripts. */
-function ownText(node: Node): string {
+function ownText(node: Node, hiddenClasses: Set<string>): string {
   if (node.nodeType === 3 || node.nodeType === 4) return node.nodeValue || '';
   if (node.nodeType !== 1) return '';
   const el = node as Element;
-  if (SKIP_TAGS.has(localTag(el)) || isHiddenElement(el)) return '';
-  return Array.from(el.childNodes).map(ownText).join('');
+  if (SKIP_TAGS.has(localTag(el)) || isHiddenElement(el, hiddenClasses)) return '';
+  return Array.from(el.childNodes).map(child => ownText(child, hiddenClasses)).join('');
 }
 
 /**
  * A printed contents page inside the spine: almost all of its text is internal links. Importing it
  * would put the chapter list in front of the story as if it were prose.
  */
-function isLinkIndexPage(body: Element): boolean {
+function isLinkIndexPage(body: Element, hiddenClasses: Set<string>): boolean {
   const compact = (value: string) => value.replace(/\s+/g, '');
   const links = findElements(body, 'a').filter(a => {
     const href = (a.getAttribute('href') || '').trim();
@@ -352,11 +390,11 @@ function isLinkIndexPage(body: Element): boolean {
   });
   if (links.length < 2) return false;
   const headingLen = [...HEADING_TAGS].reduce(
-    (sum, tag) => sum + findElements(body, tag).reduce((n, h) => n + compact(ownText(h)).length, 0),
+    (sum, tag) => sum + findElements(body, tag).reduce((n, h) => n + compact(ownText(h, hiddenClasses)).length, 0),
     0,
   );
-  const total = compact(ownText(body)).length - headingLen;
-  const linked = links.reduce((n, a) => n + compact(ownText(a)).length, 0);
+  const total = compact(ownText(body, hiddenClasses)).length - headingLen;
+  const linked = links.reduce((n, a) => n + compact(ownText(a, hiddenClasses)).length, 0);
   return total > 0 && linked / total >= 0.8;
 }
 
@@ -402,14 +440,17 @@ interface ManifestItem {
 }
 
 type SpineEntry =
-  | { kind: 'text'; line: string; overrides: RubyOverride[]; isHeading: boolean }
+  | { kind: 'text'; line: string; overrides: RubyOverride[]; headingLevel?: number }
   | { kind: 'image'; zipPath: string };
 
 export async function importEpub(
   data: ArrayBuffer,
   fileName: string,
   parser: DomParserLike = new DOMParser(),
+  options: ImportOptions = {},
 ): Promise<ImportedBook> {
+  report(options, { stage: 'reading', current: 0 });
+  throwIfAborted(options.signal);
   const zip = await JSZip.loadAsync(data);
 
   const encryptionFile = zip.file('META-INF/encryption.xml');
@@ -425,42 +466,86 @@ export async function importEpub(
       : /<(?:\w+:)?EncryptedData\b/i.test(encXml) &&
         ![...FONT_OBFUSCATION_ALGORITHMS].some(algorithm => encXml.includes(algorithm));
     if (encrypted) {
-      throw new Error('不支持加密的 EPUB');
+      throw new ImportError('drm-protected', 'This EPUB is DRM protected');
     }
   }
 
   const containerFile = zip.file('META-INF/container.xml');
   if (!containerFile) {
-    throw new Error('EPUB 中没有可读的正文');
+    throw new ImportError('corrupt-file', 'EPUB container.xml is missing');
   }
   const containerDoc = parseXml(await readZipText(containerFile), parser);
   if (!containerDoc) {
-    throw new Error('EPUB 中没有可读的正文');
+    throw new ImportError('corrupt-file', 'EPUB container.xml is invalid');
   }
   const rootfileEl = findElements(containerDoc, 'rootfile')[0];
   const opfPath = rootfileEl?.getAttribute('full-path')?.trim() || '';
   if (!opfPath) {
-    throw new Error('EPUB 中没有可读的正文');
+    throw new ImportError('corrupt-file', 'EPUB package path is missing');
   }
 
   const opfFile = zip.file(normalizeZipPath(safeDecodeURI(opfPath))) || zip.file(opfPath);
   if (!opfFile) {
-    throw new Error('EPUB 中没有可读的正文');
+    throw new ImportError('corrupt-file', 'EPUB package document is missing');
   }
   const opfDir = dirname(normalizeZipPath(safeDecodeURI(opfPath)));
   const opfDoc = parseXml(await readZipText(opfFile), parser);
   if (!opfDoc) {
-    throw new Error('EPUB 中没有可读的正文');
+    throw new ImportError('corrupt-file', 'EPUB package document is invalid');
   }
 
   const fallbackTitle = stripExtension(fileName);
-  const titleEl = findElements(opfDoc, 'title').find(el => (el.textContent || '').trim().length > 0);
-  const title = titleEl ? collapseInlineString(titleEl.textContent || '') || fallbackTitle : fallbackTitle;
+  const dcText = (name: string): string => {
+    const el = findElements(opfDoc, name).find(candidate => (candidate.textContent || '').trim().length > 0);
+    return el ? collapseInlineString(el.textContent || '') : '';
+  };
+  const title = dcText('title') || fallbackTitle;
+  const author = dcText('creator');
+  const language = dcText('language');
+  const publisher = dcText('publisher');
+  const publishedAt = dcText('date');
+  const description = dcText('description');
 
-  const creatorEl = findElements(opfDoc, 'creator').find(
-    el => (el.textContent || '').trim().length > 0,
-  );
-  const author = creatorEl ? collapseInlineString(creatorEl.textContent || '') : '';
+  const packageEl = findElements(opfDoc, 'package')[0];
+  const uniqueIdentifier = packageEl?.getAttribute('unique-identifier')?.trim() || '';
+  const identifierEls = findElements(opfDoc, 'identifier');
+  const identifierEl = uniqueIdentifier
+    ? identifierEls.find(el => el.getAttribute('id') === uniqueIdentifier)
+    : undefined;
+  const identifier = collapseInlineString((identifierEl ?? identifierEls[0])?.textContent || '');
+
+  const metaEls = findElements(opfDoc, 'meta');
+  let series = '';
+  let seriesIndex = '';
+  let seriesMetaId = '';
+  let fixedLayout = false;
+  for (const metaEl of metaEls) {
+    const property = (metaEl.getAttribute('property') || '').trim();
+    const name = (metaEl.getAttribute('name') || '').trim();
+    const content = collapseInlineString(metaEl.getAttribute('content') || '');
+    const text = collapseInlineString(metaEl.textContent || '');
+    if (property === 'belongs-to-collection' && text) {
+      const id = metaEl.getAttribute('id') || '';
+      const typeEl = metaEls.find(candidate =>
+        candidate.getAttribute('refines') === (id ? `#${id}` : '') && candidate.getAttribute('property') === 'collection-type');
+      const collectionType = collapseInlineString(typeEl?.textContent || '');
+      if (series && seriesMetaId) continue;
+      if (!collectionType || collectionType === 'series') {
+        series = text;
+        seriesMetaId = id;
+      }
+    } else if (property === 'group-position' && !seriesIndex) {
+      seriesIndex = text;
+    } else if (name === 'calibre:series' && content && !series) {
+      series = content;
+    } else if (name === 'calibre:series_index' && content && !seriesIndex) {
+      seriesIndex = content;
+    } else if (property === 'rendition:layout' && text === 'pre-paginated') {
+      fixedLayout = true;
+    }
+  }
+  const warnings: ImportWarning[] = [];
+  if (fixedLayout) warnings.push({ code: 'fixed-layout' });
 
   const manifestById = new Map<string, ManifestItem>();
   const manifestByPath = new Map<string, ManifestItem>();
@@ -477,6 +562,14 @@ export async function importEpub(
     if (!manifestByPath.has(zipPath)) {
       manifestByPath.set(zipPath, item);
     }
+  }
+
+  // Publisher CSS uses .hidden/.none classes for page-break scaffolding; collect them once.
+  const hiddenClasses = new Set<string>();
+  for (const item of manifestById.values()) {
+    if (item.mediaType !== 'text/css') continue;
+    const cssFile = zip.file(item.zipPath);
+    if (cssFile) collectHiddenClasses(await readZipText(cssFile), hiddenClasses);
   }
 
   let coverItem: ManifestItem | undefined;
@@ -499,18 +592,55 @@ export async function importEpub(
     }
   }
 
-  let cover: { mime: string; data: Uint8Array } | undefined;
-  let coverZipPath: string | undefined;
-  if (coverItem) {
-    const coverZipFile = zip.file(coverItem.zipPath);
-    if (coverZipFile) {
-      cover = {
-        mime: coverItem.mediaType,
-        data: await coverZipFile.async('uint8array'),
-      };
-      coverZipPath = coverItem.zipPath;
+  // EPUB2 guide fallback: <guide><reference type="cover" href="…">, either an image or a cover XHTML.
+  let guideCoverPath: string | undefined;
+  let guideCoverMime = '';
+  if (!coverItem) {
+    for (const reference of findElements(opfDoc, 'reference')) {
+      if ((reference.getAttribute('type') || '').toLowerCase() !== 'cover') continue;
+      const href = reference.getAttribute('href')?.trim() || '';
+      if (!href) continue;
+      const resolved = resolveHref(opfDir, href);
+      const manifestItem = manifestByPath.get(resolved.path);
+      if (manifestItem?.mediaType.startsWith('image/')) {
+        coverItem = manifestItem;
+        break;
+      }
+      const coverDocFile = zip.file(resolved.path);
+      if (!coverDocFile) continue;
+      const coverDoc = parseXhtml(await readZipText(coverDocFile), parser);
+      const imageEl = findElements(coverDoc, 'img')[0] || findElements(coverDoc, 'image')[0];
+      const rawSrc = imageEl?.getAttribute('src') || imageEl?.getAttribute('href')
+        || imageEl?.getAttribute('xlink:href')
+        || imageEl?.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
+      if (!rawSrc) continue;
+      const imageResolved = resolveHref(dirname(resolved.path), rawSrc);
+      const imageItem = manifestByPath.get(imageResolved.path);
+      if (imageItem?.mediaType.startsWith('image/')) {
+        coverItem = imageItem;
+      } else if (zip.file(imageResolved.path)) {
+        guideCoverPath = imageResolved.path;
+        guideCoverMime = mimeFromExtension(imageResolved.path);
+      }
+      break;
     }
   }
+
+  let cover: { mime: string; data: Uint8Array } | undefined;
+  let coverZipPath: string | undefined;
+  const coverPath = coverItem?.zipPath ?? guideCoverPath;
+  const coverMime = coverItem?.mediaType ?? guideCoverMime;
+  if (coverPath) {
+    const coverZipFile = zip.file(coverPath);
+    if (coverZipFile) {
+      cover = {
+        mime: coverMime || mimeFromExtension(coverPath),
+        data: await coverZipFile.async('uint8array'),
+      };
+      coverZipPath = coverPath;
+    }
+  }
+  if (!cover) warnings.push({ code: 'missing-cover' });
 
   const spineEl = findElements(opfDoc, 'spine')[0];
   const spineItems: ManifestItem[] = [];
@@ -529,10 +659,13 @@ export async function importEpub(
   const imageIdByPath = new Map<string, string>();
   const fileStartLine = new Map<string, number>();
   const elementStartLine = new Map<string, number>();
-  const headingFallbackChapters: { title: string; startLine: number }[] = [];
+  const headingFallbackChapters: ImportedChapter[] = [];
   let textLineCount = 0;
 
-  for (const spineItem of spineItems) {
+  for (let spineIndex = 0; spineIndex < spineItems.length; spineIndex += 1) {
+    throwIfAborted(options.signal);
+    report(options, { stage: 'text', current: spineIndex + 1, total: spineItems.length });
+    const spineItem = spineItems[spineIndex];
     // The generated navigation page only repeats the chapter list; reading it as story text is clutter.
     if (spineItem.properties.includes('nav')) continue;
     const xhtmlFile = zip.file(spineItem.zipPath);
@@ -543,7 +676,10 @@ export async function importEpub(
     if (!body) continue;
 
     const spineDir = dirname(spineItem.zipPath);
-    if (isLinkIndexPage(body)) continue;
+    for (const styleEl of findElements(doc, 'style')) {
+      collectHiddenClasses(styleEl.textContent || '', hiddenClasses);
+    }
+    if (isLinkIndexPage(body, hiddenClasses)) continue;
 
     const spineEntries: SpineEntry[] = [];
     // Footnote bodies are collected here and appended after the chapter text instead of interrupting it.
@@ -553,7 +689,7 @@ export async function importEpub(
 
     let rawLine = '';
     let rawRubies: RawRuby[] = [];
-    let headingDepth = 0;
+    let headingLevel = 0;
 
     const flushCurrentLine = () => {
       const finalized = finalizeTextLine(rawLine, rawRubies);
@@ -564,7 +700,7 @@ export async function importEpub(
         kind: 'text',
         line: finalized.line,
         overrides: finalized.overrides,
-        isHeading: headingDepth > 0,
+        ...(headingLevel ? { headingLevel } : {}),
       });
     };
 
@@ -583,7 +719,7 @@ export async function importEpub(
       if (node.nodeType !== 1) return;
       const el = node as Element;
       const tag = localTag(el);
-      if (SKIP_TAGS.has(tag) || isHiddenElement(el)) return;
+      if (SKIP_TAGS.has(tag) || isHiddenElement(el, hiddenClasses)) return;
 
       const isBlock = BLOCK_TAGS.has(tag);
       const isHeading = HEADING_TAGS.has(tag);
@@ -646,14 +782,15 @@ export async function importEpub(
         return;
       }
 
-      if (isHeading) headingDepth += 1;
+      const previousHeadingLevel = headingLevel;
+      if (isHeading) headingLevel = Math.min(3, Number(tag[1]) || 1);
       for (const child of Array.from(el.childNodes)) {
         walk(child);
       }
       if (isBlock) {
         flushCurrentLine();
       }
-      if (isHeading) headingDepth -= 1;
+      headingLevel = previousHeadingLevel;
     };
 
     recordIdIfPresent(body);
@@ -677,27 +814,29 @@ export async function importEpub(
     const spineStartLine = lines.length;
     fileStartLine.set(spineItem.zipPath, spineStartLine);
 
-    if (spineEntries[0].kind === 'text' && spineEntries[0].isHeading) {
-      headingFallbackChapters.push({
-        title: spineEntries[0].line,
-        startLine: spineStartLine,
-      });
-    }
-
     const entryLineIndices: number[] = [];
     for (const entry of spineEntries) {
       entryLineIndices.push(lines.length);
       if (entry.kind === 'text') {
+        if (entry.headingLevel) {
+          headingFallbackChapters.push({
+            title: entry.line,
+            startLine: lines.length,
+            level: Math.min(2, entry.headingLevel - 1),
+          });
+        }
         lines.push(entry.line);
         overrides.push(...entry.overrides);
         textLineCount += 1;
       } else {
+        throwIfAborted(options.signal);
         let imgId = imageIdByPath.get(entry.zipPath);
         if (!imgId) {
           const imgZipFile = zip.file(entry.zipPath);
           if (!imgZipFile) continue;
           imgId = `img-${images.length + 1}`;
           imageIdByPath.set(entry.zipPath, imgId);
+          report(options, { stage: 'images', current: images.length + 1, total: images.length + 1 });
           const mime =
             manifestByPath.get(entry.zipPath)?.mediaType || mimeFromExtension(entry.zipPath);
           images.push({
@@ -720,11 +859,12 @@ export async function importEpub(
   }
 
   if (textLineCount === 0) {
-    throw new Error('EPUB 中没有可读的正文');
+    throw new ImportError('empty-book', 'EPUB has no reading text');
   }
 
+  report(options, { stage: 'chapters', current: 1, total: 1 });
   const tocTargets = await extractTocTargets(zip, parser, manifestById, spineEl);
-  const chapters: { title: string; startLine: number }[] = [];
+  const chapters: ImportedChapter[] = [];
 
   if (tocTargets.length > 0) {
     const seenLines = new Set<number>();
@@ -734,17 +874,19 @@ export async function importEpub(
         : fileStartLine.get(target.zipPath);
       if (startLine === undefined || seenLines.has(startLine)) continue;
       seenLines.add(startLine);
-      chapters.push({ title: target.title, startLine });
+      chapters.push({ title: target.title, startLine, level: Math.min(2, target.level) });
     }
   } else if (headingFallbackChapters.length > 0) {
     const seenLines = new Set<number>();
-    for (const ch of headingFallbackChapters) {
-      if (seenLines.has(ch.startLine)) continue;
-      seenLines.add(ch.startLine);
-      chapters.push(ch);
+    for (const chapter of headingFallbackChapters) {
+      if (seenLines.has(chapter.startLine)) continue;
+      seenLines.add(chapter.startLine);
+      chapters.push(chapter);
     }
+    if (chapters.length > 0) warnings.push({ code: 'auto-chapters', count: chapters.length });
   }
 
+  report(options, { stage: 'done', current: 1, total: 1 });
   return {
     title,
     author,
@@ -752,6 +894,14 @@ export async function importEpub(
     overrides,
     chapters,
     images,
+    warnings,
+    ...(description ? { description } : {}),
+    ...(language ? { language } : {}),
+    ...(publisher ? { publisher } : {}),
+    ...(publishedAt ? { publishedAt } : {}),
+    ...(series ? { series } : {}),
+    ...(seriesIndex ? { seriesIndex } : {}),
+    ...(identifier ? { identifier } : {}),
     ...(cover ? { cover } : {}),
   };
 }
@@ -760,6 +910,7 @@ interface TocTarget {
   title: string;
   zipPath: string;
   fragment: string;
+  level: number;
 }
 
 async function extractTocTargets(
@@ -794,13 +945,28 @@ async function extractTocTargets(
 
       if (tocNav) {
         const targets: TocTarget[] = [];
-        for (const aEl of findElements(tocNav, 'a')) {
+        const pushAnchor = (aEl: Element, level: number) => {
           const href = aEl.getAttribute('href')?.trim() || '';
           const label = collapseInlineString(aEl.textContent || '');
-          if (!href || !label) continue;
+          if (!href || !label) return;
           const { path: zipPath, fragment } = resolveHref(navDir, href);
-          if (!zipPath) continue;
-          targets.push({ title: label, zipPath, fragment });
+          if (!zipPath) return;
+          targets.push({ title: label, zipPath, fragment, level: Math.min(2, level) });
+        };
+        const collectList = (list: Element, level: number) => {
+          for (const li of directChildren(list, 'li')) {
+            const anchor = directChildren(li, 'a')[0];
+            if (anchor) pushAnchor(anchor, level);
+            for (const nested of [...directChildren(li, 'ol'), ...directChildren(li, 'ul')]) {
+              collectList(nested, level + 1);
+            }
+          }
+        };
+        const lists = [...directChildren(tocNav, 'ol'), ...directChildren(tocNav, 'ul')];
+        if (lists.length > 0) {
+          for (const list of lists) collectList(list, 0);
+        } else {
+          for (const aEl of findElements(tocNav, 'a')) pushAnchor(aEl, 0);
         }
         if (targets.length > 0) return targets;
       }
@@ -825,20 +991,25 @@ async function extractTocTargets(
       if (ncxDoc) {
         const ncxDir = dirname(ncxItem.zipPath);
         const targets: TocTarget[] = [];
-        for (const navPoint of findElements(ncxDoc, 'navPoint')) {
-          const childEls = Array.from(navPoint.childNodes).filter(
-            (n): n is Element => n.nodeType === 1,
-          );
-          const navLabel = childEls.find(el => localTag(el) === 'navlabel');
-          const contentEl = childEls.find(el => localTag(el) === 'content');
-          const textEl = navLabel ? findElements(navLabel, 'text')[0] : undefined;
-          const label = collapseInlineString(textEl?.textContent || '');
-          const src = contentEl?.getAttribute('src')?.trim() || '';
-          if (!label || !src) continue;
-          const { path: zipPath, fragment } = resolveHref(ncxDir, src);
-          if (!zipPath) continue;
-          targets.push({ title: label, zipPath, fragment });
-        }
+        const collectNavPoints = (parent: Element, level: number) => {
+          for (const navPoint of directChildren(parent, 'navPoint')) {
+            const childEls = Array.from(navPoint.childNodes).filter(
+              (n): n is Element => n.nodeType === 1,
+            );
+            const navLabel = childEls.find(el => localTag(el) === 'navlabel');
+            const contentEl = childEls.find(el => localTag(el) === 'content');
+            const textEl = navLabel ? findElements(navLabel, 'text')[0] : undefined;
+            const label = collapseInlineString(textEl?.textContent || '');
+            const src = contentEl?.getAttribute('src')?.trim() || '';
+            if (label && src) {
+              const { path: zipPath, fragment } = resolveHref(ncxDir, src);
+              if (zipPath) targets.push({ title: label, zipPath, fragment, level: Math.min(2, level) });
+            }
+            collectNavPoints(navPoint, level + 1);
+          }
+        };
+        const navMap = findElements(ncxDoc, 'navMap')[0] ?? ncxDoc.documentElement;
+        if (navMap) collectNavPoints(navMap, 0);
         if (targets.length > 0) return targets;
       }
     }

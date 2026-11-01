@@ -24,6 +24,10 @@ export interface BookChapter {
   title: string;
   startLine: number;
   endLine: number;
+  /** Source TOC nesting depth (0 = top level); absent on flat books. */
+  level?: number;
+  /** 1-based page in the source PDF, when known. */
+  page?: number;
 }
 
 export interface ReadingProgress {
@@ -54,6 +58,12 @@ export interface BookItem {
   title: string;
   author: string;
   description?: string;
+  language?: string;
+  publisher?: string;
+  publishedAt?: string;
+  series?: string;
+  seriesIndex?: string;
+  identifier?: string;
   coverUrl?: string;
   sourceUrl?: string;
   category: BookCategory;
@@ -67,6 +77,10 @@ export interface BookItem {
   srtCues?: SrtCue[];
   /** Only present for books imported from a PDF that exposed a usable page layout. */
   pdfLayout?: PdfLayout;
+  /** PDF only: index = source page - 1, value = first output line on that page (-1 when it has no text). */
+  pageStarts?: number[];
+  /** PDF only: source page labels (`i`, `ii`, `1`, …), index = source page - 1. */
+  pageLabels?: string[];
   chapters: BookChapter[];
   readingProgress: ReadingProgress;
   bookmarks: BookmarkItem[];
@@ -128,21 +142,38 @@ function hasOwnChapters(format: BookFormat): boolean {
   return format === 'epub' || format === 'pdf';
 }
 
-function toBookChapters(text: string, chapters: { title: string; startLine: number }[], fallbackTitle: string): BookChapter[] {
+export interface ChapterStart {
+  title: string;
+  startLine: number;
+  level?: number;
+  page?: number;
+}
+
+/** Levels deeper than this are flattened: the reader indents at most two steps. */
+const MAX_CHAPTER_LEVEL = 2;
+
+function toBookChapters(text: string, chapters: ChapterStart[], fallbackTitle: string): BookChapter[] {
   const lastLine = Math.max(0, textLines(text).length - 1);
   const starts = chapters
     .filter(chapter => Number.isInteger(chapter.startLine) && chapter.startLine >= 0 && chapter.startLine <= lastLine)
     .sort((a, b) => a.startLine - b.startLine)
+    // A parent and its first child often share a start line; keep the parent (outline order).
     .filter((chapter, index, list) => index === 0 || chapter.startLine !== list[index - 1].startLine);
   if (!starts.length) return extractChapters(text, fallbackTitle);
   // Front matter before the first TOC entry (title page, preface) would belong to no chapter and be unreachable.
   if (starts[0].startLine > 0) starts.unshift({ title: cleanScriptTitle(fallbackTitle) || '全文', startLine: 0 });
-  return starts.map((chapter, index) => ({
-    id: `chapter:${index + 1}`,
-    title: chapter.title.trim() || `${index + 1}`,
-    startLine: chapter.startLine,
-    endLine: index + 1 < starts.length ? starts[index + 1].startLine - 1 : lastLine,
-  }));
+  return starts.map((chapter, index) => {
+    const level = Number.isInteger(chapter.level) ? Math.min(MAX_CHAPTER_LEVEL, Math.max(0, chapter.level as number)) : undefined;
+    const page = Number.isInteger(chapter.page) && (chapter.page as number) > 0 ? chapter.page : undefined;
+    return {
+      id: `chapter:${index + 1}`,
+      title: chapter.title.trim() || `${index + 1}`,
+      startLine: chapter.startLine,
+      endLine: index + 1 < starts.length ? starts[index + 1].startLine - 1 : lastLine,
+      ...(level ? { level } : {}),
+      ...(page ? { page } : {}),
+    };
+  });
 }
 
 function themeForIndex(index: number): BookCoverTheme {
@@ -162,6 +193,12 @@ export interface UpsertBookInput {
   title: string;
   author?: string;
   description?: string;
+  language?: string;
+  publisher?: string;
+  publishedAt?: string;
+  series?: string;
+  seriesIndex?: string;
+  identifier?: string;
   coverUrl?: string;
   sourceUrl?: string;
   category?: BookCategory;
@@ -175,10 +212,29 @@ export interface UpsertBookInput {
   srtCues?: SrtCue[];
   /** Source PDF layout; an existing value is kept when the input omits it. */
   pdfLayout?: PdfLayout;
+  /** PDF line→page mapping; an existing value is kept only while the content is unchanged. */
+  pageStarts?: number[];
+  pageLabels?: string[];
   /** Table of contents of an EPUB or PDF; ignored for other formats. */
-  chapters?: { title: string; startLine: number }[];
+  chapters?: ChapterStart[];
   favorite?: boolean;
+  /** Keep a second book even when its text fingerprint already exists in the library. */
+  allowDuplicate?: boolean;
   now?: number;
+}
+
+const MAX_META = 200;
+const MAX_DESCRIPTION = 4000;
+
+/** Metadata from a file is display text: one line, trimmed, bounded; empty becomes absent. */
+function cleanMeta(value: string | undefined): string | undefined {
+  const trimmed = value?.replace(/\s+/g, ' ').trim();
+  return trimmed ? trimmed.slice(0, MAX_META) : undefined;
+}
+
+function cleanDescription(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed.slice(0, MAX_DESCRIPTION) : undefined;
 }
 
 export async function upsertBook(db: LibraryDatabase, input: UpsertBookInput): Promise<LibraryDatabase> {
@@ -186,15 +242,38 @@ export async function upsertBook(db: LibraryDatabase, input: UpsertBookInput): P
   const title = cleanScriptTitle(input.title) || '未命名台本';
   const fingerprint = input.fingerprint || await fingerprintText(content);
   const now = input.now ?? Date.now();
-  const existing = (input.bookId && db.books[input.bookId]) || findByFingerprint(db, fingerprint);
+  // `allowDuplicate` is the "keep both" choice: never fold a new import into the book with the same text.
+  const existing = input.bookId && db.books[input.bookId]
+    ? db.books[input.bookId]
+    : input.allowDuplicate
+      ? undefined
+      : findByFingerprint(db, fingerprint);
   const bookId = existing?.bookId || input.bookId || `book:${crypto.randomUUID()}`;
   const readingProgress = existing?.readingProgress ?? emptyProgress(now);
   const author = existing
     ? (input.author !== undefined ? input.author.trim() : existing.author)
     : (input.author?.trim() ?? '');
   const description = existing
-    ? (input.description !== undefined ? input.description.trim() : existing.description)
-    : (input.description?.trim() || undefined);
+    ? (input.description !== undefined ? cleanDescription(input.description) : existing.description)
+    : cleanDescription(input.description);
+  const language = existing
+    ? (input.language !== undefined ? cleanMeta(input.language) : existing.language)
+    : cleanMeta(input.language);
+  const publisher = existing
+    ? (input.publisher !== undefined ? cleanMeta(input.publisher) : existing.publisher)
+    : cleanMeta(input.publisher);
+  const publishedAt = existing
+    ? (input.publishedAt !== undefined ? cleanMeta(input.publishedAt) : existing.publishedAt)
+    : cleanMeta(input.publishedAt);
+  const series = existing
+    ? (input.series !== undefined ? cleanMeta(input.series) : existing.series)
+    : cleanMeta(input.series);
+  const seriesIndex = existing
+    ? (input.seriesIndex !== undefined ? cleanMeta(input.seriesIndex) : existing.seriesIndex)
+    : cleanMeta(input.seriesIndex);
+  const identifier = existing
+    ? (input.identifier !== undefined ? cleanMeta(input.identifier) : existing.identifier)
+    : cleanMeta(input.identifier);
   const coverUrl = existing
     ? (input.coverUrl !== undefined ? input.coverUrl.trim() : existing.coverUrl)
     : (input.coverUrl?.trim() || undefined);
@@ -203,6 +282,18 @@ export async function upsertBook(db: LibraryDatabase, input: UpsertBookInput): P
     : (input.sourceUrl?.trim() || undefined);
   // A later save without a layout (e.g. an editor save) must not drop the imported PDF geometry.
   const pdfLayout = input.pdfLayout ?? existing?.pdfLayout;
+  // Page mapping describes this content's lines; editing the text invalidates it. An explicit
+  // mapping is validated here too, so a bad parser result never reaches the persisted library.
+  const lastContentLine = Math.max(0, textLines(content).length - 1);
+  const providedStarts = input.pageStarts !== undefined ? validatePageStarts(input.pageStarts) : undefined;
+  const pageStarts = input.pageStarts !== undefined
+    ? (providedStarts && providedStarts.every(line => line <= lastContentLine) ? providedStarts : undefined)
+    : (existing?.content === content ? existing.pageStarts : undefined);
+  const providedLabels = input.pageLabels !== undefined ? validatePageLabels(input.pageLabels) : undefined;
+  const pageLabels = input.pageLabels !== undefined
+    ? providedLabels
+    : (existing?.content === content ? existing.pageLabels : undefined);
+  const validPageLabels = pageStarts && pageLabels && pageLabels.length === pageStarts.length ? pageLabels : undefined;
   const requestedFolder = input.folderId === undefined ? existing?.folderId : input.folderId;
   const folderId = requestedFolder && db.folders[requestedFolder] ? requestedFolder : undefined;
   const book: BookItem = {
@@ -210,6 +301,12 @@ export async function upsertBook(db: LibraryDatabase, input: UpsertBookInput): P
     title,
     author,
     ...(description !== undefined ? { description } : {}),
+    ...(language !== undefined ? { language } : {}),
+    ...(publisher !== undefined ? { publisher } : {}),
+    ...(publishedAt !== undefined ? { publishedAt } : {}),
+    ...(series !== undefined ? { series } : {}),
+    ...(seriesIndex !== undefined ? { seriesIndex } : {}),
+    ...(identifier !== undefined ? { identifier } : {}),
     ...(coverUrl !== undefined ? { coverUrl } : {}),
     ...(sourceUrl !== undefined ? { sourceUrl } : {}),
     category: input.category ?? existing?.category ?? 'script',
@@ -221,6 +318,8 @@ export async function upsertBook(db: LibraryDatabase, input: UpsertBookInput): P
     sourceOverrides: input.sourceOverrides ?? existing?.sourceOverrides ?? [],
     ...(input.srtCues || existing?.srtCues ? { srtCues: input.srtCues ?? existing?.srtCues } : {}),
     ...(pdfLayout !== undefined ? { pdfLayout } : {}),
+    ...(pageStarts !== undefined ? { pageStarts } : {}),
+    ...(validPageLabels !== undefined ? { pageLabels: validPageLabels } : {}),
     chapters: chaptersFor(input.format ?? existing?.format ?? 'txt', content, title, input.chapters ?? (existing?.content === content ? existing.chapters : undefined)),
     readingProgress: { ...readingProgress, chapterIndex: 0 },
     bookmarks: existing?.bookmarks ?? [],
@@ -349,6 +448,24 @@ export function lineProgressPercent(lineIndex: number, totalLines: number): numb
   return Math.round(Math.min(1, Math.max(0, lineIndex / (totalLines - 1))) * 100);
 }
 
+/**
+ * The source page shown at an output line. A PDF line map stores each page's first text line
+ * (index = page - 1); pages with no text are -1. Labels are used when the PDF supplied them.
+ */
+export function sourcePageLabel(pageStarts?: number[], pageLabels?: string[], lineIndex?: number): string | null {
+  if (!pageStarts?.length || lineIndex === undefined || !Number.isFinite(lineIndex)) return null;
+  let found = -1;
+  for (let index = 0; index < pageStarts.length; index += 1) {
+    const start = pageStarts[index];
+    if (!Number.isInteger(start) || start < 0) continue;
+    if (start > lineIndex) break;
+    found = index;
+  }
+  if (found < 0) return null;
+  const label = pageLabels?.[found]?.trim();
+  return label || String(found + 1);
+}
+
 export function updateReadingProgress(db: LibraryDatabase, bookId: string, progress: Omit<ReadingProgress, 'updatedAt'> & { updatedAt?: number }, now = Date.now()): LibraryDatabase {
   const book = db.books[bookId];
   if (!book) return db;
@@ -441,12 +558,33 @@ function validatePdfLayout(value: unknown): PdfLayout | undefined {
   };
 }
 
-function chaptersFor(format: BookFormat, text: string, title: string, chapters?: { title: string; startLine: number }[]): BookChapter[] {
+function chaptersFor(format: BookFormat, text: string, title: string, chapters?: ChapterStart[]): BookChapter[] {
   return hasOwnChapters(format) && chapters?.length ? toBookChapters(text, chapters, title) : extractChapters(text, title);
 }
 
-function validChapter(value: unknown): value is { title: string; startLine: number } {
+function validChapter(value: unknown): value is ChapterStart {
   return object(value) && typeof value.title === 'string' && Number.isInteger(value.startLine) && (value.startLine as number) >= 0;
+}
+
+function validatePageStarts(value: unknown): number[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+  const starts: number[] = [];
+  let last = -1;
+  for (const entry of value) {
+    if (!Number.isInteger(entry) || (entry as number) < -1) return undefined;
+    const line = entry as number;
+    if (line >= 0) {
+      if (line < last) return undefined;
+      last = line;
+    }
+    starts.push(line);
+  }
+  return starts;
+}
+
+function validatePageLabels(value: unknown): string[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+  return value.map(label => (typeof label === 'string' ? label.slice(0, 40) : ''));
 }
 
 function validateBook(id: string, value: unknown, version: number): BookItem {
@@ -460,7 +598,13 @@ function validateBook(id: string, value: unknown, version: number): BookItem {
   const content = stripExportWatermark(value.content);
   const title = cleanScriptTitle(value.title) || '未命名台本';
   const readingProgress = validateProgress(value.readingProgress);
-  const description = typeof value.description === 'string' ? value.description : undefined;
+  const description = typeof value.description === 'string' ? cleanDescription(value.description) : undefined;
+  const language = typeof value.language === 'string' ? cleanMeta(value.language) : undefined;
+  const publisher = typeof value.publisher === 'string' ? cleanMeta(value.publisher) : undefined;
+  const publishedAt = typeof value.publishedAt === 'string' ? cleanMeta(value.publishedAt) : undefined;
+  const series = typeof value.series === 'string' ? cleanMeta(value.series) : undefined;
+  const seriesIndex = typeof value.seriesIndex === 'string' ? cleanMeta(value.seriesIndex) : undefined;
+  const identifier = typeof value.identifier === 'string' ? cleanMeta(value.identifier) : undefined;
   const coverUrl = typeof value.coverUrl === 'string' ? value.coverUrl : undefined;
   const sourceUrl = typeof value.sourceUrl === 'string' ? value.sourceUrl : undefined;
   const folderId = typeof value.folderId === 'string' && value.folderId ? value.folderId : undefined;
@@ -470,6 +614,12 @@ function validateBook(id: string, value: unknown, version: number): BookItem {
     title,
     author: value.author,
     ...(description !== undefined ? { description } : {}),
+    ...(language !== undefined ? { language } : {}),
+    ...(publisher !== undefined ? { publisher } : {}),
+    ...(publishedAt !== undefined ? { publishedAt } : {}),
+    ...(series !== undefined ? { series } : {}),
+    ...(seriesIndex !== undefined ? { seriesIndex } : {}),
+    ...(identifier !== undefined ? { identifier } : {}),
     ...(coverUrl !== undefined ? { coverUrl } : {}),
     ...(sourceUrl !== undefined ? { sourceUrl } : {}),
     category,
@@ -493,6 +643,11 @@ function validateBook(id: string, value: unknown, version: number): BookItem {
   }
   const pdfLayout = validatePdfLayout(value.pdfLayout);
   if (pdfLayout) book.pdfLayout = pdfLayout;
+  const lastLine = Math.max(0, textLines(content).length - 1);
+  const pageStarts = validatePageStarts(value.pageStarts);
+  if (pageStarts && pageStarts.every(line => line <= lastLine)) book.pageStarts = pageStarts;
+  const pageLabels = validatePageLabels(value.pageLabels);
+  if (pageLabels && (!book.pageStarts || pageLabels.length === book.pageStarts.length)) book.pageLabels = pageLabels;
   return book;
 }
 
