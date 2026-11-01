@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { loadTypescript } from './loadTypescript.mjs';
 
 const { importPdf } = loadTypescript('../app/utils/pdfImporter.ts');
-const { ScannedPdfError } = loadTypescript('../app/utils/bookAssets.ts');
+const { ScannedPdfError, imageLine } = loadTypescript('../app/utils/bookAssets.ts');
 
 function makeItem(str, { y = 700, height = 10, hasEOL = true, rot = 0 } = {}) {
   return {
@@ -171,8 +171,8 @@ test('importPdf resolves outline chapters and falls back when info.Title is a fi
   assert.equal(book.title, '雪国');
   assert.equal(book.author, '');
   assert.deepEqual(book.chapters, [
-    { title: '第一章', startLine: 0 },
-    { title: '第二章', startLine: 2 },
+    { title: '第一章', startLine: 0, level: 0, page: 1 },
+    { title: '第二章', startLine: 2, level: 0, page: 2 },
   ]);
 });
 
@@ -536,3 +536,318 @@ test('importPdf (horizontal Tagged PDF): preserves spaces across non-ActualText 
   assert.deepEqual(book.text.split('\n'), ['Hello, world! これは例文1です。十分な文字数を確保します。']);
 });
 
+
+
+test('importPdf removes repeated running heads, infers chapters, and maps every page', async () => {
+  const body1 = '　第一章　始まりの章です。この章には十分な長さの本文があります。';
+  const body2 = '　第二章　続きの章です。こちらにも十分な長さの本文があります。';
+  const pages = [
+    [makeItem('吾輩は猫である', { y: 780, height: 8 }), makeItem(body1, { y: 700, height: 12 }), makeItem('1', { y: 20, height: 8 })],
+    [makeItem('吾輩は猫である', { y: 780, height: 8 }), makeItem(body2, { y: 700, height: 12 }), makeItem('2', { y: 20, height: 8 })],
+    // A page with only the running head: it maps to -1 instead of borrowing the previous page.
+    [makeItem('吾輩は猫である', { y: 780, height: 8 }), makeItem('3', { y: 20, height: 8 })],
+  ];
+  const fakeLoader = {
+    numPages: 3,
+    getPage(n) {
+      return {
+        getViewport: () => ({ width: 600, height: 800 }),
+        getTextContent: () => ({ items: pages[n - 1] }),
+      };
+    },
+    getMetadata() {
+      return {
+        info: { Title: '吾輩は猫である', Author: '夏目漱石', CreationDate: "D:20200102030405+09'00'" },
+        metadata: {
+          get(name) {
+            return {
+              'dc:language': 'ja',
+              'dc:publisher': '出版社',
+              'dc:identifier': 'urn:isbn:123',
+              'dc:date': '2020-02-03',
+              'dc:description': '説明文',
+            }[name];
+          },
+        },
+      };
+    },
+    getOutline: () => null,
+    getPageIndex: () => 0,
+    getDestination: () => null,
+    getPageLabels: () => ['i', '1', '2'],
+  };
+
+  const book = await importPdf(new ArrayBuffer(8), 'neko.pdf', fakeLoader);
+  assert.deepEqual(book.text.split('\n'), [body1, body2]);
+  assert.equal(book.text.includes('吾輩は猫である\n'), false);
+  assert.deepEqual(book.chapters, [
+    { title: '第一章　始まりの章です。この章には十分な長さの本文があります。', startLine: 0, level: 0, page: 1 },
+    { title: '第二章　続きの章です。こちらにも十分な長さの本文があります。', startLine: 1, level: 0, page: 2 },
+  ]);
+  assert.deepEqual(book.pageStarts, [0, 1, -1]);
+  assert.deepEqual(book.pageLabels, ['i', '1', '2']);
+  assert.equal(book.language, 'ja');
+  assert.equal(book.publisher, '出版社');
+  assert.equal(book.authors ?? book.author, '夏目漱石');
+  assert.equal(book.publishedAt, '2020-01-02');
+  assert.equal(book.identifier, 'urn:isbn:123');
+  assert.equal(book.description, '説明文');
+  assert.deepEqual(book.warnings.filter(w => w.code === 'running-heads-removed'), [{ code: 'running-heads-removed', count: 6 }]);
+  assert.deepEqual(book.warnings.filter(w => w.code === 'auto-chapters'), [{ code: 'auto-chapters', count: 2 }]);
+  assert.deepEqual(book.warnings.filter(w => w.code === 'missing-cover'), [{ code: 'missing-cover' }]);
+});
+
+test('importPdf preserves nested outline levels and pages, and keeps a parent at a shared start line', async () => {
+  const pages = [
+    [makeItem('　第一章の本文です。十分な文字数を確保します。', { y: 750 })],
+    [
+      makeItem('　第二章の本文です。こちらも十分な文字数があります。', { y: 750 }),
+      makeItem('　第一節の本文です。', { y: 736 }),
+    ],
+  ];
+  const fakeLoader = {
+    numPages: 2,
+    getPage(n) {
+      return {
+        getViewport: () => ({ width: 600, height: 800 }),
+        getTextContent: () => ({ items: pages[n - 1] }),
+      };
+    },
+    getMetadata: () => ({ info: { Title: '階層', Author: '' } }),
+    getOutline() {
+      return [{
+        title: '第一部', dest: [{ ref: 'p1' }],
+        items: [{
+          title: '第一章', dest: [{ ref: 'p2' }],
+          items: [{ title: '第一節', dest: [{ ref: 'p2' }] }],
+        }],
+      }];
+    },
+    getPageIndex(ref) {
+      return ref.ref === 'p1' ? 0 : 1;
+    },
+    getDestination: () => null,
+  };
+
+  const book = await importPdf(new ArrayBuffer(8), 'levels.pdf', fakeLoader);
+  assert.deepEqual(book.chapters, [
+    { title: '第一部', startLine: 0, level: 0, page: 1 },
+    { title: '第一章', startLine: 1, level: 1, page: 2 },
+    { title: '第一節', startLine: 1, level: 2, page: 2 },
+  ]);
+});
+
+test('importPdf inserts large page images at the page head and shifts pageStarts', async () => {
+  const body1 = '　第一章　始まりの章です。この章には十分な長さの本文があり、全体で十分な文字数を確保します。';
+  const body2 = '　第二章　挿絵のページです。';
+  const imageObject = { width: 300, height: 400, kind: 1, data: new Uint8Array([1, 0, 1]) };
+  const pages = [
+    [makeItem(body1, { y: 750 })],
+    [makeItem(body2, { y: 750 })],
+  ];
+  const encodeCalls = [];
+  const fakeLoader = {
+    numPages: 2,
+    getPage(n) {
+      return {
+        getViewport: () => ({ width: 600, height: 800 }),
+        getTextContent: () => ({ items: pages[n - 1] }),
+        getOperatorList: async () => ({ fnArray: [1], argsArray: [['Im1']] }),
+        objs: { get: name => (name === 'Im1' ? imageObject : undefined) },
+      };
+    },
+    getMetadata: () => ({ info: { Title: '挿絵', Author: '' } }),
+    getOutline: () => null,
+    getPageIndex: () => 0,
+    getDestination: () => null,
+  };
+
+  const cover = { mime: 'image/jpeg', data: new Uint8Array([7]) };
+  const book = await importPdf(new ArrayBuffer(8), 'illust.pdf', fakeLoader, {
+    renderCover: async () => cover,
+    encodeImage: async image => { encodeCalls.push(image); return { mime: 'image/png', data: new Uint8Array([9]) }; },
+    ops: { paintImageXObject: 1 },
+  });
+
+  assert.equal(encodeCalls.length, 1);
+  assert.equal(encodeCalls[0], imageObject);
+  assert.equal(book.images.length, 1);
+  assert.equal(book.images[0].id, 'img-1');
+  assert.equal(book.images[0].mime, 'image/png');
+  assert.deepEqual(Array.from(book.images[0].data), [9]);
+  assert.equal(book.cover?.mime, 'image/jpeg');
+  assert.deepEqual(book.text.split('\n'), [body1, imageLine('img-1'), body2]);
+  assert.deepEqual(book.pageStarts, [0, 1]);
+  assert.equal(book.warnings.some(w => w.code === 'missing-cover'), false);
+  assert.equal(book.warnings.some(w => w.code === 'images-skipped'), false);
+});
+
+test('importPdf maps an image-only page to its inserted image line', async () => {
+  const imageObject = { width: 300, height: 400, kind: 1, data: new Uint8Array([1, 0, 1]) };
+  const fakeLoader = {
+    numPages: 2,
+    getPage(n) {
+      return {
+        getViewport: () => ({ width: 600, height: 800 }),
+        getTextContent: () => ({
+          items: n === 1 ? [makeItem('　第一章の本文です。十分な文字数を確保します。この行は画像ページの判定に必要です。', { y: 750 })] : [],
+        }),
+        getOperatorList: async () => (
+          n === 2 ? { fnArray: [1], argsArray: [['Im1']] } : { fnArray: [], argsArray: [] }
+        ),
+        objs: { get: name => (name === 'Im1' ? imageObject : undefined) },
+      };
+    },
+    getMetadata: () => ({ info: { Title: '図版のみ', Author: '' } }),
+    getOutline: () => null,
+    getPageIndex: () => 0,
+    getDestination: () => null,
+  };
+  const book = await importPdf(new ArrayBuffer(8), 'plate.pdf', fakeLoader, {
+    encodeImage: async () => ({ mime: 'image/png', data: new Uint8Array([9]) }),
+    ops: { paintImageXObject: 1 },
+  });
+  assert.deepEqual(book.text.split('\n'), [
+    '　第一章の本文です。十分な文字数を確保します。この行は画像ページの判定に必要です。',
+    imageLine('img-1'),
+  ]);
+  assert.deepEqual(book.pageStarts, [0, 1]);
+});
+
+test('importPdf keeps a horizontal author line out of the vertical copyright columns', async () => {
+  const at = (str, x, y) => ({ str, transform: [10, 0, 0, 10, x, y], width: str.length * 10, height: 10, hasEOL: false });
+  const pages = [
+    [at('ようこそ実力至上主義の教室へ２', 50, 760), at('第二巻', 50, 746), at('衣笠彰梧', 50, 660)],
+    [at('本作品の全部', 500, 700), at('無断で複製', 450, 700), at('転載を禁止', 400, 700), at('します。', 350, 700)],
+  ];
+  const fakeLoader = {
+    numPages: 2,
+    getPage(n) { return { getTextContent: () => ({ items: pages[n - 1] }) }; },
+    getMetadata: () => ({ info: { Title: 'ようこそ2', Author: '' } }),
+    getOutline: () => null,
+    getPageIndex: () => 0,
+    getDestination: () => null,
+  };
+  const book = await importPdf(new ArrayBuffer(8), 'mixed.pdf', fakeLoader);
+  assert.deepEqual(book.text.split('\n'), [
+    'ようこそ実力至上主義の教室へ２第二巻',
+    '衣笠彰梧',
+    '本作品の全部無断で複製転載を禁止します。',
+  ]);
+});
+
+test('importPdf recovers a section whose bookmark shares its neighbour page', async () => {
+  const at = (str, x, y) => ({ str, transform: [10, 0, 0, 10, x, y], width: str.length * 10, height: 10, hasEOL: false });
+  const items = [
+    at('目次', 50, 760),
+    at('佐倉愛里の独白', 50, 720),
+    at('　佐倉の本文です。十分な文字数を確保します。', 80, 706),
+  ];
+  const fakeLoader = {
+    numPages: 1,
+    getPage() { return { getTextContent: () => ({ items }) }; },
+    getMetadata: () => ({ info: { Title: '章分け', Author: '' } }),
+    getOutline: () => [
+      { title: 'contents', dest: [{ ref: 'p1' }] },
+      { title: '佐倉愛里の独白', dest: [{ ref: 'p1' }] },
+    ],
+    getPageIndex: () => 0,
+    getDestination: () => null,
+  };
+  const book = await importPdf(new ArrayBuffer(8), 'dup-bookmarks.pdf', fakeLoader);
+  assert.deepEqual(book.chapters, [
+    { title: 'contents', startLine: 0, level: 0, page: 1 },
+    { title: '佐倉愛里の独白', startLine: 1, level: 0, page: 1 },
+  ]);
+});
+
+test('importPdf strips download-site tags from the filename title', async () => {
+  const fakeLoader = {
+    numPages: 1,
+    getPage() {
+      return {
+        getTextContent: () => ({
+          items: [makeItem('　本文です。十分な文字数を確保します。この行はタイトル判定のための本文です。', { y: 750 })],
+        }),
+      };
+    },
+    getMetadata: () => ({ info: {} }),
+    getOutline: () => null,
+    getPageIndex: () => 0,
+    getDestination: () => null,
+  };
+  const book = await importPdf(
+    new ArrayBuffer(8),
+    'ようこそ2 (MF文庫J) (衣笠彰梧) (z-library.sk, 1lib.sk, z-lib.sk).pdf',
+    fakeLoader,
+  );
+  assert.equal(book.title, 'ようこそ2 (MF文庫J) (衣笠彰梧)');
+});
+
+test('importPdf exposes progress stages and aborts between pages', async () => {
+  const pages = [
+    [makeItem('　第一章の本文です。十分な文字数を確保します。', { y: 750 })],
+    [makeItem('　第二章の本文です。', { y: 750 })],
+  ];
+  const fakeLoader = {
+    numPages: 2,
+    getPage(n) {
+      return { getViewport: () => ({ width: 600, height: 800 }), getTextContent: () => ({ items: pages[n - 1] }) };
+    },
+    getMetadata: () => ({ info: { Title: '進捗', Author: '' } }),
+    getOutline: () => null,
+    getPageIndex: () => 0,
+    getDestination: () => null,
+  };
+  const stages = [];
+  const book = await importPdf(new ArrayBuffer(8), 'progress.pdf', fakeLoader, {
+    onProgress: progress => stages.push(`${progress.stage}:${progress.current}/${progress.total ?? ''}`),
+  });
+  assert.ok(book.text);
+  assert.ok(stages.includes('reading:0/'));
+  assert.ok(stages.includes('text:1/2'));
+  assert.ok(stages.includes('text:2/2'));
+  assert.ok(stages.includes('chapters:1/1'));
+  assert.ok(stages.includes('cover:1/1'));
+  assert.ok(stages.includes('done:1/1'));
+
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    () => importPdf(new ArrayBuffer(8), 'abort.pdf', fakeLoader, { signal: controller.signal }),
+    error => error.name === 'AbortError',
+  );
+});
+
+test('importPdf spaces wrapped English after punctuation and keeps headings on their own line', async () => {
+  const loader = {
+    numPages: 1,
+    getPage() {
+      return {
+        getTextContent() {
+          return {
+            items: [
+              makeItem('Chapter One', { y: 760 }),
+              makeItem('This is the first sentence.', { y: 746 }),
+              makeItem('The next line wraps after a period.', { y: 732 }),
+              makeItem('A closing bracket (like this)', { y: 718 }),
+              makeItem('continues on the next line.', { y: 704 }),
+              makeItem('A hyphenated word exam-', { y: 690 }),
+              makeItem('ple stays joined.', { y: 676 }),
+            ],
+          };
+        },
+      };
+    },
+    getMetadata() { return { info: { Title: 'English Sample' } }; },
+    getOutline() { return null; },
+    getPageIndex() { return 0; },
+    getDestination() { return null; },
+  };
+
+  const book = await importPdf(new ArrayBuffer(8), 'english.pdf', loader);
+  assert.deepEqual(book.text.split('\n'), [
+    'Chapter One',
+    'This is the first sentence. The next line wraps after a period. A closing bracket (like this) continues on the next line. A hyphenated word exam-ple stays joined.',
+  ]);
+});

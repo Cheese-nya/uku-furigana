@@ -10,6 +10,7 @@ import { Sidebar } from './components/Sidebar';
 import { SettingsMenu } from './components/SettingsMenu';
 import { MobileNavBar, type AppTab } from './components/MobileNavBar';
 import { LibraryPanel } from './components/LibraryPanel';
+import { ImportPreviewModal } from './components/ImportPreviewModal';
 import { ReaderPanel } from './components/ReaderPanel';
 import { GlossaryModal } from './components/GlossaryModal';
 import { ExportProgressModal } from './components/ExportProgressModal';
@@ -144,6 +145,7 @@ export default function DubbingStudioApp() {
     libraryDb, setLibraryDb, libraryDbRef, activeBook, setEditorBookId, markEditorSource, libraryBooks, libraryFolders, handleCreateFolder, handleRenameFolder, handleDeleteFolder, handleMoveBook,
     libraryToast, setLibraryToast, importToast, setImportToast,
     loadBookIntoWorkspace, handleSaveToLibrary, importLibraryFiles, createOrUpdateBook,
+    importReview, resolveImportReview,
     handleToggleFavorite, handleUpdateBookMetadata,
     handleImportPixivNovel, handleDeleteBook, handleReaderProgress,
   } = useLibraryController({
@@ -628,6 +630,14 @@ export default function DubbingStudioApp() {
         exportOutcome={exportOutcome}
         exportError={exportError}
         t={t}
+      />
+
+      {/* Import preview / password / failure sheet (single-book preview and batch anomalies) */}
+      <ImportPreviewModal
+        t={t}
+        review={importReview}
+        folders={libraryFolders}
+        onResolve={resolveImportReview}
       />
 
       {/* Batch Processing Completion Modal */}

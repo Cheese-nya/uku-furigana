@@ -1,5 +1,24 @@
-import { ScannedPdfError, type ImportedBook } from './bookAssets';
+import {
+  ScannedPdfError,
+  imageLine,
+  type ImportOptions,
+  type ImportProgress,
+  type ImportWarning,
+  type ImportedBook,
+  type ImportedChapter,
+  type ImportedBookImage,
+} from './bookAssets';
+import { toImportError, throwIfAborted } from './importErrors';
+import { installPdfJsCompat } from './pdfjsCompat';
 import type { PdfLayout } from './libraryDatabase';
+import {
+  defaultCoverEncoder,
+  extractPageImages,
+  type EncodedImage,
+  type PdfImageExtractionOptions,
+  type PdfImageItem,
+  type PdfImagePageLike,
+} from './pdfImageExtractor';
 import { sanitizeText } from './textSanitize';
 
 export interface PdfTextItem {
@@ -28,49 +47,83 @@ export interface PdfViewportLike {
   height: number;
 }
 
-export interface PdfPageLike {
+export interface PdfPageLike extends PdfImagePageLike {
   getTextContent(params?: { includeMarkedContent?: boolean }): Promise<PdfTextContentLike> | PdfTextContentLike;
   /** Optional: fake loaders in tests only provide getTextContent, so a missing viewport skips the layout. */
   getViewport?(params: { scale: number }): PdfViewportLike;
+  /** Release the page's decoded images once its text and illustrations are extracted. */
+  cleanup?(): void;
 }
 
 export interface PdfOutlineItem {
   title: string;
   dest: unknown;
+  items?: PdfOutlineItem[];
+}
+
+export interface PdfMetadataLike {
+  info?: {
+    Title?: string;
+    Author?: string;
+    Subject?: string;
+    Keywords?: string;
+    CreationDate?: string;
+    Language?: string;
+  };
+  metadata?: {
+    get?(name: string): unknown;
+    getAll?(): Record<string, unknown>;
+  } | null;
 }
 
 export interface PdfDocumentLike {
   numPages: number;
   getPage(pageNumber: number): Promise<PdfPageLike> | PdfPageLike;
-  getMetadata():
-    | Promise<{ info?: { Title?: string; Author?: string } }>
-    | { info?: { Title?: string; Author?: string } };
+  getMetadata(): Promise<PdfMetadataLike> | PdfMetadataLike;
   getOutline(): Promise<PdfOutlineItem[] | null> | PdfOutlineItem[] | null;
   getPageIndex(ref: unknown): Promise<number> | number;
   getDestination(name: string): Promise<unknown[] | null> | unknown[] | null;
+  getPageLabels?(): Promise<string[] | null> | string[] | null;
 }
 
 export type PdfLoader =
   | PdfDocumentLike
   | ((data: ArrayBuffer) => Promise<PdfDocumentLike> | PdfDocumentLike);
 
-const PAGE_NUMBER_RE = /^\s*[-–—―]?\s*[\d\uFF10-\uFF19]{1,4}\s*[-–—―]?\s*$/u;
-const PARA_START_RE = /^[\u3000「『（]/u;
+export interface PdfImportOptions extends ImportOptions {
+  /** Test seam: render page 1 as a cover without a DOM canvas. */
+  renderCover?: (page: PdfPageLike) => Promise<EncodedImage | null>;
+  /** Test seam: encode one pdf.js image object without a DOM canvas. */
+  encodeImage?: (image: unknown) => Promise<EncodedImage | null>;
+  /** Test seam: pdf.js OPS constants (the browser extractor loads them itself). */
+  ops?: PdfImageExtractionOptions['ops'];
+}
+
+const PAGE_NUMBER_RE = /^\s*[-–—―]?\s*[\d０-９]{1,4}\s*[-–—―]?\s*$/u;
+const PARA_START_RE = /^[　「『（]/u;
 const PARA_END_RE = /[。」』！？!?]$/u;
-const ASCII_ALNUM_RE = /^[A-Za-z0-9]$/;
+// ASCII lines wrap after words, sentence punctuation, or a closing bracket; CJK lines join directly.
+// A trailing hyphen is deliberately absent: it is a word split, not a line break to be spaced.
+const ASCII_WORD_END_RE = /[A-Za-z0-9.,!?;:%)}\]"'”’]/;
+const ASCII_WORD_START_RE = /[A-Za-z0-9([{"'“‘]/;
+function asciiJoin(previous: string, next: string): string {
+  return ASCII_WORD_END_RE.test(previous) && ASCII_WORD_START_RE.test(next) ? ' ' : '';
+}
+const HEADING_PATTERN_RE =
+  /^(?:第[0-9０-９一二三四五六七八九十百千]+[章話節篇部]|序章|終章|プロローグ|エピローグ|あとがき|後書き|目次|Chapter\b)/;
 
 // Embedded CJK fonts often map glyphs to Kangxi radicals or compatibility ideographs (⼀ ⾒ ⼥) instead of
 // the unified ideographs (一 見 女); NFKC folds exactly those back, and only those are touched here.
 // The CJK Radicals Supplement (⻑ ⻄ ⻝ …) has no NFKC mapping; this is Unicode's EquivalentUnifiedIdeograph.txt for it.
 const SUPPLEMENT_FROM = Array.from('⺁⺂⺃⺄⺅⺆⺇⺈⺉⺊⺋⺌⺍⺎⺏⺐⺑⺒⺓⺔⺕⺖⺗⺘⺙⺛⺜⺝⺞⺟⺠⺡⺢⺣⺤⺥⺦⺧⺨⺩⺪⺫⺬⺭⺮⺯⺰⺱⺲⺳⺴⺵⺶⺷⺸⺹⺺⺻⺼⺽⺾⺿⻀⻁⻂⻃⻄⻅⻆⻇⻈⻉⻊⻋⻌⻍⻎⻏⻐⻑⻒⻓⻔⻕⻖⻗⻘⻙⻚⻛⻜⻝⻞⻟⻠⻡⻢⻣⻤⻥⻦⻧⻨⻩⻪⻫⻬⻭⻮⻯⻰⻱⻲⻳');
 const SUPPLEMENT_TO = Array.from('厂乛乚乙亻冂𠘨刀刂卜㔾小小兀尣尢𡯂巳幺彑𫜹忄心扌攵旡日月歺母民氵氺灬爫爫丬牛犭王𤴔目示礻𥫗糹纟罓罒㓁冗𦉫羊𦍌𦍋耂肀聿肉𦥑艹艹艹虎衤覀西见角𧢲讠贝𧾷车辶辶辶邑钅長镸长门𨸏阝雨青韦页风飞食𩙿飠饣𩠐马骨鬼鱼鸟卤麦黄黾斉齐歯齿竜龙龜亀龟');
-const VERTICAL_PUNCTUATION_FROM = Array.from('\uFE11\uFE12\uFE13\uFE14\uFE15\uFE16\uFE17\uFE18\uFE19\uFE31\uFE32\uFE35\uFE36\uFE37\uFE38\uFE39\uFE3A\uFE3B\uFE3C\uFE3D\uFE3E\uFE3F\uFE40\uFE41\uFE42\uFE43\uFE44\uFE47\uFE48');
-const VERTICAL_PUNCTUATION_TO = Array.from('\u3001\u3002\uFF1A\uFF1B\uFF01\uFF1F\u3016\u3017\u2026\u2014\u2015\uFF08\uFF09\uFF5B\uFF5D\u3014\u3015\u3010\u3011\u300A\u300B\u3008\u3009\u300C\u300D\u300E\u300F\uFF3B\uFF3D');
+const VERTICAL_PUNCTUATION_FROM = Array.from('︑︒︓︔︕︖︗︘︙︱︲︵︶︷︸︹︺︻︼︽︾︿﹀﹁﹂﹃﹄﹇﹈');
+const VERTICAL_PUNCTUATION_TO = Array.from('、。：；！？〖〗…—―（）｛｝〔〕【】《》〈〉「」『』［］');
 const SUPPLEMENT = new Map([
   ...SUPPLEMENT_FROM.map((char, index) => [char, SUPPLEMENT_TO[index]] as const),
   ...VERTICAL_PUNCTUATION_FROM.map((char, index) => [char, VERTICAL_PUNCTUATION_TO[index]] as const),
 ]);
-const RADICALS = /[\u2E80-\u2FDF\uF900-\uFAFF\uFE10-\uFE19\uFE30-\uFE4F]/g;
+const RADICALS = /[⺀-⿟豈-﫿︐-︙︰-﹏]/g;
 function foldRadicals(text: string): string {
   return text.replace(RADICALS, char => SUPPLEMENT.get(char) ?? char.normalize('NFKC'));
 }
@@ -85,6 +138,14 @@ function stripExtension(fileName: string): string {
   return /^(?:document|msf|primary|raw|image|video|audio|downloads?):\d+$/i.test(stripped) ? 'Untitled' : stripped;
 }
 
+/** Download-site tags in a file name are not part of the book title. */
+const DOWNLOAD_SITE_TAG = /\s*\((?:[^()]*?(?:z-?lib(?:rary)?|1lib|libgen|annas-archive|b-ok)[^()]*)\)/gi;
+
+function cleanDownloadTitle(value: string): string {
+  const cleaned = value.replace(DOWNLOAD_SITE_TAG, '').replace(/\s{2,}/g, ' ').trim();
+  return cleaned || value.trim();
+}
+
 function isLikelyFilePath(value: string): boolean {
   if (value.includes('/') || value.includes('\\')) return true;
   if (/^[A-Za-z]:/.test(value)) return true;
@@ -92,7 +153,12 @@ function isLikelyFilePath(value: string): boolean {
   return false;
 }
 
-async function defaultLoadPdf(data: ArrayBuffer): Promise<PdfDocumentLike> {
+function report(options: ImportOptions, progress: ImportProgress): void {
+  options.onProgress?.(progress);
+}
+
+async function defaultLoadPdf(data: ArrayBuffer, password?: string): Promise<PdfDocumentLike> {
+  installPdfJsCompat();
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
   // Copied next to the page by scripts/vendor-assets.mjs; relative, so a build served under a sub-path works too.
   let base: string;
@@ -111,6 +177,7 @@ async function defaultLoadPdf(data: ArrayBuffer): Promise<PdfDocumentLike> {
     cMapPacked: true,
     isEvalSupported: false,
   };
+  if (password) params.password = password;
   const task = pdfjs.getDocument(params);
   return (await (task.promise ?? task)) as unknown as PdfDocumentLike;
 }
@@ -126,6 +193,11 @@ interface VisualLine {
   rotated: boolean;
   /** A tategaki column rebuilt from the page, read down the column and right to left across columns. */
   vertical?: boolean;
+}
+
+interface HeadingLine {
+  title: string;
+  level: number;
 }
 
 function computeMedian(values: number[]): number {
@@ -271,7 +343,7 @@ function mergeGlyphRuns(lines: VisualLine[], bodyHeight: number): VisualLine[] {
       continue;
     }
     const previousText = previous.text;
-    const joiner = ASCII_ALNUM_RE.test(previousText.slice(-1)) && ASCII_ALNUM_RE.test(line.text[0] ?? '') ? ' ' : '';
+    const joiner = asciiJoin(previousText.slice(-1), line.text[0] ?? '');
     const keepPreviousBaseline = line.height < previous.height * 0.85;
     merged[merged.length - 1] = {
       ...previous,
@@ -342,7 +414,7 @@ function glyphColumns(lines: VisualLine[], tolerance: number, bodyHeight: number
       for (const glyph of glyphs) {
         const previous = text[text.length - 1] || '';
         const next = glyph.text[0] || '';
-        text += `${ASCII_ALNUM_RE.test(previous) && ASCII_ALNUM_RE.test(next) ? ' ' : ''}${glyph.text}`;
+        text += `${asciiJoin(previous, next)}${glyph.text}`;
       }
       return {
         pageIndex: glyphs[0].pageIndex,
@@ -356,32 +428,231 @@ function glyphColumns(lines: VisualLine[], tolerance: number, bodyHeight: number
     });
 }
 
+/** Digits (ASCII or full-width) become `#` so "第 3 章 · 12" and "第 3 章 · 13" share a running-head key. */
+function runningHeadKey(text: string): string {
+  return text.replace(/[\d０-９]+/g, '#').replace(/\s+/g, '');
+}
+
+/**
+ * Remove a line repeated in the top/bottom margin of at least three pages (book title, chapter name,
+ * folio). Conservative by design: short line, small type, within the outer 6% of the page, and the
+ * same normalised text on enough pages. Footnotes at the page bottom stay exactly where they are.
+ */
+function stripRunningHeads(
+  lines: VisualLine[],
+  pageSizes: Map<number, { width: number; height: number }>,
+  bodyHeight: number,
+): { lines: VisualLine[]; removed: number } {
+  if (pageSizes.size < 3 || bodyHeight <= 0) return { lines, removed: 0 };
+  const candidates = new Map<VisualLine, string>();
+  for (const line of lines) {
+    const size = pageSizes.get(line.pageIndex);
+    if (!size || line.text.trim().length === 0) continue;
+    if (glyphLength(line.text) > 40 || line.height > bodyHeight * 0.95) continue;
+    const topBand = size.height * 0.94;
+    const bottomBand = size.height * 0.06;
+    if (line.y < topBand && line.y > bottomBand) continue;
+    candidates.set(line, runningHeadKey(line.text));
+  }
+  if (candidates.size === 0) return { lines, removed: 0 };
+
+  const pagesByKey = new Map<string, Set<number>>();
+  for (const [line, key] of candidates) {
+    const pages = pagesByKey.get(key) ?? new Set<number>();
+    pages.add(line.pageIndex);
+    pagesByKey.set(key, pages);
+  }
+  const threshold = Math.max(3, Math.ceil(pageSizes.size * 0.2));
+  const drop = new Set<VisualLine>();
+  for (const [line, key] of candidates) {
+    if ((pagesByKey.get(key)?.size ?? 0) >= threshold) drop.add(line);
+  }
+  if (drop.size === 0) return { lines, removed: 0 };
+  return { lines: lines.filter(line => !drop.has(line)), removed: drop.size };
+}
+
+/** Heading candidates for a PDF without an outline: larger type at a gap/page start, or a chapter pattern. */
+function findHeadingLines(lines: VisualLine[], bodyHeight: number): Map<VisualLine, HeadingLine> {
+  const headings = new Map<VisualLine, HeadingLine>();
+  if (bodyHeight <= 0) return headings;
+  let previous: VisualLine | null = null;
+  for (const line of lines) {
+    if (line.rotated || line.vertical) {
+      previous = line;
+      continue;
+    }
+    const text = line.text.trim();
+    const length = glyphLength(text);
+    if (!text || length === 0 || length > 40 || PAGE_NUMBER_RE.test(text)) {
+      previous = line;
+      continue;
+    }
+    const pattern = HEADING_PATTERN_RE.test(text);
+    const large = line.height >= bodyHeight * 1.3;
+    const firstOnPage = previous === null || previous.pageIndex !== line.pageIndex;
+    const gapBefore = previous && previous.pageIndex === line.pageIndex ? Math.abs(previous.y - line.y) : Infinity;
+    if (pattern || (large && (firstOnPage || gapBefore >= bodyHeight * 1.5))) {
+      // A chapter-pattern line is a top-level chapter even at body size; type size only ranks
+      // headings that have no recognisable chapter wording.
+      const level = pattern ? 0 : line.height >= bodyHeight * 1.6 ? 0 : large ? 1 : 2;
+      headings.set(line, { title: text, level });
+    }
+    previous = line;
+  }
+  return headings;
+}
+
+function parsePdfDate(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const match = /^(?:D:)?(\d{4})(\d{2})?(\d{2})?/.exec(value.trim());
+  if (!match) return undefined;
+  const [, year, month, day] = match;
+  return `${year}${month ? `-${month}` : ''}${day ? `-${day}` : ''}`;
+}
+
+function xmpValue(metadata: PdfMetadataLike['metadata'], name: string): string {
+  try {
+    const value = metadata?.get?.(name);
+    return typeof value === 'string' ? sanitizeText(value).trim() : '';
+  } catch {
+    return '';
+  }
+}
+
+/** Add image lines to paragraphs and return the final line array plus each paragraph's output line. */
+function insertImages(
+  paragraphs: string[],
+  paragraphFirst: { pageIndex: number; y: number }[],
+  images: PdfImageItem[],
+): { lines: string[]; paragraphLine: number[]; imageLines: Map<string, number> } {
+  const insertions = new Map<number, PdfImageItem[]>();
+  for (const image of images) {
+    let target = paragraphs.length;
+    for (let index = 0; index < paragraphFirst.length; index += 1) {
+      const first = paragraphFirst[index];
+      if (first.pageIndex > image.pageIndex) {
+        target = index;
+        break;
+      }
+      if (first.pageIndex === image.pageIndex) {
+        // Images sit at the head of their page: before the page's first paragraph.
+        target = index;
+        break;
+      }
+    }
+    const list = insertions.get(target) ?? [];
+    list.push(image);
+    insertions.set(target, list);
+  }
+
+  const lines: string[] = [];
+  const paragraphLine: number[] = [];
+  const imageLines = new Map<string, number>();
+  for (let index = 0; index <= paragraphs.length; index += 1) {
+    for (const image of insertions.get(index) ?? []) {
+      imageLines.set(image.id, lines.length);
+      lines.push(imageLine(image.id));
+    }
+    if (index < paragraphs.length) {
+      paragraphLine[index] = lines.length;
+      lines.push(paragraphs[index]);
+    }
+  }
+  return { lines, paragraphLine, imageLines };
+}
+
+function headingKey(value: string): string {
+  return value
+    .replace(/^[\s　]+|[\s　]+$/g, '')
+    .replace(/^[○●◎◯■□◆◇▲△▼▽※・*＊#＃]+/, '')
+    .replace(/[\s　]+/g, ' ')
+    .trim();
+}
+
+/**
+ * Some PDFs point several bookmarks at one page, collapsing a section into its neighbour. When the
+ * chapter title appears as a short heading line near the mapped position, prefer that line so both
+ * sections stay reachable in the reader.
+ */
+function refineChapterStarts(chapters: ImportedChapter[], lines: string[]): ImportedChapter[] {
+  if (!chapters.length) return chapters;
+  const keys = lines.map(headingKey);
+  const refined = chapters.map(chapter => ({ ...chapter }));
+  for (let index = 0; index < refined.length; index += 1) {
+    const chapter = refined[index];
+    const key = headingKey(chapter.title);
+    if (!key) continue;
+    const mapped = chapter.startLine;
+    const previous = index > 0 ? refined[index - 1].startLine : -1;
+    const next = index + 1 < refined.length ? chapters[index + 1].startLine : lines.length;
+    const from = Math.max(previous + 1, mapped - 12, 0);
+    const to = Math.min(next - 1, mapped + 12, lines.length - 1);
+    let best = -1;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (let line = from; line <= to; line += 1) {
+      if (keys[line] !== key) continue;
+      const distance = Math.abs(line - mapped);
+      if (distance < bestDistance) {
+        best = line;
+        bestDistance = distance;
+      }
+    }
+    if (best >= 0) chapter.startLine = best;
+  }
+  return refined;
+}
+
 export async function importPdf(
   data: ArrayBuffer,
   fileName: string,
   loader?: PdfLoader,
+  options: PdfImportOptions = {},
 ): Promise<ImportedBook> {
-  const doc: PdfDocumentLike = !loader
-    ? await defaultLoadPdf(data)
-    : typeof loader === 'function'
-      ? await loader(data)
-      : loader;
+  report(options, { stage: 'reading', current: 0 });
+
+  let doc: PdfDocumentLike;
+  try {
+    doc = !loader
+      ? await defaultLoadPdf(data, options.password)
+      : typeof loader === 'function'
+        ? await loader(data)
+        : loader;
+  } catch (error) {
+    throw toImportError(error);
+  }
 
   const visualLines: VisualLine[] = [];
   let nonWhitespaceCount = 0;
   // Source layout measures: the first page's size, plus how much of the text is set in vertical fonts.
   let pageSize: { width: number; height: number } | null = null;
+  const pageSizes = new Map<number, { width: number; height: number }>();
   let verticalCharCount = 0;
   let textCharCount = 0;
   const verticalGlyphWidths: number[] = [];
+  let firstPage: PdfPageLike | null = null;
+  const extractedImages: PdfImageItem[] = [];
+  const seenImages = new Set<string>();
+  let imagesFailed = 0;
+
+  const canRenderCover = Boolean(options.renderCover)
+    || (typeof document !== 'undefined');
 
   for (let pageNum = 1; pageNum <= doc.numPages; pageNum += 1) {
+    throwIfAborted(options.signal);
     const pageIndex = pageNum - 1;
+    report(options, { stage: 'text', current: pageNum, total: doc.numPages });
     const page = await doc.getPage(pageNum);
-    if (pageNum === 1) pageSize = readPageSize(page);
+    if (pageNum === 1) {
+      firstPage = page;
+      pageSize = readPageSize(page);
+    }
+    const pageViewportSize = readPageSize(page);
+    if (pageViewportSize) pageSizes.set(pageIndex, pageViewportSize);
+
     const content = await page.getTextContent({ includeMarkedContent: true });
     const styles: Record<string, PdfTextStyleLike> = content.styles ?? {};
     let currentItems: PdfTextItem[] = [];
+    let pageChars = 0;
     const mcStack: { actualText: string | null; consumed: boolean }[] = [];
 
     const flushVisualLine = () => {
@@ -452,6 +723,7 @@ export async function importPdf(
       }
       const charCount = str.replace(/\s+/g, '').length;
       nonWhitespaceCount += charCount;
+      pageChars += charCount;
       // Vertical detection is per font: a CJK vertical font renders glyphs rotated 90° via its own metrics.
       const isVerticalFont = Boolean(item.fontName && styles[item.fontName]?.vertical === true);
       if (charCount > 0) {
@@ -487,12 +759,50 @@ export async function importPdf(
       }
     }
     flushVisualLine();
+
+    // Illustration pages are the ones with little or no text; a text-heavy page's figures are rare
+    // enough that skipping operator-list work there keeps a 1000-page novel import quick.
+    if (pageChars < 500 && !(pageIndex === 0 && canRenderCover)) {
+      throwIfAborted(options.signal);
+      report(options, { stage: 'images', current: pageIndex + 1, total: doc.numPages });
+      const extracted = await extractPageImages(page, pageIndex, pageViewportSize, {
+        signal: options.signal,
+        encodeImage: options.encodeImage,
+        ops: options.ops,
+        pageTextChars: pageChars,
+        seen: seenImages,
+      });
+      extractedImages.push(...extracted.images);
+      imagesFailed += extracted.failed;
+    }
+    if (page !== firstPage) {
+      try {
+        page.cleanup?.();
+      } catch {
+        // A page that cannot release its resources must not fail the import.
+      }
+    }
   }
 
   const minChars = Math.max(30, doc.numPages * 15);
   if (nonWhitespaceCount < minChars) {
-    throw new ScannedPdfError('这是扫描版 PDF，没有可提取的文字');
+    throw new ScannedPdfError();
   }
+
+  // Measure body type away from the outer margins: a short page can carry more running-head and
+  // folio lines than body lines, and counting those would make the body look smaller than it is.
+  const pageHeightForCleanup = bodyGlyphHeight(
+    visualLines
+      .filter(line => {
+        if (line.rotated || line.height <= 0) return false;
+        const size = pageSizes.get(line.pageIndex);
+        if (!size) return true;
+        return line.y <= size.height * 0.94 && line.y >= size.height * 0.06;
+      })
+      .map(line => line.height),
+  );
+  const cleaned = stripRunningHeads(visualLines, pageSizes, pageHeightForCleanup);
+  const linesForAssembly = cleaned.lines;
 
   // A tategaki page drawn with a horizontal font arrives as one glyph per item, so the paragraph
   // joiner would otherwise turn every character into its own line. Rebuild the columns first:
@@ -501,8 +811,8 @@ export async function importPdf(
   const logicalLines: VisualLine[] = [];
   const verticalTop = new Map<number, number>();
   const verticalStep = new Map<number, number>();
-  for (const pageIndex of [...new Set(visualLines.map(line => line.pageIndex))]) {
-    const pageLines = visualLines.filter(line => line.pageIndex === pageIndex);
+  for (const pageIndex of [...new Set(linesForAssembly.map(line => line.pageIndex))]) {
+    const pageLines = linesForAssembly.filter(line => line.pageIndex === pageIndex);
     const pageHeights = pageLines.filter(line => !line.rotated && line.height > 0).map(line => line.height);
     const bodyHeight = bodyGlyphHeight(pageHeights);
     const tolerance = Math.max(1, bodyHeight * 0.25);
@@ -600,18 +910,32 @@ export async function importPdf(
     }
     : undefined;
 
+  const headings = findHeadingLines(logicalLines, paragraphHeight);
   const paragraphs: string[] = [];
+  const paragraphFirst: { pageIndex: number; y: number }[] = [];
   const firstParaStartingOnPage = new Map<number, number>();
   const firstParaTouchingPage = new Map<number, number>();
+  const autoChapterStarts: ImportedChapter[] = [];
   let prevLine: VisualLine | null = null;
 
   for (const line of logicalLines) {
+    const heading = headings.get(line);
     let startNewParagraph = false;
     if (!prevLine) {
+      startNewParagraph = true;
+    } else if (heading) {
+      // A chapter title always starts its own line, even when the previous line has no closing punctuation.
+      startNewParagraph = true;
+    } else if (headings.has(prevLine)) {
+      // Body text after a heading always starts a new paragraph, even without punctuation.
       startNewParagraph = true;
     } else if (PARA_START_RE.test(line.text)) {
       startNewParagraph = true;
     } else if (PARA_END_RE.test(prevLine.text)) {
+      startNewParagraph = true;
+    } else if (line.vertical !== prevLine.vertical || line.rotated !== prevLine.rotated) {
+      // A horizontal title/author block and tategaki body text never share a paragraph. Joining them
+      // used to glue a title-page author name onto the first column of the copyright page.
       startNewParagraph = true;
     } else if (line.vertical && prevLine.vertical) {
       // Tategaki columns: a blank column on the same page is a paragraph gap, and a column that
@@ -646,6 +970,8 @@ export async function importPdf(
     if (startNewParagraph) {
       const paraIndex = paragraphs.length;
       paragraphs.push(line.text);
+      paragraphFirst.push({ pageIndex: line.pageIndex, y: line.y });
+      if (heading) autoChapterStarts.push({ title: heading.title, startLine: paraIndex, level: heading.level, page: line.pageIndex + 1 });
       if (!firstParaStartingOnPage.has(line.pageIndex)) {
         firstParaStartingOnPage.set(line.pageIndex, paraIndex);
       }
@@ -657,7 +983,7 @@ export async function importPdf(
       const currentPara = paragraphs[paraIndex];
       const prevChar = currentPara[currentPara.length - 1] || '';
       const nextChar = line.text[0] || '';
-      const sep = ASCII_ALNUM_RE.test(prevChar) && ASCII_ALNUM_RE.test(nextChar) ? ' ' : '';
+      const sep = asciiJoin(prevChar, nextChar);
       paragraphs[paraIndex] = currentPara + sep + line.text;
       if (!firstParaTouchingPage.has(line.pageIndex)) {
         firstParaTouchingPage.set(line.pageIndex, paraIndex);
@@ -669,59 +995,185 @@ export async function importPdf(
 
   const extractedChars = paragraphs.reduce((sum, para) => sum + para.replace(/\s+/g, '').length, 0);
   if (extractedChars < minChars) {
-    throw new ScannedPdfError('这是扫描版 PDF，没有可提取的文字');
+    throw new ScannedPdfError();
   }
 
-  const fallbackTitle = stripExtension(fileName);
+  const fallbackTitle = cleanDownloadTitle(stripExtension(fileName));
   let title = fallbackTitle;
   let author = '';
+  let description = '';
+  let language = '';
+  let publisher = '';
+  let publishedAt = '';
+  let identifier = '';
   try {
     const metadata = await doc.getMetadata();
-    const rawTitle = sanitizeText(metadata?.info?.Title ?? '').trim();
+    const rawTitle = cleanDownloadTitle(sanitizeText(metadata?.info?.Title ?? '').trim());
     if (rawTitle && !isLikelyFilePath(rawTitle)) {
       title = rawTitle;
     }
     author = sanitizeText(metadata?.info?.Author ?? '').trim();
+    description = sanitizeText(metadata?.info?.Subject ?? '').trim();
+    publishedAt = parsePdfDate(metadata?.info?.CreationDate) ?? '';
+    language = xmpValue(metadata?.metadata, 'dc:language') || sanitizeText(metadata?.info?.Language ?? '').trim();
+    publisher = xmpValue(metadata?.metadata, 'dc:publisher');
+    identifier = xmpValue(metadata?.metadata, 'dc:identifier');
+    if (!publishedAt) publishedAt = parsePdfDate(xmpValue(metadata?.metadata, 'dc:date')) ?? '';
+    if (!description) description = xmpValue(metadata?.metadata, 'dc:description');
   } catch {
     // Ignore metadata failures and keep fallback title/author.
   }
 
-  const chapters: { title: string; startLine: number }[] = [];
+  // Outline chapters, depth preserved. A parent without a destination promotes its children.
+  const outlineChapters: ImportedChapter[] = [];
   try {
     const outline = await doc.getOutline();
-    if (Array.isArray(outline)) {
-      for (const item of outline) {
+    const collect = async (items: PdfOutlineItem[], level: number): Promise<void> => {
+      for (const item of items) {
         const chapterTitle = sanitizeText(item?.title ?? '').trim();
-        if (!chapterTitle) continue;
-        try {
-          let destArray: unknown[] | null = null;
-          if (typeof item.dest === 'string') {
-            destArray = await doc.getDestination(item.dest);
-          } else if (Array.isArray(item.dest)) {
-            destArray = item.dest;
+        let pushed = false;
+        if (chapterTitle) {
+          try {
+            let destArray: unknown[] | null = null;
+            if (typeof item.dest === 'string') {
+              destArray = await doc.getDestination(item.dest);
+            } else if (Array.isArray(item.dest)) {
+              destArray = item.dest;
+            }
+            if (Array.isArray(destArray) && destArray.length > 0) {
+              const pageIndex = await doc.getPageIndex(destArray[0]);
+              const startLine = firstParaStartingOnPage.get(pageIndex) ?? firstParaTouchingPage.get(pageIndex);
+              if (startLine !== undefined) {
+                outlineChapters.push({
+                  title: chapterTitle,
+                  startLine,
+                  level: Math.min(2, level),
+                  page: pageIndex + 1,
+                });
+                pushed = true;
+              }
+            }
+          } catch {
+            // Ignore unresolvable outline destinations.
           }
-          if (!Array.isArray(destArray) || destArray.length === 0) continue;
-          const pageIndex = await doc.getPageIndex(destArray[0]);
-          const startLine =
-            firstParaStartingOnPage.get(pageIndex) ?? firstParaTouchingPage.get(pageIndex);
-          if (startLine === undefined) continue;
-          chapters.push({ title: chapterTitle, startLine });
-        } catch {
-          // Ignore unresolvable outline destinations.
+        }
+        if (item.items?.length) {
+          await collect(item.items, pushed ? Math.min(2, level + 1) : level);
         }
       }
-    }
+    };
+    if (Array.isArray(outline)) await collect(outline, 0);
   } catch {
     // Ignore outline failures.
   }
 
+  report(options, { stage: 'chapters', current: 1, total: 1 });
+  const warnings: ImportWarning[] = [];
+  const chapters = outlineChapters.length > 0
+    ? outlineChapters
+    : autoChapterStarts.length >= 2
+      ? autoChapterStarts
+      : [];
+  if (outlineChapters.length === 0 && autoChapterStarts.length >= 2) {
+    warnings.push({ code: 'auto-chapters', count: autoChapterStarts.length });
+  }
+  if (cleaned.removed > 0) {
+    warnings.push({ code: 'running-heads-removed', count: cleaned.removed });
+  }
+
+  // Cover: render page 1. A rendered cover replaces page-1 image extraction, so a full-page cover
+  // scan is not stored twice.
+  let cover: EncodedImage | undefined;
+  if (firstPage) {
+    report(options, { stage: 'cover', current: 1, total: 1 });
+    try {
+      const encoder = options.renderCover ?? defaultCoverEncoder;
+      const rendered = await encoder(firstPage);
+      if (rendered) cover = rendered;
+    } catch {
+      // A cover is nice to have; a render failure never fails the import.
+    } finally {
+      try {
+        firstPage.cleanup?.();
+      } catch {
+        // Best effort: the page's bitmaps are already encoded or no longer needed.
+      }
+    }
+  }
+  if (!cover) warnings.push({ code: 'missing-cover' });
+
+  // Image lines use the shared `￼img-N` shape, so ids are renumbered across pages.
+  extractedImages.forEach((image, index) => {
+    image.id = `img-${index + 1}`;
+  });
+  // Illustrations are inserted at the head of their page; chapter and page mappings shift by the
+  // number of image lines that precede them.
+  const images: ImportedBookImage[] = extractedImages.map(image => ({
+    id: image.id,
+    mime: image.mime,
+    data: image.data,
+  }));
+  if (imagesFailed > 0) warnings.push({ code: 'images-skipped', count: imagesFailed });
+  const inserted = insertImages(paragraphs, paragraphFirst, extractedImages);
+  const text = inserted.lines.join('\n');
+  const mappedChapters = chapters.map(chapter => ({
+    ...chapter,
+    startLine: inserted.paragraphLine[chapter.startLine] ?? chapter.startLine,
+  }));
+  const finalChapters = refineChapterStarts(mappedChapters, inserted.lines);
+
+  // A page can open with an illustration and have no text of its own (cover, colour page, contents
+  // scan). Mapping those pages to their first image line keeps the reader's original-page HUD correct
+  // for image lines instead of showing nothing until the first text page.
+  const firstImageLine = new Map<number, number>();
+  for (const image of extractedImages) {
+    const line = inserted.imageLines.get(image.id);
+    if (line === undefined) continue;
+    const current = firstImageLine.get(image.pageIndex);
+    if (current === undefined || line < current) firstImageLine.set(image.pageIndex, line);
+  }
+  const pageStarts: number[] = [];
+  let lastStart = -1;
+  for (let pageIndex = 0; pageIndex < doc.numPages; pageIndex += 1) {
+    const paragraphIndex = firstParaTouchingPage.get(pageIndex);
+    const textLine = paragraphIndex === undefined ? undefined : inserted.paragraphLine[paragraphIndex];
+    const imageLine = firstImageLine.get(pageIndex);
+    const raw = textLine === undefined
+      ? imageLine
+      : imageLine === undefined ? textLine : Math.min(textLine, imageLine);
+    // A paragraph can span a page break; keep the mapping non-decreasing so it survives validation.
+    const start = raw === undefined ? -1 : Math.max(raw, lastStart);
+    if (start >= 0) lastStart = start;
+    pageStarts.push(start);
+  }
+
+  let pageLabels: string[] | undefined;
+  try {
+    const labels = await doc.getPageLabels?.();
+    if (Array.isArray(labels) && labels.length === doc.numPages) {
+      pageLabels = labels.map(label => sanitizeText(String(label ?? '')).slice(0, 40));
+    }
+  } catch {
+    // Page labels are optional.
+  }
+
+  report(options, { stage: 'done', current: 1, total: 1 });
   return {
     title,
     author,
-    text: paragraphs.join('\n'),
+    text,
     overrides: [],
-    chapters,
-    images: [],
+    chapters: finalChapters,
+    images,
+    warnings,
+    ...(description ? { description } : {}),
+    ...(language ? { language } : {}),
+    ...(publisher ? { publisher } : {}),
+    ...(publishedAt ? { publishedAt } : {}),
+    ...(identifier ? { identifier } : {}),
     ...(pdfLayout ? { pdfLayout } : {}),
+    ...(pageStarts.length ? { pageStarts } : {}),
+    ...(pageLabels ? { pageLabels } : {}),
+    ...(cover ? { cover } : {}),
   };
 }

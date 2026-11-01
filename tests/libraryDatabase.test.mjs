@@ -506,3 +506,83 @@ test('EPUB front matter before the first TOC entry gets its own chapter instead 
   const chapters = Object.values(db.books)[0].chapters;
   assert.deepEqual(chapters.map(c => [c.startLine, c.endLine]), [[0, 2], [3, 6], [7, 9]]);
 });
+
+test('导入元数据、章节层级、页码与 allowDuplicate 在存取和校验后仍然保留', async () => {
+  const content = '一行目\n二行目\n三行目';
+  const created = await upsertBook(emptyLibraryDatabase(), {
+    bookId: 'book:pdf', title: '原書', author: '著者', content, format: 'pdf',
+    language: 'ja', publisher: '出版社', publishedAt: '2020-01-02', series: '系列', seriesIndex: '2', identifier: 'ISBN 123',
+    chapters: [
+      { title: '第一章', startLine: 0, level: 0, page: 1 },
+      { title: '第一節', startLine: 1, level: 1, page: 2 },
+      { title: '第二章', startLine: 2, level: 0, page: 3 },
+    ],
+    pageStarts: [0, 1, 2], pageLabels: ['i', '1', '2'], now: 100,
+  });
+  const book = created.books['book:pdf'];
+  assert.equal(book.language, 'ja');
+  assert.equal(book.publisher, '出版社');
+  assert.equal(book.publishedAt, '2020-01-02');
+  assert.equal(book.series, '系列');
+  assert.equal(book.seriesIndex, '2');
+  assert.equal(book.identifier, 'ISBN 123');
+  assert.deepEqual(book.pageStarts, [0, 1, 2]);
+  assert.deepEqual(book.pageLabels, ['i', '1', '2']);
+  assert.equal(book.chapters.length, 3);
+  assert.equal(book.chapters[1].level, 1);
+  assert.equal(book.chapters[1].page, 2);
+  // Level 0 is the default and stays absent; it still reads as top level.
+  assert.equal(book.chapters[0].level, undefined);
+  assert.equal(book.chapters[0].page, 1);
+
+  const validated = validateLibraryDatabase(created);
+  const restored = validated.books['book:pdf'];
+  assert.equal(restored.language, 'ja');
+  assert.equal(restored.publisher, '出版社');
+  assert.deepEqual(restored.pageStarts, [0, 1, 2]);
+  assert.deepEqual(restored.pageLabels, ['i', '1', '2']);
+  assert.equal(restored.chapters[1].level, 1);
+  assert.equal(restored.chapters[1].page, 2);
+
+  const progressed = updateReadingProgress(validated, 'book:pdf', { chapterIndex: 1, lineIndex: 2, percentage: 90 }, 200);
+  const bookmarked = addBookmark(progressed, 'book:pdf', { chapterIndex: 1, lineIndex: 2, label: '印', snippet: '三行目', id: 'bookmark:pdf', createdAt: 201 });
+  const merged = await upsertBook(bookmarked, {
+    bookId: 'book:pdf', title: '原書（改）', content, fingerprint: book.fingerprint, format: 'pdf',
+    language: 'ja', now: 300,
+  });
+  assert.equal(Object.keys(merged.books).length, 1);
+  assert.equal(merged.books['book:pdf'].title, '原書（改）');
+  assert.equal(merged.books['book:pdf'].readingProgress.lineIndex, 2);
+  assert.equal(merged.books['book:pdf'].readingProgress.percentage, 90);
+  assert.equal(merged.books['book:pdf'].bookmarks.length, 1);
+  assert.deepEqual(merged.books['book:pdf'].pageStarts, [0, 1, 2]);
+  assert.equal(merged.books['book:pdf'].chapters.length, 3);
+
+  const both = await upsertBook(merged, {
+    title: '原書 副本', content, fingerprint: book.fingerprint, format: 'pdf', allowDuplicate: true, now: 400,
+  });
+  assert.equal(Object.keys(both.books).length, 2);
+  assert.notEqual(Object.keys(both.books).find(id => id !== 'book:pdf'), undefined);
+  assert.equal(both.books['book:pdf'].readingProgress.lineIndex, 2);
+});
+
+test('pageStarts 只接受合法且单调的行号，pageLabels 长度需匹配', async () => {
+  const content = 'a\nb\nc';
+  const base = {
+    title: '页映射', content, format: 'pdf', chapters: [{ title: '全文', startLine: 0 }],
+  };
+  const good = await upsertBook(emptyLibraryDatabase(), { ...base, pageStarts: [0, -1, 2], pageLabels: ['i', '', '3'] });
+  assert.deepEqual(good.books[Object.keys(good.books)[0]].pageStarts, [0, -1, 2]);
+
+  const nonMonotonic = await upsertBook(emptyLibraryDatabase(), { ...base, pageStarts: [2, 1] });
+  assert.equal(nonMonotonic.books[Object.keys(nonMonotonic.books)[0]].pageStarts, undefined);
+  const outOfRange = await upsertBook(emptyLibraryDatabase(), { ...base, pageStarts: [0, 9] });
+  assert.equal(outOfRange.books[Object.keys(outOfRange.books)[0]].pageStarts, undefined);
+
+  // A page mapping belongs to its exact text; editing the text drops it.
+  const moved = await upsertBook(good, {
+    bookId: Object.keys(good.books)[0], title: '页映射', content: 'a\nb\nc\nd', format: 'pdf',
+    chapters: [{ title: '全文', startLine: 0 }],
+  });
+  assert.equal(moved.books[Object.keys(good.books)[0]].pageStarts, undefined);
+});

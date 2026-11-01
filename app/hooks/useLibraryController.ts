@@ -6,6 +6,8 @@ import type { EditingTokenState } from '../components/RubyCorrectionModal';
 import type { SrtCue } from '../utils/srt';
 import { withLfLineKeys } from '../utils/inlineRuby';
 import { parseBookFile } from '../utils/bookImport';
+import { buildImportPreview, importEditToUpsertInput, importStageText } from '../utils/importPreview';
+import { useImportQueue, type ImportCommitArgs, type ImportQueueSummary } from './useImportQueue';
 import { logEvent } from '../utils/appLog';
 import { deleteBookAssets, downscaleCover, putBookAssets } from '../utils/assetStore';
 import type { ToastState } from '../components/GlassToast';
@@ -237,61 +239,96 @@ export function useLibraryController({
     loadBookIntoWorkspace(book, 'reader');
   };
 
-  const importLibraryFiles = async (files: FileList, folderId?: string | null) => {
-    const list = Array.from(files);
-    let lastBook: BookItem | null = null;
-    let lastDetail = '';
-    for (const file of list) {
-      setImportToast({ kind: 'progress', title: fill(t.importingFile, { name: file.name }) });
-      try {
-        const parsed = await parseBookFile(file);
-        const fingerprint = await fingerprintText(parsed.content);
-        const coverUrl = parsed.cover ? await downscaleCover(parsed.cover).catch(() => undefined) : undefined;
-        const next = await upsertBook(libraryDbRef.current, {
-          title: parsed.title,
-          author: parsed.author,
-          content: parsed.content,
-          fingerprint,
-          category: parsed.category,
-          ...(folderId ? { folderId } : {}),
-          format: parsed.format,
-          sourceOverrides: parsed.sourceOverrides,
-          srtCues: parsed.srtCues,
-          chapters: parsed.chapters,
-          ...(parsed.pdfLayout ? { pdfLayout: parsed.pdfLayout } : {}),
-          ...(coverUrl ? { coverUrl } : {}),
-        });
-        const book = locateBook(next, null, fingerprint);
-        if (book && parsed.images.length) await putBookAssets(book.bookId, parsed.images);
-        libraryDbRef.current = next;
-        setLibraryDb(next);
-        if (book) lastBook = book;
-        lastDetail = [
-          parsed.chapters && parsed.chapters.length > 1 ? fill(t.importChapters, { count: parsed.chapters.length }) : '',
-          parsed.images.length ? fill(t.importImages, { count: parsed.images.length }) : '',
-          parsed.format === 'epub' && parsed.sourceOverrides.length ? fill(t.importRubies, { count: parsed.sourceOverrides.length }) : '',
-        ].filter(Boolean).join(' · ');
-      } catch (error) {
-        console.error('[library] import failed', error);
-        logEvent('error', 'import', `${file.name.split('.').pop()} import failed: ${error instanceof Error ? `${error.name} ${error.message}` : String(error)}`);
-        setImportToast({
-          kind: 'error',
-          title: fill(t.importFailed, { name: file.name }),
-          detail: error instanceof Error ? error.message : String(error),
-          action: { label: t.importOk, onClick: () => undefined },
-        });
+  /**
+   * Write one queued parse result. Merge reuses the existing book (and therefore its progress,
+   * bookmarks and notes) and replaces its illustration assets; "keep both" always allocates a fresh id.
+   */
+  const commitParsedImport = async ({
+    parsed, fingerprint, edit, duplicate, duplicateMode,
+  }: ImportCommitArgs): Promise<BookItem> => {
+    const keepBoth = duplicateMode === 'keep-both' && Boolean(duplicate);
+    const generatedId = keepBoth ? `book:${crypto.randomUUID()}` : undefined;
+    const coverUrl = parsed.cover ? await downscaleCover(parsed.cover).catch(() => undefined) : undefined;
+    const next = await upsertBook(libraryDbRef.current, importEditToUpsertInput(parsed, edit, fingerprint, {
+      ...(duplicateMode === 'merge' && duplicate ? { bookId: duplicate.bookId } : {}),
+      ...(generatedId ? { bookId: generatedId, allowDuplicate: true } : {}),
+      ...(coverUrl ? { coverUrl } : {}),
+    }));
+    const bookId = generatedId
+      ?? (duplicateMode === 'merge' && duplicate ? duplicate.bookId : undefined);
+    const book = (bookId ? next.books[bookId] : undefined)
+      ?? Object.values(next.books).find(candidate => candidate.fingerprint === fingerprint);
+    if (!book) throw new Error('Imported book was not written to the library');
+    if (duplicateMode === 'merge' && duplicate) await deleteBookAssets(book.bookId);
+    if (parsed.images.length) await putBookAssets(book.bookId, parsed.images);
+    libraryDbRef.current = next;
+    setLibraryDb(next);
+    setActiveBookId(book.bookId);
+    return book;
+  };
+
+  const retryImportRef = useRef<() => void>(() => undefined);
+  const importQueue = useImportQueue({
+    parse: parseBookFile,
+    fingerprint: fingerprintText,
+    findDuplicate: fingerprint => Object.values(libraryDbRef.current.books).find(book => book.fingerprint === fingerprint) ?? null,
+    buildPreview: (file, parsed, duplicate, folderId) => buildImportPreview(file, parsed, {
+      duplicate,
+      folders: Object.values(libraryDbRef.current.folders),
+      folderId,
+    }),
+    commit: commitParsedImport,
+    onCommitted: (book, item, single) => {
+      if (!single || !item.parsed) return;
+      const detail = [
+        item.parsed.chapters && item.parsed.chapters.length > 1 ? fill(t.importChapters, { count: item.parsed.chapters.length }) : '',
+        item.parsed.images.length ? fill(t.importImages, { count: item.parsed.images.length }) : '',
+        item.parsed.format === 'epub' && item.parsed.sourceOverrides.length ? fill(t.importRubies, { count: item.parsed.sourceOverrides.length }) : '',
+      ].filter(Boolean).join(' · ');
+      setImportToast({
+        kind: 'done',
+        title: fill(t.importDone, { title: book.title }),
+        ...(detail ? { detail } : {}),
+        action: { label: t.importRead, onClick: () => loadBookIntoWorkspace(book, 'reader') },
+      });
+    },
+    onFinished: (summary: ImportQueueSummary) => {
+      if (summary.total <= 1) {
+        if (summary.cancelled > 0) setImportToast({ kind: 'info', title: t.importPreviewErrorCancelled });
         return;
       }
+      const skipped = summary.skipped + summary.cancelled;
+      setImportToast({
+        kind: summary.failed > 0 ? 'error' : 'done',
+        title: fill(t.importPreviewQueueDone, { success: summary.success, failed: summary.failed, skipped }),
+        ...(summary.failedNames.length ? { detail: fill(t.importPreviewQueueFailedDetail, { names: summary.failedNames.join('、') }) } : {}),
+        ...(summary.failed > 0 ? { action: { label: t.importPreviewQueueRetry, onClick: () => retryImportRef.current() } } : {}),
+      });
+    },
+    onProgress: current => {
+      setImportToast({
+        kind: 'progress',
+        title: fill(t.importPreviewQueueProgress, {
+          current: current.index,
+          total: current.total,
+          name: current.fileName,
+          stage: importStageText(t, current.stage),
+        }),
+        ...(current.percent !== undefined ? { detail: `${current.percent}%` } : {}),
+      });
+    },
+    // The preview/password sheet replaces the progress toast while the queue is paused.
+    onReview: next => { if (next) setImportToast(null); },
+  });
+  useEffect(() => { retryImportRef.current = importQueue.retryFailed; }, [importQueue.retryFailed]);
+
+  const importLibraryFiles = async (files: FileList, folderId?: string | null) => {
+    const list = Array.from(files);
+    if (!list.length || importQueue.isRunning) return;
+    if (list.length === 1) {
+      setImportToast({ kind: 'progress', title: fill(t.importingFile, { name: list[0].name }) });
     }
-    if (!lastBook) { setImportToast(null); return; }
-    const book = lastBook;
-    setActiveBookId(book.bookId);
-    setImportToast({
-      kind: 'done',
-      title: fill(t.importDone, { title: book.title }),
-      detail: lastDetail || undefined,
-      action: { label: t.importRead, onClick: () => loadBookIntoWorkspace(book, 'reader') },
-    });
+    importQueue.enqueue(list, folderId ?? null);
   };
 
   const createOrUpdateBook = async (input: { bookId?: string; title: string; author?: string; category?: BookCategory; folderId?: string | null; coverTheme?: BookCoverTheme; content: string }) => {
@@ -461,6 +498,7 @@ export function useLibraryController({
     handleCreateFolder, handleRenameFolder, handleDeleteFolder, handleMoveBook,
     libraryToast, setLibraryToast, importToast, setImportToast, showImportMenu, setShowImportMenu, editorPixivUrl, setEditorPixivUrl, isPixivImporting,
     loadBookIntoWorkspace, handleSaveToLibrary, handleOpenInReader, importLibraryFiles, createOrUpdateBook,
+    importReview: importQueue.review, resolveImportReview: importQueue.resolveReview, importQueueRunning: importQueue.isRunning,
     exportLibraryJson, importLibraryJson, restoreStarterBooks, handleToggleFavorite, handleUpdateBookMetadata,
     handleImportPixivNovel, handleDeleteBook, handleReaderProgress, handleAddBookmark, handleRemoveBookmark,
   };

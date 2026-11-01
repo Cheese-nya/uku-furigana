@@ -441,6 +441,78 @@ export interface Translations {
   importFailed: string;
   importRead: string;
   importOk: string;
+
+  importPreviewTitle: string;
+  importPreviewSubtitle: string;
+  importPreviewNoCover: string;
+  importPreviewStatChars: string;
+  importPreviewStatLines: string;
+  importPreviewStatChapters: string;
+  importPreviewStatImages: string;
+  importPreviewStatRubies: string;
+  importPreviewStatPages: string;
+  importPreviewToc: string;
+  importPreviewTocMore: string;
+  importPreviewSample: string;
+  importPreviewWarnings: string;
+  importPreviewDuplicate: string;
+  importPreviewDuplicateDetail: string;
+  importPreviewMerge: string;
+  importPreviewKeepBoth: string;
+  importPreviewImport: string;
+  importPreviewSkip: string;
+  importPreviewCancel: string;
+  importPreviewFolder: string;
+  importPreviewNoFolder: string;
+  importPreviewTitleField: string;
+  importPreviewAuthorField: string;
+  importPreviewCategory: string;
+  importPreviewAdvanced: string;
+  importPreviewLanguage: string;
+  importPreviewPublisher: string;
+  importPreviewPublishedAt: string;
+  importPreviewSeries: string;
+  importPreviewSeriesIndex: string;
+  importPreviewIdentifier: string;
+  importPreviewLargeFile: string;
+  importPreviewPasswordTitle: string;
+  importPreviewPasswordBody: string;
+  importPreviewPasswordPlaceholder: string;
+  importPreviewPasswordWrong: string;
+  importPreviewPasswordSubmit: string;
+  importPreviewErrorTitle: string;
+  importPreviewRetry: string;
+  importPreviewQueueProgress: string;
+  importPreviewQueueDone: string;
+  importPreviewQueueFailedDetail: string;
+  importPreviewQueueRetry: string;
+  importPreviewStageReading: string;
+  importPreviewStageText: string;
+  importPreviewStageImages: string;
+  importPreviewStageChapters: string;
+  importPreviewStageCover: string;
+  importPreviewStageDone: string;
+  importPreviewPageShort: string;
+  importPreviewWarningAutoChapters: string;
+  importPreviewWarningRunningHeads: string;
+  importPreviewWarningFootnotesInline: string;
+  importPreviewWarningFixedLayout: string;
+  importPreviewWarningMissingCover: string;
+  importPreviewWarningImagesSkipped: string;
+  importPreviewWarningLowText: string;
+  importPreviewWarningUnknownImageFormat: string;
+  importPreviewErrorPasswordRequired: string;
+  importPreviewErrorPasswordWrong: string;
+  importPreviewErrorDrmProtected: string;
+  importPreviewErrorScannedPdf: string;
+  importPreviewErrorEmptyBook: string;
+  importPreviewErrorCorruptFile: string;
+  importPreviewErrorUnsupportedFormat: string;
+  importPreviewErrorOutOfMemory: string;
+  importPreviewErrorIo: string;
+  importPreviewErrorCancelled: string;
+  importPreviewErrorUnknown: string;
+  readerSourcePage: string;
   lookupDialog: string;
   lookupQuery: string;
   lookupNotFound: string;
@@ -991,6 +1063,78 @@ export const translations: Record<Locale, Translations> = {
     importFailed: '无法导入 {name}',
     importRead: '阅读',
     importOk: '知道了',
+
+    importPreviewTitle: '导入预览',
+    importPreviewSubtitle: '{format} · {size}',
+    importPreviewNoCover: '无封面',
+    importPreviewStatChars: '{count} 字',
+    importPreviewStatLines: '{count} 行',
+    importPreviewStatChapters: '{count} 章',
+    importPreviewStatImages: '{count} 插图',
+    importPreviewStatRubies: '{count} 注音',
+    importPreviewStatPages: '{count} 页',
+    importPreviewToc: '目录预览',
+    importPreviewTocMore: '另有 {count} 项',
+    importPreviewSample: '正文预览',
+    importPreviewWarnings: '导入提示',
+    importPreviewDuplicate: '书库已有《{title}》',
+    importPreviewDuplicateDetail: '文本完全相同。合并会保留阅读进度、书签和批注；保留两份会新建一本书。',
+    importPreviewMerge: '合并导入',
+    importPreviewKeepBoth: '保留两份',
+    importPreviewImport: '导入',
+    importPreviewSkip: '跳过这本',
+    importPreviewCancel: '取消导入',
+    importPreviewFolder: '文件夹',
+    importPreviewNoFolder: '顶层（不放入文件夹）',
+    importPreviewTitleField: '书名',
+    importPreviewAuthorField: '作者',
+    importPreviewCategory: '分类',
+    importPreviewAdvanced: '更多信息',
+    importPreviewLanguage: '语言',
+    importPreviewPublisher: '出版社',
+    importPreviewPublishedAt: '出版日期',
+    importPreviewSeries: '书系',
+    importPreviewSeriesIndex: '卷号',
+    importPreviewIdentifier: '标识符',
+    importPreviewLargeFile: '文件较大（{size}），导入可能需要一些时间。',
+    importPreviewPasswordTitle: '需要打开密码',
+    importPreviewPasswordBody: '这个 PDF 已加密。请输入打开密码后继续。',
+    importPreviewPasswordPlaceholder: 'PDF 密码',
+    importPreviewPasswordWrong: '密码不正确，请重新输入。',
+    importPreviewPasswordSubmit: '解锁并继续',
+    importPreviewErrorTitle: '导入遇到问题',
+    importPreviewRetry: '重试',
+    importPreviewQueueProgress: '第 {current}/{total} 本 · {name} · {stage}',
+    importPreviewQueueDone: '已导入 {success} 本 · 失败 {failed} 本 · 跳过 {skipped} 本',
+    importPreviewQueueFailedDetail: '失败：{names}',
+    importPreviewQueueRetry: '重试失败项',
+    importPreviewStageReading: '读取文件',
+    importPreviewStageText: '提取正文',
+    importPreviewStageImages: '提取插图',
+    importPreviewStageChapters: '整理目录',
+    importPreviewStageCover: '生成封面',
+    importPreviewStageDone: '完成',
+    importPreviewPageShort: 'p.{page}',
+    importPreviewWarningAutoChapters: '没有可用目录，已按标题自动切章',
+    importPreviewWarningRunningHeads: '已清理 {count} 处重复页眉/页脚',
+    importPreviewWarningFootnotesInline: '脚注保留在正文原位',
+    importPreviewWarningFixedLayout: '固定版式 EPUB：按图片页顺序导入，不提供整页阅读',
+    importPreviewWarningMissingCover: '没有找到封面',
+    importPreviewWarningImagesSkipped: '有 {count} 张图片无法解码，已跳过',
+    importPreviewWarningLowText: '正文文字较少，请确认不是扫描版',
+    importPreviewWarningUnknownImageFormat: '有图片格式无法识别，已跳过',
+    importPreviewErrorPasswordRequired: '这个 PDF 需要打开密码',
+    importPreviewErrorPasswordWrong: 'PDF 密码不正确',
+    importPreviewErrorDrmProtected: '文件受 DRM 保护，无法导入',
+    importPreviewErrorScannedPdf: '这是扫描版 PDF，没有可提取的文字',
+    importPreviewErrorEmptyBook: '文件里没有可读的正文',
+    importPreviewErrorCorruptFile: '文件损坏或格式不正确',
+    importPreviewErrorUnsupportedFormat: '不支持这种文件格式',
+    importPreviewErrorOutOfMemory: '内存不足，导入失败',
+    importPreviewErrorIo: '文件读取失败',
+    importPreviewErrorCancelled: '导入已取消',
+    importPreviewErrorUnknown: '导入失败',
+    readerSourcePage: '原书 p.{page}',
     lookupDialog: '查词',
     lookupQuery: '查询',
     lookupNotFound: '词典里没有找到这个词。可以长按选中更长或更短的一段再查。',
@@ -1537,6 +1681,78 @@ export const translations: Record<Locale, Translations> = {
     importFailed: 'Couldn’t import {name}',
     importRead: 'Read',
     importOk: 'OK',
+
+    importPreviewTitle: 'Import preview',
+    importPreviewSubtitle: '{format} · {size}',
+    importPreviewNoCover: 'No cover',
+    importPreviewStatChars: '{count} characters',
+    importPreviewStatLines: '{count} lines',
+    importPreviewStatChapters: '{count} chapters',
+    importPreviewStatImages: '{count} illustrations',
+    importPreviewStatRubies: '{count} readings',
+    importPreviewStatPages: '{count} pages',
+    importPreviewToc: 'Contents preview',
+    importPreviewTocMore: '{count} more',
+    importPreviewSample: 'Text preview',
+    importPreviewWarnings: 'Import notes',
+    importPreviewDuplicate: '“{title}” is already in your library',
+    importPreviewDuplicateDetail: 'The text is identical. Merge keeps reading progress, bookmarks and notes; Keep both adds a second book.',
+    importPreviewMerge: 'Merge',
+    importPreviewKeepBoth: 'Keep both',
+    importPreviewImport: 'Import',
+    importPreviewSkip: 'Skip this file',
+    importPreviewCancel: 'Cancel import',
+    importPreviewFolder: 'Folder',
+    importPreviewNoFolder: 'Top level (no folder)',
+    importPreviewTitleField: 'Title',
+    importPreviewAuthorField: 'Author',
+    importPreviewCategory: 'Category',
+    importPreviewAdvanced: 'More details',
+    importPreviewLanguage: 'Language',
+    importPreviewPublisher: 'Publisher',
+    importPreviewPublishedAt: 'Published',
+    importPreviewSeries: 'Series',
+    importPreviewSeriesIndex: 'Volume',
+    importPreviewIdentifier: 'Identifier',
+    importPreviewLargeFile: 'This file is large ({size}); importing may take a while.',
+    importPreviewPasswordTitle: 'Password required',
+    importPreviewPasswordBody: 'This PDF is encrypted. Enter its open password to continue.',
+    importPreviewPasswordPlaceholder: 'PDF password',
+    importPreviewPasswordWrong: 'That password is incorrect. Try again.',
+    importPreviewPasswordSubmit: 'Unlock and continue',
+    importPreviewErrorTitle: 'Import problem',
+    importPreviewRetry: 'Retry',
+    importPreviewQueueProgress: 'Book {current}/{total} · {name} · {stage}',
+    importPreviewQueueDone: 'Imported {success} · failed {failed} · skipped {skipped}',
+    importPreviewQueueFailedDetail: 'Failed: {names}',
+    importPreviewQueueRetry: 'Retry failed',
+    importPreviewStageReading: 'Reading file',
+    importPreviewStageText: 'Extracting text',
+    importPreviewStageImages: 'Extracting images',
+    importPreviewStageChapters: 'Building contents',
+    importPreviewStageCover: 'Rendering cover',
+    importPreviewStageDone: 'Done',
+    importPreviewPageShort: 'p.{page}',
+    importPreviewWarningAutoChapters: 'No contents found; chapters were inferred from headings',
+    importPreviewWarningRunningHeads: 'Removed {count} repeated running head/footer lines',
+    importPreviewWarningFootnotesInline: 'Footnotes stay inline with the text',
+    importPreviewWarningFixedLayout: 'Fixed-layout EPUB: imported in image-page order without a page reader',
+    importPreviewWarningMissingCover: 'No cover found',
+    importPreviewWarningImagesSkipped: '{count} images could not be decoded and were skipped',
+    importPreviewWarningLowText: 'Very little text was found; check that this is not a scanned book',
+    importPreviewWarningUnknownImageFormat: 'Some images had an unknown format and were skipped',
+    importPreviewErrorPasswordRequired: 'This PDF needs an open password',
+    importPreviewErrorPasswordWrong: 'The PDF password is incorrect',
+    importPreviewErrorDrmProtected: 'This file is DRM protected and cannot be imported',
+    importPreviewErrorScannedPdf: 'This is a scanned PDF with no extractable text',
+    importPreviewErrorEmptyBook: 'This file has no readable text',
+    importPreviewErrorCorruptFile: 'The file is damaged or malformed',
+    importPreviewErrorUnsupportedFormat: 'This file format is not supported',
+    importPreviewErrorOutOfMemory: 'Not enough memory to import this file',
+    importPreviewErrorIo: 'The file could not be read',
+    importPreviewErrorCancelled: 'Import cancelled',
+    importPreviewErrorUnknown: 'Import failed',
+    readerSourcePage: 'Source p.{page}',
     lookupDialog: 'Look up',
     lookupQuery: 'Looking up',
     lookupNotFound: 'Not found in the dictionaries. Long-press to select a longer or shorter piece and try again.',

@@ -175,7 +175,7 @@ test('importEpub handles cover detection, cover-page skipping, images, and dedup
   ];
   assert.equal(book.text, expectedLines.join('\n'));
   assert.match(expectedLines[2], IMAGE_LINE);
-  assert.deepEqual(book.chapters, [{ title: '第一章', startLine: 0 }]);
+  assert.deepEqual(book.chapters, [{ title: '第一章', startLine: 0, level: 0 }]);
 });
 
 test('importEpub resolves EPUB3 nav TOC chapters with fragments and deduplicates startLine', async () => {
@@ -237,9 +237,9 @@ test('importEpub resolves EPUB3 nav TOC chapters with fragments and deduplicates
 
   const book = await importEpub(buf, 'toc.epub', new DOMParser());
   assert.deepEqual(book.chapters, [
-    { title: '第一章', startLine: 0 },
-    { title: '第一節', startLine: 2 },
-    { title: '第二章後半', startLine: 5 },
+    { title: '第一章', startLine: 0, level: 0 },
+    { title: '第一節', startLine: 2, level: 0 },
+    { title: '第二章後半', startLine: 5, level: 0 },
   ]);
 });
 
@@ -291,8 +291,8 @@ test('importEpub falls back to NCX TOC and meta cover when EPUB2 format is used'
   const book = await importEpub(buf, 'epub2.epub', new DOMParser());
   assert.equal(book.cover?.mime, 'image/png');
   assert.deepEqual(book.chapters, [
-    { title: '序章', startLine: 0 },
-    { title: '本編', startLine: 2 },
+    { title: '序章', startLine: 0, level: 0 },
+    { title: '本編', startLine: 2, level: 0 },
   ]);
 });
 
@@ -350,7 +350,7 @@ test('importEpub rejects encrypted EPUBs and empty EPUBs', async () => {
 
   await assert.rejects(
     () => importEpub(encryptedBuf, 'drm.epub', new DOMParser()),
-    { message: '不支持加密的 EPUB' },
+    { code: 'drm-protected' },
   );
 
   const emptyBuf = await buildEpubBuffer({
@@ -364,7 +364,7 @@ test('importEpub rejects encrypted EPUBs and empty EPUBs', async () => {
 
   await assert.rejects(
     () => importEpub(emptyBuf, 'empty.epub', new DOMParser()),
-    { message: 'EPUB 中没有可读的正文' },
+    { code: 'empty-book' },
   );
 });
 
@@ -407,7 +407,7 @@ test('importEpub keeps gaiji inside the sentence, drops bouten/pagebreak/hidden 
   );
   assert.equal(book.images.length, 0);
   assert.deepEqual(book.overrides.map(o => o.surface), ['漢字']);
-  assert.deepEqual(book.chapters, [{ title: '第一章', startLine: 0 }]);
+  assert.deepEqual(book.chapters, [{ title: '第一章', startLine: 0, level: 0 }]);
 });
 
 test('importEpub accepts EPUBs whose only encryption is font obfuscation', async () => {
@@ -477,4 +477,152 @@ test('importEpub handles a light-novel style EPUB: contents page, footnotes, spa
   assert.equal(lines[book.chapters[2].startLine], '第一章　「魔術師」');
   // bouten dots are not readings; split ruby keeps one reading for the whole word
   assert.deepEqual(book.overrides.map(o => `${o.surface}:${o.reading}`), ['世界:せかい', '残酷:ざんこく', '知:し', '先生:せんせい', '魔術:まじゅつ']);
+});
+
+test('importEpub reads EPUB3 metadata, series refinements, identifier and fixed-layout warning', async () => {
+  const opf = `<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/" version="3.0" unique-identifier="uid">
+  <metadata>
+    <dc:title>系列の本</dc:title>
+    <dc:creator>著者名</dc:creator>
+    <dc:language>ja</dc:language>
+    <dc:publisher>出版社</dc:publisher>
+    <dc:date>2020-01-02</dc:date>
+    <dc:description>本の説明です。</dc:description>
+    <dc:identifier id="uid">urn:isbn:9784000000000</dc:identifier>
+    <meta property="belongs-to-collection" id="series-id">大きな系列</meta>
+    <meta refines="#series-id" property="collection-type">series</meta>
+    <meta refines="#series-id" property="group-position">3</meta>
+    <meta property="rendition:layout">pre-paginated</meta>
+  </metadata>
+  <manifest>
+    <item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="c1"/></spine>
+</package>`;
+  const buf = await buildEpubBuffer({
+    'OEBPS/content.opf': opf,
+    'OEBPS/c1.xhtml': `<html xmlns="http://www.w3.org/1999/xhtml"><body><p>本文です。</p></body></html>`,
+  });
+  const book = await importEpub(buf, 'meta.epub', new DOMParser());
+  assert.equal(book.title, '系列の本');
+  assert.equal(book.author, '著者名');
+  assert.equal(book.language, 'ja');
+  assert.equal(book.publisher, '出版社');
+  assert.equal(book.publishedAt, '2020-01-02');
+  assert.equal(book.description, '本の説明です。');
+  assert.equal(book.series, '大きな系列');
+  assert.equal(book.seriesIndex, '3');
+  assert.equal(book.identifier, 'urn:isbn:9784000000000');
+  assert.deepEqual(book.warnings.filter(w => w.code === 'fixed-layout'), [{ code: 'fixed-layout' }]);
+});
+
+test('importEpub keeps nested EPUB3 nav depth', async () => {
+  const opf = `<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/" version="3.0">
+  <metadata><dc:title>階層目次</dc:title></metadata>
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="c2" href="c2.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="c1"/><itemref idref="c2"/></spine>
+</package>`;
+  const nav = `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+<body><nav epub:type="toc"><ol>
+  <li><a href="c1.xhtml#top">第一部</a>
+    <ol><li><a href="c1.xhtml#sec">第一章</a>
+      <ol><li><a href="c2.xhtml#deep">第一節</a></li></ol>
+    </li></ol>
+  </li>
+</ol></nav></body></html>`;
+  const c1 = `<html xmlns="http://www.w3.org/1999/xhtml"><body>
+    <h1 id="top">第一部</h1><p>導入。</p><h2 id="sec">第一章</h2><p>本文。</p>
+  </body></html>`;
+  const c2 = `<html xmlns="http://www.w3.org/1999/xhtml"><body>
+    <p id="deep">第一節</p><p>続き。</p>
+  </body></html>`;
+  const buf = await buildEpubBuffer({
+    'OEBPS/content.opf': opf, 'OEBPS/nav.xhtml': nav, 'OEBPS/c1.xhtml': c1, 'OEBPS/c2.xhtml': c2,
+  });
+  const book = await importEpub(buf, 'nested.epub', new DOMParser());
+  assert.deepEqual(book.chapters, [
+    { title: '第一部', startLine: 0, level: 0 },
+    { title: '第一章', startLine: 2, level: 1 },
+    { title: '第一節', startLine: 4, level: 2 },
+  ]);
+});
+
+test('importEpub falls back to the EPUB2 guide for a cover and skips the cover page', async () => {
+  const coverBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xe0]);
+  const opf = `<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/" version="2.0">
+  <metadata><dc:title>Guide Cover</dc:title></metadata>
+  <manifest>
+    <item id="cov" href="cover.xhtml" media-type="application/xhtml+xml"/>
+    <item id="img" href="images/cover.jpg" media-type="image/jpeg"/>
+    <item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="cov"/><itemref idref="c1"/></spine>
+  <guide><reference type="cover" href="cover.xhtml"/></guide>
+</package>`;
+  const cover = `<html xmlns="http://www.w3.org/1999/xhtml"><body><div><img src="images/cover.jpg"/></div></body></html>`;
+  const buf = await buildEpubBuffer({
+    'OEBPS/content.opf': opf,
+    'OEBPS/cover.xhtml': cover,
+    'OEBPS/images/cover.jpg': coverBytes,
+    'OEBPS/c1.xhtml': `<html xmlns="http://www.w3.org/1999/xhtml"><body><p>本文だけ。</p></body></html>`,
+  });
+  const book = await importEpub(buf, 'guide.epub', new DOMParser());
+  assert.equal(book.cover?.mime, 'image/jpeg');
+  assert.deepEqual(Array.from(book.cover?.data ?? []), Array.from(coverBytes));
+  assert.equal(book.text, '本文だけ。');
+});
+
+test('importEpub skips publisher CSS classes that hide content', async () => {
+  const opf = `<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/" version="3.0">
+  <metadata><dc:title>CSS Hidden</dc:title></metadata>
+  <manifest>
+    <item id="css" href="style.css" media-type="text/css"/>
+    <item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="c1"/></spine>
+</package>`;
+  const c1 = `<html xmlns="http://www.w3.org/1999/xhtml"><body>
+    <p>見える段落。</p>
+    <p class="hidden">隠れる段落。</p>
+    <p style="visibility:hidden">これも隠れる。</p>
+    <p hidden="hidden">これも隠れる。</p>
+  </body></html>`;
+  const buf = await buildEpubBuffer({
+    'OEBPS/content.opf': opf,
+    'OEBPS/style.css': '.hidden { display: none; } .visible { color: black; }',
+    'OEBPS/c1.xhtml': c1,
+  });
+  const book = await importEpub(buf, 'hidden.epub', new DOMParser());
+  assert.equal(book.text, '見える段落。');
+});
+
+test('importEpub without a TOC turns every h1–h3 into a chapter and warns', async () => {
+  const opf = `<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/" version="3.0">
+  <metadata><dc:title>見出しだけ</dc:title></metadata>
+  <manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest>
+  <spine><itemref idref="c1"/></spine>
+</package>`;
+  const c1 = `<html xmlns="http://www.w3.org/1999/xhtml"><body>
+    <h1>第一部</h1><p>本文一。</p>
+    <h2>第一章</h2><p>本文二。</p>
+    <h3>第一節</h3><p>本文三。</p>
+  </body></html>`;
+  const buf = await buildEpubBuffer({ 'OEBPS/content.opf': opf, 'OEBPS/c1.xhtml': c1 });
+  const book = await importEpub(buf, 'headings.epub', new DOMParser());
+  assert.deepEqual(book.chapters, [
+    { title: '第一部', startLine: 0, level: 0 },
+    { title: '第一章', startLine: 2, level: 1 },
+    { title: '第一節', startLine: 4, level: 2 },
+  ]);
+  assert.deepEqual(book.warnings.filter(w => w.code === 'auto-chapters'), [{ code: 'auto-chapters', count: 3 }]);
 });

@@ -49,14 +49,18 @@ export function TocCard({ open, onClose, anchor, phone, chapters, current, perce
             type="button"
             aria-current={index === current}
             onClick={() => onSelect(index)}
-            className={`flex min-h-11 w-full items-center gap-2.5 rounded-xl px-3 text-left transition-colors hover:bg-[var(--item-hover)] ${
+            style={{ paddingLeft: 12 + Math.min(2, chapter.level ?? 0) * 12 }}
+            className={`flex min-h-11 w-full items-center gap-2.5 rounded-xl pr-3 text-left transition-colors hover:bg-[var(--item-hover)] ${
               index === current ? 'bg-[var(--fill)] font-semibold' : ''}`}
           >
             <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${index === current ? 'bg-[var(--label)]' : ''}`} />
             <span className={`min-w-0 flex-1 truncate font-[family-name:var(--font-mincho)] text-[15px] ${index < current ? 'text-[var(--label-2)]' : ''}`}>
               {chapter.title}
             </span>
-            {index === current && <span className="text-xs tabular-nums text-[var(--label)]">{percent}%</span>}
+            {chapter.page !== undefined && (
+              <span className="shrink-0 text-[11px] tabular-nums text-[var(--label-3)]">{fill(t.importPreviewPageShort, { page: chapter.page })}</span>
+            )}
+            {index === current && <span className="shrink-0 text-xs tabular-nums text-[var(--label)]">{percent}%</span>}
           </button>
         ))}
       </div>

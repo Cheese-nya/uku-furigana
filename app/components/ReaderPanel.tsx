@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { ScriptLine } from '../utils/furigana';
 import type { Translations } from '../utils/i18n';
-import type { BookItem } from '../utils/libraryDatabase';
+import { sourcePageLabel, type BookItem } from '../utils/libraryDatabase';
 import { TypographyPopover } from './TypographyPopover';
 import { GlassButton } from './glass/GlassButton';
 import { useGlass } from './glass/hooks';
@@ -133,7 +133,9 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
     return found;
   }, [chapters]);
   const [chapter, setChapter] = useState(() => chapterOf(book?.readingProgress.lineIndex ?? 0));
+  const [currentLine, setCurrentLine] = useState(() => book?.readingProgress.lineIndex ?? 0);
   const [tocOpen, setTocOpen] = useState(false);
+  const sourcePage = sourcePageLabel(book?.pageStarts, book?.pageLabels, currentLine);
   const range = chaptered && chapters[chapter]
     ? { start: chapters[chapter].startLine, end: chapters[chapter].endLine }
     : { start: 0, end: lines.length - 1 };
@@ -161,6 +163,7 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
     setAaOpen(false);
     setTocOpen(false);
     setChapter(chapterOf(book?.readingProgress.lineIndex ?? 0));
+    setCurrentLine(book?.readingProgress.lineIndex ?? 0);
   }
 
   const processScroll = useCallback(() => {
@@ -212,6 +215,7 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
     if (placedLineRef.current !== null && !userMovedRef.current) return;
     if (index !== lastLineRef.current) {
       lastLineRef.current = index;
+      setCurrentLine(index);
       onUpdateProgress(chapterOf(index), index, lines.length);
     }
   }, [isVertical, onUpdateProgress, chapterOf, lines.length]);
@@ -311,6 +315,9 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
     if (!target) return;
     setTocOpen(false);
     setChapter(index);
+    // Keep the original-page HUD in step with the chapter jump; waiting for a scroll event would
+    // leave it showing the page of the chapter the reader came from.
+    setCurrentLine(target.startLine);
     setLookup(null);
     resumeLineRef.current = null;
     placedLineRef.current = null;
@@ -484,12 +491,18 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
         {chaptered ? (
           <button type="button" aria-label={t.readerToc} onClick={() => setTocOpen(open => !open)} className="min-w-0 flex-1 rounded-[14px] px-1.5 py-1 text-center transition-colors hover:bg-[var(--item-hover)]">
             <b className="block truncate text-[13px]">{book.title} · {chapters[chapter]?.title}</b>
-            <span className="text-[11px] tabular-nums text-[var(--label-2)]">{fill(t.readerChapterPercent, { current: chapter + 1, total: chapters.length, percent: scrollPercent })}</span>
+            <span className="text-[11px] tabular-nums text-[var(--label-2)]">
+              {fill(t.readerChapterPercent, { current: chapter + 1, total: chapters.length, percent: scrollPercent })}
+              {sourcePage ? ` · ${fill(t.readerSourcePage, { page: sourcePage })}` : ''}
+            </span>
           </button>
         ) : (
           <div className="min-w-0 flex-1 text-center">
             <b className="block truncate text-[13px]">{book.title}</b>
-            <span className="text-[11px] tabular-nums text-[var(--label-2)]">{fill(t.libraryBookProgress, { percent: scrollPercent })}</span>
+            <span className="text-[11px] tabular-nums text-[var(--label-2)]">
+              {fill(t.libraryBookProgress, { percent: scrollPercent })}
+              {sourcePage ? ` · ${fill(t.readerSourcePage, { page: sourcePage })}` : ''}
+            </span>
           </div>
         )}
         <GlassButton icon aria-label={t.showRubyLabel} aria-pressed={prefs.showRuby} onClick={() => updatePrefs({ showRuby: !prefs.showRuby })}>
