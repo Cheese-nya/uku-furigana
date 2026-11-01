@@ -12,6 +12,28 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '1.8.0',
+    date: '2026-11-01',
+    items: {
+      'zh-CN': [
+        '导入单个 PDF 或 EPUB 时先预览：可以改书名、作者、分类、文件夹和出版信息，确认章节、字数与图片数量后再入库。',
+        '批量导入多个文件：正常的文件自动处理，只有重复、扫描版、加密或解析失败时才停下来询问；解析可随时取消，加密 PDF 输错密码可以重试。',
+        '重复的书可以选「合并导入」，更新内容的同时保留文件夹、分类和阅读进度；也可以保留两份。',
+        'PDF 插图提取修复：测试的 366 页竖排小说里 23 张插图全部保留，包括没有文字层的纯图片页；导入时生成的封面会真正保存，不再退回默认封面。',
+        'PDF 书签指向同一页时不再丢章节；横排书名页与竖排正文不再粘在一起；文件名里的下载站标签会从书名去掉。',
+        '阅读器底部的「原书页码」现在包含纯图片页，跳章时立即更新；导入失败的提示也更具体（扫描版、DRM、损坏、密码、内存不足）。',
+      ],
+      en: [
+        'Preview a PDF or EPUB before it enters the library: edit the title, author, category, folder and publication details, and check chapters, character count and images first.',
+        'Import several files at once: normal files run automatically and the queue stops only for duplicates, scanned PDFs, encrypted files or parse failures. Parsing can be cancelled, and a wrong PDF password can be retried.',
+        'Merge a duplicate import to refresh its content while keeping the folder, category and reading progress — or keep both copies.',
+        'PDF illustrations are now extracted completely, including image-only pages with no text layer, and the cover generated during import is actually saved instead of falling back to the default cover.',
+        'PDF bookmarks that point two chapters at the same page no longer drop one; a horizontal title page no longer glues its author line to vertical body text; download-site tags are stripped from file-name titles.',
+        'The reader\'s source-page label now includes image-only pages and updates immediately when jumping chapters, and import failures explain scanned PDFs, DRM, corrupt files, wrong passwords and out-of-memory separately.',
+      ],
+    },
+  },
+  {
     version: '1.7.4',
     date: '2026-10-31',
     items: {
