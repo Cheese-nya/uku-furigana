@@ -161,7 +161,7 @@ export function LookupCard({ state, anchor, phone, onClose, dictTitles, locale, 
   );
   if (phone) return <BottomCard open={Boolean(state)} onClose={onClose} label={t.lookupDialog}>{content}</BottomCard>;
   return (
-    <GlassPopover open={Boolean(state)} onClose={onClose} anchor={anchor} ariaLabel={t.lookupDialog} className="glass-sheet flex w-[340px] flex-col !p-0 overflow-hidden">
+    <GlassPopover open={Boolean(state)} onClose={onClose} anchor={anchor} ariaLabel={t.lookupDialog} tier="sheet" className="flex w-[340px] flex-col !p-0 overflow-hidden">
       {content}
     </GlassPopover>
   );

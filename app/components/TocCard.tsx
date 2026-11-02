@@ -69,7 +69,7 @@ export function TocCard({ open, onClose, anchor, phone, chapters, current, perce
 
   if (phone) return <BottomCard open={open} onClose={onClose} label={t.readerToc}>{content}</BottomCard>;
   return (
-    <GlassPopover open={open} onClose={onClose} anchor={anchor} placement="above" ariaLabel={t.readerToc} className="glass-sheet flex w-[320px] flex-col !p-0 overflow-hidden">
+    <GlassPopover open={open} onClose={onClose} anchor={anchor} placement="above" ariaLabel={t.readerToc} tier="sheet" className="flex w-[320px] flex-col !p-0 overflow-hidden">
       {content}
     </GlassPopover>
   );

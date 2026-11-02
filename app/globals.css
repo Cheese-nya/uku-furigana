@@ -43,7 +43,11 @@
   /* Ruby rides small type on a phone, so it is clearly darker than a hint (≈4.8:1 on --bg). */
   --ruby: rgba(60, 60, 67, 0.76); --review: #FF9500; --ok: #34C759; --danger: #FF3B30;
   --update-dot: #FFCC00;
+  /* Chrome glass stays see-through (it floats over the ambient canvas).
+     Text-bearing panels use --glass-fill-solid instead: a menu at 0.14 over a
+     dark book cover went black and its labels vanished. */
   --glass-fill: rgba(255, 255, 255, 0.14); --glass-fill-fb: rgba(250, 250, 252, 0.42);
+  --glass-fill-solid: rgba(255, 255, 255, 0.72);
   --glass-rim-a: rgba(255, 255, 255, 0.98); --glass-rim-b: rgba(255, 255, 255, 0.22);
   --glass-shadow: 0 12px 32px -10px rgba(0, 0, 0, 0.20), 0 2px 6px rgba(0, 0, 0, 0.06), inset 0 0 14px rgba(255, 255, 255, 0.18);
   --sheet-fill: rgba(255, 255, 255, 0.80);
@@ -69,6 +73,7 @@ html.dark,
   --ruby: rgba(235, 235, 245, 0.76); --review: #FF9F0A; --ok: #30D158; --danger: #FF453A;
   --update-dot: #FFD60A;
   --glass-fill: rgba(40, 40, 44, 0.18); --glass-fill-fb: rgba(34, 34, 38, 0.48);
+  --glass-fill-solid: rgba(28, 28, 30, 0.80);
   --glass-rim-a: rgba(255, 255, 255, 0.42); --glass-rim-b: rgba(255, 255, 255, 0.06);
   --glass-shadow: 0 14px 36px -10px rgba(0, 0, 0, 0.7), 0 2px 6px rgba(0, 0, 0, 0.35), inset 0 0 14px rgba(255, 255, 255, 0.04);
   --sheet-fill: rgba(30, 30, 32, 0.80);
@@ -141,6 +146,29 @@ html[data-refract="on"] .glass { background: var(--glass-fill); }
 }
 .glass.glass-sheet,
 html[data-refract="on"] .glass.glass-sheet { background: var(--sheet-fill); }
+/* Text-bearing floating panels: a menu must stay readable over any backdrop. */
+.glass.glass-solid,
+html[data-refract="on"] .glass.glass-solid { background: var(--glass-fill-solid); }
+/* Text on a material keeps two levels, and both must clear AA over the darkest
+   content that can sit behind it (a navy cover, #232B3F): a translucent fill
+   under translucent ink cannot, so the ink is opaque. Measured at the 0.72
+   fill over that cover — label 11.2:1, label-2 5.0:1. A third, fainter level
+   tops out at 1.8:1 there, so tertiary text collapses into the second level
+   and hierarchy comes from size and weight instead.
+   The 0.42 white hover wash only reads on see-through glass; on an opaque
+   panel the row highlight needs ink instead. */
+.glass-solid, .glass-sheet { --label-2: #4B4B50; --label-3: #4B4B50; --item-hover: rgba(0, 0, 0, 0.055); }
+html.dark .glass-solid, html.dark .glass-sheet,
+[data-theme="dark"] .glass-solid, [data-theme="dark"] .glass-sheet {
+  --label-2: rgba(235, 235, 245, 0.78); --label-3: rgba(235, 235, 245, 0.70);
+  --item-hover: rgba(255, 255, 255, 0.10);
+}
+/* The phone tab bar is a text surface too. On its solid body the white
+   pill vanishes, so the selected tab takes a grey capsule instead. */
+.glass-solid.glass-nav { --seg-ind: var(--fill); --seg-ind-shadow: 0 1px 3px rgba(0, 0, 0, 0.10); }
+html.dark .glass-solid.glass-nav, [data-theme="dark"] .glass-solid.glass-nav {
+  --seg-ind: rgba(255, 255, 255, 0.18); --seg-ind-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+}
 .glass.glass-prominent,
 html[data-refract="on"] .glass.glass-prominent { background: var(--prominent); color: var(--on-ink); }
 

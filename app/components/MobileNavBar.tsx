@@ -34,7 +34,7 @@ export function MobileNavBar({ activeTab, onChange, hidden = false, t }: MobileN
       data-testid="mobile-nav-bar"
       aria-label={t.sidebarTitle}
       aria-hidden={hidden || undefined}
-      className={`glass fixed bottom-[max(24px,env(safe-area-inset-bottom))] left-1/2 z-40 flex h-[52px] -translate-x-1/2 items-center rounded-full p-[3px] transition-[translate,opacity] duration-[600ms] [transition-timing-function:var(--spring-smooth)] md:hidden ${
+      className={`glass glass-solid glass-nav fixed bottom-[max(24px,env(safe-area-inset-bottom))] left-1/2 z-40 flex h-[52px] -translate-x-1/2 items-center rounded-full p-[3px] transition-[translate,opacity] duration-[600ms] [transition-timing-function:var(--spring-smooth)] md:hidden ${
         hidden ? 'pointer-events-none translate-y-[160%] opacity-0' : ''
       }`}
     >

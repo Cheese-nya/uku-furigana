@@ -14,6 +14,11 @@ export interface GlassPopoverProps {
   point?: { x: number; y: number } | null;
   /** Preferred side; flips when there is no room. */
   placement?: 'below' | 'above';
+  /**
+   * Material tier. `panel` (default) is the menu surface; `sheet` is the
+   * denser one for large text-bearing cards. One surface, one tier.
+   */
+  tier?: 'panel' | 'sheet';
   className?: string;
   ariaLabel?: string;
   children: React.ReactNode;
@@ -23,7 +28,7 @@ export interface GlassPopoverProps {
  * Glass popover / context menu. Opens by morphing out of its anchor on a
  * spring; closes on outside press, Escape, or `onClose`.
  */
-export function GlassPopover({ open, onClose, anchor, point, placement = 'below', className = '', ariaLabel, children }: GlassPopoverProps) {
+export function GlassPopover({ open, onClose, anchor, point, placement = 'below', tier = 'panel', className = '', ariaLabel, children }: GlassPopoverProps) {
   const [mounted, setMounted] = useState(open);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const glassRef = useGlass<HTMLDivElement>();
@@ -96,7 +101,7 @@ export function GlassPopover({ open, onClose, anchor, point, placement = 'below'
       ref={merged}
       role="dialog"
       aria-label={ariaLabel}
-      className={`glass fixed z-[80] min-w-[230px] rounded-[22px] p-1.5 text-sm text-[var(--label)] ${className}`}
+      className={`glass ${tier === 'sheet' ? 'glass-sheet' : 'glass-solid'} fixed z-[80] min-w-[230px] rounded-[22px] p-1.5 text-sm text-[var(--label)] ${className}`}
     >
       {children}
     </div>,
@@ -114,7 +119,7 @@ export function PopoverItem({ icon, children, detail, danger, className = '', ..
     >
       {icon && <span className="flex w-[18px] justify-center">{icon}</span>}
       <span className="min-w-0 flex-1 truncate">{children}</span>
-      {detail && <span className="text-xs text-[var(--label-3)]">{detail}</span>}
+      {detail && <span className="text-xs text-[var(--label-2)]">{detail}</span>}
     </button>
   );
 }
