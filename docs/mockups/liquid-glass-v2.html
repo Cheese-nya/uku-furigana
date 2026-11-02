@@ -40,6 +40,7 @@ body { font-family: var(--font-ui); background: #d9d9de; color: #111; -webkit-fo
   --ink: #111113; --on-ink: #fff;
   --ruby: rgba(60,60,67,.58); --review: #FF9500; --ok: #34C759; --danger: #FF3B30;
   --glass-fill: rgba(255,255,255,.14); --glass-fill-fb: rgba(250,250,252,.42);
+  --glass-fill-solid: rgba(255,255,255,.72);
   --glass-rim-a: rgba(255,255,255,.98); --glass-rim-b: rgba(255,255,255,.22);
   --glass-shadow: 0 12px 32px -10px rgba(0,0,0,.20), 0 2px 6px rgba(0,0,0,.06), inset 0 0 14px rgba(255,255,255,.18);
   --item-hover: rgba(255,255,255,.42);
@@ -57,6 +58,7 @@ body { font-family: var(--font-ui); background: #d9d9de; color: #111; -webkit-fo
   --ink: #FFFFFF; --on-ink: #000;
   --ruby: rgba(235,235,245,.56); --review: #FF9F0A; --ok: #30D158; --danger: #FF453A;
   --glass-fill: rgba(40,40,44,.18); --glass-fill-fb: rgba(34,34,38,.48);
+  --glass-fill-solid: rgba(28,28,30,.80);
   --glass-rim-a: rgba(255,255,255,.42); --glass-rim-b: rgba(255,255,255,.06);
   --glass-shadow: 0 14px 36px -10px rgba(0,0,0,.7), 0 2px 6px rgba(0,0,0,.35), inset 0 0 14px rgba(255,255,255,.04);
   --item-hover: rgba(255,255,255,.10);
@@ -89,6 +91,15 @@ svg.i.fill { fill: currentColor; stroke: none; }
   mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
 }
 .app .glass.prominent, .app[data-refract="on"] .glass.prominent { background: var(--prominent); color: var(--on-ink); }
+/* Menus carry text over arbitrary content, so they get the opaque glass instead of the
+   see-through chrome; the translucent hover wash does not read on it. */
+.app .glass.pop, .app .glass.solid, .app[data-refract="on"] .glass.pop, .app[data-refract="on"] .glass.solid { background: var(--glass-fill-solid); }
+/* A material carries two text levels, and both clear AA over the darkest cover:
+   translucent ink under a translucent fill cannot, so the ink is opaque. */
+.app .glass.pop, .app .glass.solid, .app .glass.sheet { --label-2:#4B4B50; --label-3:#4B4B50; --item-hover: rgba(0,0,0,.055); }
+.app.dark .glass.pop, .app.dark .glass.solid, .app.dark .glass.sheet { --label-2: rgba(235,235,245,.78); --label-3: rgba(235,235,245,.70); --item-hover: rgba(255,255,255,.10); }
+.app .tabbar.glass.solid { --seg-ind: var(--fill); }
+.app.dark .tabbar.glass.solid { --seg-ind: rgba(255,255,255,.18); }
 @media (prefers-reduced-transparency: reduce) {
   .glass, .app[data-refract="on"] .glass { background: var(--surface) !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
 }
@@ -497,7 +508,7 @@ input[type=range] { width: 100%; accent-color: var(--label); }
       <div class="reader-scroll" id="readerScroll">
         <div class="reader-body" id="readerBody"></div>
       </div>
-      <div class="capsule glass" data-glass id="capsule">
+      <div class="capsule glass solid" data-glass id="capsule">
         <div class="full">
           <button class="gbtn icon" data-press id="readerBack" aria-label="返回台本库"><svg class="i"><use href="#i-back"/></svg></button>
           <div class="ctitle"><b>夢十夜（第一夜）</b><span id="pct1">已读 0%</span></div>
@@ -530,7 +541,7 @@ input[type=range] { width: 100%; accent-color: var(--label); }
   </main>
 
   <!-- ============ TAB BAR (phone) ============ -->
-  <nav class="tabbar glass sel" data-glass id="tabbar" data-axis="x" role="tablist">
+  <nav class="tabbar glass solid sel" data-glass id="tabbar" data-axis="x" role="tablist">
     <span class="sel-ind"></span>
     <button data-opt="workbench" aria-selected="true"><svg class="i"><use href="#i-edit"/></svg>工作台</button>
     <button data-opt="library"><svg class="i"><use href="#i-books"/></svg>台本库</button>
