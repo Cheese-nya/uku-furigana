@@ -393,7 +393,7 @@ input[type=range] { width: 100%; accent-color: var(--label); }
 .dict-miss b { color: var(--label); font-family: var(--font-mincho); font-size: 20px; display: block; margin-bottom: 4px; }
 
 .dcard { position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 72; border-radius: 30px; padding: 0; overflow: hidden; display: flex; flex-direction: column;
-  height: 46%; translate: 0 calc(100% + 20px); transition: translate 560ms var(--spring-smooth), height 520ms var(--spring-smooth); }
+  height: 46%; translate: 0 calc(100% + 64px); /* clears max(safe-area-inset-bottom) — a 24px inset left a 4px sliver */ transition: translate 560ms var(--spring-smooth), height 520ms var(--spring-smooth); }
 .app[data-refract="on"] .dcard.glass, .dcard.glass { background: color-mix(in srgb, var(--surface) 80%, transparent); }
 .dcard.open { translate: 0 0; }
 .dcard.tall { height: 86%; }

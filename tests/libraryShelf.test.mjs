@@ -106,6 +106,18 @@ test('移动端玻璃 Tab 栏与底部弹出面板', () => {
   assert.ok(modalSource.includes('sm:hidden'), 'Modal must include mobile-only bottom sheet grabber pill');
 });
 
+test('查找卡关闭时完全滑出安全区，不在屏幕底部露边', () => {
+  const lookupSource = readFileSync(
+    fileURLToPath(new URL('../app/components/LookupCard.tsx', import.meta.url)),
+    'utf8',
+  );
+  const offset = lookupSource.match(/translate-y-\[calc\(100%\+(\d+)px\)\]/);
+  assert.ok(offset, 'closed lookup card must translate by its own height plus an offset');
+  // The card rests at `bottom: max(8px, env(safe-area-inset-bottom))`, so the
+  // closed offset must clear that inset; 24px (iPad) left a 4px sliver visible.
+  assert.ok(Number(offset[1]) >= 40, `closed offset ${offset[1]}px must clear the safe-area inset`);
+});
+
 test('批处理与弹窗：新设计系统、无 emoji', () => {
   for (const file of ['BatchProcessingPanel.tsx', 'ExportProgressModal.tsx', 'BatchDoneModal.tsx', 'GlossaryModal.tsx', 'LearnedReadingsModal.tsx']) {
     const componentSource = readFileSync(fileURLToPath(new URL(`../app/components/${file}`, import.meta.url)), 'utf8');
