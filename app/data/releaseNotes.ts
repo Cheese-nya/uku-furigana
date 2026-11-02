@@ -12,6 +12,22 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '1.8.1',
+    date: '2026-11-02',
+    items: {
+      'zh-CN': [
+        '菜单、右键菜单与设置面板的底色固定下来：压在深色书封上不再跟着背景一起变暗，文字始终看得清。',
+        '手机端底部 Tab 栏与阅读器底部的进度条不再让书封和正文透上来；Tab 选中项在浅色底上改为灰色胶囊。',
+        '面板内的次要说明文字加深到 WCAG AA 对比度（深色封面背景上 5:1 以上）。',
+      ],
+      en: [
+        'Menu, context-menu and settings panels now keep a fixed fill, so they no longer darken along with a dark book cover and their labels stay readable.',
+        'The phone tab bar and the reader\'s bottom progress bar no longer let covers or page text show through, and the selected tab uses a grey capsule on a light bar.',
+        'Secondary text inside panels is darkened to WCAG AA contrast (5:1 and above over a dark cover).',
+      ],
+    },
+  },
+  {
     version: '1.8.0',
     date: '2026-11-01',
     items: {
