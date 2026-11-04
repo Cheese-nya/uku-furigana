@@ -39,6 +39,7 @@ import { installBackBridge, setNavigationBack } from './utils/backStack';
 import { FeedbackModal } from './components/FeedbackModal';
 import { useUpdater } from './hooks/useUpdater';
 import { buildReport, installGlobalLogging } from './utils/appLog';
+import { startTelemetry } from './utils/telemetry';
 import { buildFeedbackPayload, submitFeedback } from './utils/feedback';
 import { DISTRIBUTION } from './utils/appInfo';
 import { hasUnseenNotes, markNotesSeen } from './utils/whatsNew';
@@ -166,6 +167,8 @@ export default function DubbingStudioApp() {
     setUnseenNotes(hasUnseenNotes());
   }, []);
   useEffect(() => { installGlobalLogging(); }, []);
+  // Anonymous usage reporting is mandatory on every edition and has no client opt-out.
+  useEffect(() => { startTelemetry(); }, []);
   const openExternal = (url: string) => { window.open(url, '_blank', 'noopener,noreferrer'); };
   const openWhatsNew = () => { markNotesSeen(); setUnseenNotes(false); setIsWhatsNewOpen(true); };
   const copyQqGroup = () => {

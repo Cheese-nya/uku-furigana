@@ -21,6 +21,8 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // Local scratch, vendored assets, and the app's own session worktrees are not source.
     ".claude/**",
+    // Private cloud edition working tree, ignored locally via .git/info/exclude.
+    "cloud-private/**",
     "public/vendor/**",
     "tests/.tmp/**",
   ]),

@@ -562,8 +562,10 @@ class Api:
         self._corrections_path = root / 'corrections.json'
         self._database_path = root / 'corrections-v2.json'
         self._library_path = root / 'library-v1.json'
+        self._telemetry_path = root / 'telemetry-preferences.json'
         self._corrections_lock = threading.Lock()
         self._library_lock = threading.Lock()
+        self._telemetry_lock = threading.Lock()
 
     def load_corrections(self):
         with self._corrections_lock:
@@ -650,6 +652,43 @@ class Api:
                     handle.flush()
                     os.fsync(handle.fileno())
                 os.replace(temporary, self._library_path)
+            return {'success': True}
+        except Exception as error:
+            return {'success': False, 'error': str(error)}
+
+    def load_telemetry_preferences(self):
+        """Anonymous install/visitor ids, kept outside the per-launch HTTP origin.
+
+        The web bundle gets a random localhost port on every launch, so localStorage
+        alone would count one installation as new each time.
+        """
+        with self._telemetry_lock:
+            if not self._telemetry_path.exists():
+                return {}
+            with self._telemetry_path.open(encoding='utf-8') as handle:
+                data = json.load(handle)
+            if not isinstance(data, dict):
+                return {}
+            return {key: value for key, value in data.items() if isinstance(key, str) and isinstance(value, str)}
+
+    def save_telemetry_preferences(self, data):
+        try:
+            if not isinstance(data, dict):
+                return {'success': False, 'error': 'Invalid telemetry preferences'}
+            if not all(isinstance(key, str) and isinstance(value, str) for key, value in data.items()):
+                return {'success': False, 'error': 'Invalid telemetry preferences'}
+            with self._telemetry_lock:
+                self._telemetry_path.parent.mkdir(parents=True, exist_ok=True)
+                temporary = self._telemetry_path.with_suffix('.tmp')
+                with temporary.open('w', encoding='utf-8') as handle:
+                    json.dump(data, handle, ensure_ascii=False)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temporary, self._telemetry_path)
+                try:
+                    os.chmod(self._telemetry_path, 0o600)
+                except OSError:
+                    pass
             return {'success': True}
         except Exception as error:
             return {'success': False, 'error': str(error)}

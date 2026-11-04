@@ -1,4 +1,5 @@
 import importlib.util
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -94,6 +95,27 @@ class DesktopLibraryTest(unittest.TestCase):
             self.assertFalse(api.save_library_database({'version': 1, 'books': {}})['success'])
             self.assertEqual(path.read_text(encoding='utf-8'), '{broken')
             self.assertFalse((Path(directory) / 'library-v1.tmp').exists())
+
+
+class DesktopTelemetryPreferencesTest(unittest.TestCase):
+    def test_ids_survive_new_api_instance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            api = launcher.Api(directory)
+            self.assertEqual(api.load_telemetry_preferences(), {})
+            data = {'uku.telemetry.installId.v1': 'install-1', 'uku.telemetry.visitorId.v1': 'visitor-1'}
+            self.assertTrue(api.save_telemetry_preferences(data)['success'])
+            self.assertEqual(launcher.Api(directory).load_telemetry_preferences(), data)
+            self.assertFalse((Path(directory) / 'telemetry-preferences.tmp').exists())
+            if os.name == 'posix':
+                self.assertEqual((Path(directory) / 'telemetry-preferences.json').stat().st_mode & 0o777, 0o600)
+
+    def test_invalid_payload_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            api = launcher.Api(directory)
+            self.assertTrue(api.save_telemetry_preferences({'uku.telemetry.installId.v1': 'install-1'})['success'])
+            self.assertFalse(api.save_telemetry_preferences(None)['success'])
+            self.assertFalse(api.save_telemetry_preferences({'key': 1})['success'])
+            self.assertEqual(api.load_telemetry_preferences(), {'uku.telemetry.installId.v1': 'install-1'})
 
 
 class DefaultDataDirTest(unittest.TestCase):
