@@ -26,7 +26,6 @@ export class AnnotationClient {
   private sequence = 0;
   private disposed = false;
   private bootingFallback = false;
-  private bootTimer?: ReturnType<typeof setTimeout>;
   private ready: Promise<void>;
   private resolveReady!: () => void;
 
@@ -38,7 +37,8 @@ export class AnnotationClient {
       this.worker.onmessage = (event: MessageEvent<WorkerResponse>) => this.receive(event.data);
       this.worker.onerror = event => { event.preventDefault(); void this.startFallback('异步注音线程不可用'); };
       this.worker.onmessageerror = () => { void this.startFallback('异步注音结果无法读取'); };
-      this.bootTimer = setTimeout(() => { void this.startFallback('异步注音线程加载超时'); }, 60000);
+      // No wall-clock timeout: on a slow connection it killed a worker that was still making
+      // progress and started the whole dictionary download again on the main thread.
       this.send({ type: 'INIT', dictionaryPath });
     } catch (error) {
       void this.startFallback(String(error));
@@ -50,7 +50,6 @@ export class AnnotationClient {
   private receive(message: WorkerResponse) {
     if (this.disposed) return;
     if (message.type === 'READY') {
-      clearTimeout(this.bootTimer);
       this.onState({ status: message.status, mode: 'worker', error: message.error });
       this.resolveReady();
       return;
@@ -78,7 +77,6 @@ export class AnnotationClient {
   private async startFallback(reason: string) {
     if (this.disposed || this.bootingFallback) return;
     this.bootingFallback = true;
-    clearTimeout(this.bootTimer);
     this.worker?.terminate();
     this.worker = null;
     this.onState({ status: 'loading', mode: 'fallback', error: reason });
@@ -156,7 +154,6 @@ export class AnnotationClient {
 
   dispose() {
     this.disposed = true;
-    clearTimeout(this.bootTimer);
     this.worker?.terminate();
     this.resolveReady();
     for (const job of this.jobs.values()) {

@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "revision": "370d9f3ddb585b4b",
+  "files": {
+    "base.dat.gz": {
+      "brotli": "assets/370d9f3ddb585b4b/base.dat.br",
+      "size": 8388608,
+      "sha256": "e578a6c02ed92346df566306aadfed835f089b39750e8dafe5abf90a966d6297",
+      "brotliSize": 3061030
+    },
+    "cc.dat.gz": {
+      "brotli": "assets/370d9f3ddb585b4b/cc.dat.br",
+      "size": 3463716,
+      "sha256": "4ebebb0e6b4b17aa0f25cc665536c2ecd3caeaab347d0cb519b3b1bb5e8d650f",
+      "brotliSize": 1282481
+    },
+    "check.dat.gz": {
+      "brotli": "assets/370d9f3ddb585b4b/check.dat.br",
+      "size": 8388608,
+      "sha256": "414c6a284a779632d23ff86f34761c1a5c091baa1cfcea1b733d82fa7ac89cbc",
+      "brotliSize": 2669925
+    },
+    "readings.json.gz": {
+      "brotli": "assets/370d9f3ddb585b4b/readings.json.br",
+      "size": 7708107,
+      "sha256": "8a78c0fa2482069ff9ab9b8f83cc82d7563c4410af0b7108a1fd705b8d68b27b",
+      "brotliSize": 1424668
+    },
+    "tid.dat.gz": {
+      "brotli": "assets/370d9f3ddb585b4b/tid.dat.br",
+      "size": 10485760,
+      "sha256": "ed8977acc3980dd7436e3975e2183f8312dad22a3b45f40e368309805d3ac095",
+      "brotliSize": 1023795
+    },
+    "tid_map.dat.gz": {
+      "brotli": "assets/370d9f3ddb585b4b/tid_map.dat.br",
+      "size": 4194304,
+      "sha256": "def2c940677db713a000fed2eb6dca9e97417240966e2298d6c03dc118016e4a",
+      "brotliSize": 986973
+    },
+    "tid_pos.dat.gz": {
+      "brotli": "assets/370d9f3ddb585b4b/tid_pos.dat.br",
+      "size": 41943040,
+      "sha256": "a0fa608406f1e8a445b2810499878a5e69234b1ebebb2ce6c66a950749c8a9f2",
+      "brotliSize": 4125156
+    },
+    "unk.dat.gz": {
+      "brotli": "assets/370d9f3ddb585b4b/unk.dat.br",
+      "size": 10485760,
+      "sha256": "a6e35190d998440fc62191f7f95cb6b9f078fd236abed8f88ebe12916ae0fbd5",
+      "brotliSize": 260
+    },
+    "unk_char.dat.gz": {
+      "brotli": "assets/370d9f3ddb585b4b/unk_char.dat.br",
+      "size": 65536,
+      "sha256": "218e90b85ece7734cfd1d10a3d3153083ff7899693060755985095d365663793",
+      "brotliSize": 187
+    },
+    "unk_compat.dat.gz": {
+      "brotli": "assets/370d9f3ddb585b4b/unk_compat.dat.br",
+      "size": 262144,
+      "sha256": "b9f3cb34710353434dfc623300bcad22b622895dca3195af49e85d3de2438214",
+      "brotliSize": 81
+    },
+    "unk_invoke.dat.gz": {
+      "brotli": "assets/370d9f3ddb585b4b/unk_invoke.dat.br",
+      "size": 1048576,
+      "sha256": "e9842ac062646d8da0e6728483eaeed58ee5518d2b6313d393c4fa4c16e84dbd",
+      "brotliSize": 97
+    },
+    "unk_map.dat.gz": {
+      "brotli": "assets/370d9f3ddb585b4b/unk_map.dat.br",
+      "size": 1048576,
+      "sha256": "15619220f521c5ce8be864d3cd1fec2bb01ac78efbea958100b6334222150e9a",
+      "brotliSize": 125
+    },
+    "unk_pos.dat.gz": {
+      "brotli": "assets/370d9f3ddb585b4b/unk_pos.dat.br",
+      "size": 10485760,
+      "sha256": "d8771fad9c3329a674e318f498252eda032c5e3c2ee63192bae0df8d78cc043d",
+      "brotliSize": 273
+    }
+  }
+}

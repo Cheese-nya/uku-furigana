@@ -1,5 +1,6 @@
 import kuromoji from 'kuromoji';
-import './kuromojiLoader';
+import { primeKuromojiDictionary, releasePrimedKuromojiDictionary } from './kuromojiLoader';
+import { loadDictionaryAssets } from './dictionaryAssetCache';
 
 export interface KuromojiToken {
   word_id: number;
@@ -39,26 +40,34 @@ export const initKuromoji = async (dictionaryPath?: string): Promise<void> => {
   if (tokenizer) return;
   if (initPromise) return initPromise;
 
-  initPromise = new Promise((resolve, reject) => {
-    let settled = false;
-    const timeout = setTimeout(() => {
-      settled = true;
-      initPromise = null;
-      reject(new Error('离线词典加载超时，请重试'));
-    }, 60000);
-    kuromoji.builder({ dicPath: resolveDictionaryPath(dictionaryPath) }).build((err, _tokenizer) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      if (err) {
-        console.error('Kuromoji initialization failed:', err);
-        initPromise = null;
-        reject(err);
-        return;
-      }
-      tokenizer = _tokenizer;
-      resolve();
-    });
+  const dicPath = resolveDictionaryPath(dictionaryPath);
+  initPromise = (async () => {
+    try {
+      const assets = await loadDictionaryAssets(dicPath);
+      if (assets) primeKuromojiDictionary(assets.files);
+    } catch (error) {
+      // Prefetch is an optimisation; the patched loader can still fetch the plain gzip files.
+      console.warn('离线词典预加载失败，回退逐文件加载：', error);
+    }
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        kuromoji.builder({ dicPath }).build((err, _tokenizer) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+          tokenizer = _tokenizer;
+          resolve();
+        });
+      });
+    } finally {
+      releasePrimedKuromojiDictionary();
+    }
+  })().catch(error => {
+    console.error('Kuromoji initialization failed:', error);
+    initPromise = null;
+    throw error;
   });
 
   return initPromise;

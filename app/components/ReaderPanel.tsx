@@ -1,9 +1,18 @@
 'use client';
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ScriptLine } from '../utils/furigana';
 import type { Translations } from '../utils/i18n';
 import { sourcePageLabel, type BookItem } from '../utils/libraryDatabase';
+import {
+  READER_FONT_SIZE_MAX,
+  READER_FONT_SIZE_MIN,
+  clampReaderFontSize,
+  loadReaderPrefs,
+  saveReaderPrefs,
+  type ReaderFontFamily,
+  type ReaderPrefs,
+} from '../utils/readerPreferences';
 import { TypographyPopover } from './TypographyPopover';
 import { GlassButton } from './glass/GlassButton';
 import { useGlass } from './glass/hooks';
@@ -17,8 +26,7 @@ import { plainScriptLines } from '../utils/plainScript';
 import type { ReaderTools } from '../utils/readingTools';
 
 type RubyMode = 'hiragana' | 'katakana' | 'romaji';
-export type ReaderFontFamily = 'serif' | 'sans';
-export type ReaderWritingMode = 'horizontal' | 'vertical';
+export type { ReaderFontFamily, ReaderWritingMode } from '../utils/readerPreferences';
 
 export interface ReaderPanelProps {
   t: Translations;
@@ -37,36 +45,10 @@ export interface ReaderPanelProps {
   error?: string;
 }
 
-interface ReaderPrefs {
-  fontFamily: ReaderFontFamily;
-  fontSize: number;
-  showRuby: boolean;
-  writingMode: ReaderWritingMode;
-  bilingual: boolean;
-}
-
-const PREFS_KEY = 'furigana_reader_prefs_v3';
-const DEFAULT_PREFS: ReaderPrefs = { fontFamily: 'serif', fontSize: 19, showRuby: true, writingMode: 'horizontal', bilingual: false };
 const FONT_STACK: Record<ReaderFontFamily, string> = {
   serif: 'var(--font-mincho)',
   sans: '-apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif',
 };
-
-function loadPrefs(): ReaderPrefs {
-  if (typeof window === 'undefined') return DEFAULT_PREFS;
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(PREFS_KEY) || '{}') as Partial<ReaderPrefs>;
-    return {
-      fontFamily: parsed.fontFamily === 'sans' ? 'sans' : 'serif',
-      fontSize: typeof parsed.fontSize === 'number' ? Math.min(26, Math.max(14, parsed.fontSize)) : DEFAULT_PREFS.fontSize,
-      showRuby: typeof parsed.showRuby === 'boolean' ? parsed.showRuby : true,
-      writingMode: parsed.writingMode === 'vertical' ? 'vertical' : 'horizontal',
-      bilingual: parsed.bilingual === true,
-    };
-  } catch {
-    return DEFAULT_PREFS;
-  }
-}
 
 const fill = (template: string, values: Record<string, string | number>) =>
   template.replace(/\{(\w+)\}/g, (_, key: string) => String(values[key] ?? ''));
@@ -79,7 +61,7 @@ const fill = (template: string, values: Record<string, string | number>) =>
  * place; scrolling up, reaching the top/bottom or tapping the page brings it back.
  */
 export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, onRubyTypeChange, onUpdateProgress, onGoToLibrary, tools, dictTitles, locale, error }: ReaderPanelProps) {
-  const [prefs, setPrefs] = useState<ReaderPrefs>(loadPrefs);
+  const [prefs, setPrefs] = useState<ReaderPrefs>(loadReaderPrefs);
   const [hudVisible, setHudVisible] = useState(true);
   const [scrollPercent, setScrollPercent] = useState(0);
   const [aaAnchor, setAaAnchor] = useState<HTMLButtonElement | null>(null);
@@ -98,6 +80,10 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
   const userMovedRef = useRef(false);
   const settleTimersRef = useRef<number[]>([]);
   const placeLineRef = useRef<(line: number) => boolean>(() => false);
+  // While the size slider is being dragged, keep one line fixed instead of letting each reflow
+  // rewrite the current line from a half-finished layout.
+  const fontAnchorRef = useRef<number | null>(null);
+  const fontAnchorTimerRef = useRef<number | null>(null);
   const frameRef = useRef<number | null>(null);
   const [capsuleNode, setCapsuleNode] = useState<HTMLDivElement | null>(null);
   const capsuleRef = useGlass<HTMLDivElement>();
@@ -145,12 +131,12 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
 
   const updatePrefs = (patch: Partial<ReaderPrefs>) => {
     setPrefs(previous => {
-      const next = { ...previous, ...patch };
-      try {
-        window.localStorage.setItem(PREFS_KEY, JSON.stringify(next));
-      } catch {
-        // Ignore storage write failures
-      }
+      const next = {
+        ...previous,
+        ...patch,
+        fontSize: clampReaderFontSize(patch.fontSize ?? previous.fontSize),
+      };
+      saveReaderPrefs(next);
       return next;
     });
   };
@@ -197,6 +183,8 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
     const nodes = article.querySelectorAll<HTMLElement>('[data-line]');
     // An emptied page (re-annotating) clamps the scroll to 0; that is not the reader's place, so keep the saved one.
     if (nodes.length === 0) return;
+    // A size change reflows the page before the anchored line has been put back; do not save that transient position.
+    if (fontAnchorRef.current !== null) return;
     // The current line is the last one that has crossed the top (right edge when vertical). Lines are in order,
     // so a binary search measures a handful of them per frame instead of every line of the book.
     const passed = (node: HTMLElement) => {
@@ -283,6 +271,31 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
     }
     return true;
   }, [isVertical]);
+
+  const changeFontSize = (value: number) => {
+    if (fontAnchorRef.current === null) {
+      fontAnchorRef.current = lastLineRef.current >= 0 ? lastLineRef.current : currentLine;
+    }
+    if (fontAnchorTimerRef.current !== null) window.clearTimeout(fontAnchorTimerRef.current);
+    fontAnchorTimerRef.current = window.setTimeout(() => {
+      fontAnchorRef.current = null;
+      fontAnchorTimerRef.current = null;
+    }, 650);
+    updatePrefs({ fontSize: value });
+  };
+
+  // Keep the line the reader was on at the top while the whole page is laid out again at a new size.
+  useLayoutEffect(() => {
+    const line = fontAnchorRef.current;
+    if (line === null) return;
+    if (!placeLine(line)) return;
+    placedLineRef.current = line;
+    lastLineRef.current = line;
+  }, [prefs.fontSize, placeLine]);
+
+  useEffect(() => () => {
+    if (fontAnchorTimerRef.current !== null) window.clearTimeout(fontAnchorTimerRef.current);
+  }, []);
 
   // Bring the remembered line back as soon as it exists in the page.
   useEffect(() => {
@@ -544,7 +557,9 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
         fontFamily={prefs.fontFamily}
         onFontFamilyChange={fontFamily => updatePrefs({ fontFamily })}
         fontSize={prefs.fontSize}
-        onFontSizeChange={fontSize => updatePrefs({ fontSize })}
+        minFontSize={READER_FONT_SIZE_MIN}
+        maxFontSize={READER_FONT_SIZE_MAX}
+        onFontSizeChange={changeFontSize}
         showRuby={prefs.showRuby}
         onShowRubyChange={showRuby => updatePrefs({ showRuby })}
         bilingual={tools ? {

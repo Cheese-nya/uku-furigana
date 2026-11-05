@@ -3,6 +3,8 @@
 // dictionary does not know is therefore worth a human look, and a word with several readings
 // gets the others offered as alternatives without being flagged as suspicious.
 
+import { brotliSibling, fetchCompressedBytes } from './compressedAsset';
+import { readDictionaryAsset } from './dictionaryAssetCache';
 import { katakanaToHiragana, type ScriptLine } from './furigana';
 
 /** `term → readings`, commonest first. Built by tools/build-reading-table.mjs. */
@@ -28,15 +30,23 @@ function uniqueReadings(values: string[]): string[] {
  * missing or malformed file; the caller decides whether that is fatal or only degraded.
  */
 export async function loadReadingTable(basePath: string): Promise<ReadingTable> {
-  const url = `${basePath.replace(/\/$/, '')}/readings.json.gz`;
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`注音对照表加载失败：${response.status} ${url}`);
-  // Some servers decode .gz themselves (Content-Encoding); only gunzip bytes that are still gzip.
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  const gzipped = bytes[0] === 0x1f && bytes[1] === 0x8b;
-  const text = await new Response(
-    gzipped ? new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip')) : bytes,
-  ).text();
+  const base = basePath.replace(/\/$/, '');
+  const gzip = `${base}/readings.json.gz`;
+  let bytes: ArrayBuffer | null = null;
+  try {
+    bytes = await readDictionaryAsset(base, 'readings.json.gz');
+  } catch (error) {
+    console.warn('读音对照表缓存读取失败，改用直接下载：', error);
+  }
+  const data: ArrayBuffer = bytes ?? await (async () => {
+    try {
+      const loaded = await fetchCompressedBytes({ brotli: brotliSibling(gzip), gzip });
+      return loaded.buffer.slice(loaded.byteOffset, loaded.byteOffset + loaded.byteLength) as ArrayBuffer;
+    } catch (error) {
+      throw new Error(`注音对照表加载失败：${error instanceof Error ? error.message : String(error)}`);
+    }
+  })();
+  const text = new TextDecoder().decode(new Uint8Array(data));
   const table = JSON.parse(text) as Record<string, unknown>;
   const readings: ReadingTable = new Map();
   for (const [term, value] of Object.entries(table)) {

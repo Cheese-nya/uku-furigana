@@ -3,6 +3,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import JSZip from 'jszip';
 import { loadTypescript } from '../tests/loadTypescript.mjs';
+import { writeLookupCompressedAssets } from './dictionary-compression.mjs';
 
 // Bundled dictionaries (sources are downloaded into tools/dict-src/, which is not committed):
 //   node scripts/build-dictionary.mjs ja-zh   wty-ja-zh.zip from https://huggingface.co/datasets/daxida/wty-release (latest/dict/ja/zh)
@@ -87,10 +88,12 @@ async function main() {
   const indexJson = `${JSON.stringify(indexData, null, 2)}\n`;
   fs.writeFileSync(path.join(outDir, 'index.json'), indexJson, 'utf8');
   totalBytes += Buffer.byteLength(indexJson, 'utf8');
+  const brotli = writeLookupCompressedAssets(outDir);
 
   const mb = (totalBytes / (1024 * 1024)).toFixed(2);
   console.log(
-    `Built ${entries.length} entries across ${shards.length} shards in ${outDir} — total size: ${totalBytes} bytes (${mb} MB)`,
+    `Built ${entries.length} entries across ${shards.length} shards in ${outDir} — gzip: ${mb} MB, ` +
+      `Brotli: ${brotli ? (brotli.bytes / (1024 * 1024)).toFixed(2) : '0'} MB`,
   );
 }
 

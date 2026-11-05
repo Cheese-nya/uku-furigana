@@ -30,5 +30,30 @@
     "terms-19.json.gz",
     "terms-20.json.gz",
     "terms-21.json.gz"
-  ]
+  ],
+  "brotliBaseUrl": "assets/4ee438c6113b9352/",
+  "brotliShards": {
+    "terms-00.json.gz": "assets/4ee438c6113b9352/terms-00.json.br",
+    "terms-01.json.gz": "assets/4ee438c6113b9352/terms-01.json.br",
+    "terms-02.json.gz": "assets/4ee438c6113b9352/terms-02.json.br",
+    "terms-03.json.gz": "assets/4ee438c6113b9352/terms-03.json.br",
+    "terms-04.json.gz": "assets/4ee438c6113b9352/terms-04.json.br",
+    "terms-05.json.gz": "assets/4ee438c6113b9352/terms-05.json.br",
+    "terms-06.json.gz": "assets/4ee438c6113b9352/terms-06.json.br",
+    "terms-07.json.gz": "assets/4ee438c6113b9352/terms-07.json.br",
+    "terms-08.json.gz": "assets/4ee438c6113b9352/terms-08.json.br",
+    "terms-09.json.gz": "assets/4ee438c6113b9352/terms-09.json.br",
+    "terms-10.json.gz": "assets/4ee438c6113b9352/terms-10.json.br",
+    "terms-11.json.gz": "assets/4ee438c6113b9352/terms-11.json.br",
+    "terms-12.json.gz": "assets/4ee438c6113b9352/terms-12.json.br",
+    "terms-13.json.gz": "assets/4ee438c6113b9352/terms-13.json.br",
+    "terms-14.json.gz": "assets/4ee438c6113b9352/terms-14.json.br",
+    "terms-15.json.gz": "assets/4ee438c6113b9352/terms-15.json.br",
+    "terms-16.json.gz": "assets/4ee438c6113b9352/terms-16.json.br",
+    "terms-17.json.gz": "assets/4ee438c6113b9352/terms-17.json.br",
+    "terms-18.json.gz": "assets/4ee438c6113b9352/terms-18.json.br",
+    "terms-19.json.gz": "assets/4ee438c6113b9352/terms-19.json.br",
+    "terms-20.json.gz": "assets/4ee438c6113b9352/terms-20.json.br",
+    "terms-21.json.gz": "assets/4ee438c6113b9352/terms-21.json.br"
+  }
 }

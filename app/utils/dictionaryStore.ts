@@ -1,3 +1,4 @@
+import { brotliSibling, fetchCompressedJson } from './compressedAsset';
 import { type CompactEntry, readYomitanZip } from './yomitanFormat';
 
 export interface DictEntry {
@@ -35,13 +36,19 @@ interface BuiltinManifest {
   license?: string;
   count?: number;
   shards?: string[];
+  brotliBaseUrl?: string;
+  brotliShards?: Record<string, string>;
 }
 
 const DB_NAME = 'uku-lookup';
-const DB_VERSION = 1;
+// v2 adds a staging store: a download/upgrade writes there and moves into `terms` in one
+// transaction, so an interrupted install can never leave a half dictionary looking ready.
+const DB_VERSION = 2;
 const DICT_STORE = 'dictionaries';
 const TERM_STORE = 'terms';
+const STAGING_STORE = 'terms-staging';
 const BATCH_SIZE = 2000;
+const SHARD_CONCURRENCY = 4;
 
 export class DictionaryStore {
   private readonly idbFactory?: IDBFactory;
@@ -73,6 +80,9 @@ export class DictionaryStore {
           terms.createIndex('term', 'term', { unique: false });
           terms.createIndex('reading', 'reading', { unique: false });
           terms.createIndex('dict', 'dict', { unique: false });
+        }
+        if (!db.objectStoreNames.contains(STAGING_STORE)) {
+          db.createObjectStore(STAGING_STORE, { autoIncrement: true });
         }
       };
       request.onsuccess = () => resolve(request.result);
@@ -184,13 +194,14 @@ export class DictionaryStore {
     startCount: number,
     totalCount: number,
     onProgress?: (fraction: number) => void,
+    storeName = TERM_STORE,
   ): Promise<number> {
     let inserted = startCount;
     for (let i = 0; i < entries.length; i += BATCH_SIZE) {
       const batch = entries.slice(i, i + BATCH_SIZE);
       await new Promise<void>((resolve, reject) => {
-        const tx = db.transaction(TERM_STORE, 'readwrite');
-        const store = tx.objectStore(TERM_STORE);
+        const tx = db.transaction(storeName, 'readwrite');
+        const store = tx.objectStore(storeName);
         for (const [term, reading, tags, glosses, examples, score] of batch) {
           const record: DictEntry = {
             dict: dictId,
@@ -223,6 +234,128 @@ export class DictionaryStore {
     });
   }
 
+  private clearStaging(db: IDBDatabase): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STAGING_STORE, 'readwrite');
+      tx.objectStore(STAGING_STORE).clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  private shardUrls(prefix: string, manifest: BuiltinManifest, shard: string): { gzip: string; brotli?: string } {
+    const gzip = `${prefix}${shard}`;
+    const explicit = manifest.brotliShards?.[shard];
+    if (typeof explicit === 'string' && explicit) {
+      const brotli = /^(?:[a-z]+:)?\//i.test(explicit) ? explicit : `${prefix}${explicit.replace(/^\.?\//, '')}`;
+      return { gzip, brotli };
+    }
+    if (typeof manifest.brotliBaseUrl === 'string' && manifest.brotliBaseUrl) {
+      const base = manifest.brotliBaseUrl.endsWith('/') ? manifest.brotliBaseUrl : `${manifest.brotliBaseUrl}/`;
+      return { gzip, brotli: `${prefix}${base.replace(/^\.?\//, '')}${brotliSibling(shard)}` };
+    }
+    return { gzip };
+  }
+
+  private async fetchShard(
+    prefix: string,
+    manifest: BuiltinManifest,
+    shard: string,
+  ): Promise<CompactEntry[]> {
+    if (!this.fetchFn) throw new Error('当前环境不支持网络请求');
+    const rows = await fetchCompressedJson<unknown>(this.shardUrls(prefix, manifest, shard), this.fetchFn);
+    if (!Array.isArray(rows)) throw new Error(`词典分片格式错误：${shard}`);
+    return rows as CompactEntry[];
+  }
+
+  /**
+   * Downloads up to four shards ahead while inserting them in their original order, so entries
+   * stay grouped by the source's sorted shard order and network waits overlap.
+   */
+  private async installShards(
+    db: IDBDatabase,
+    dictId: string,
+    prefix: string,
+    manifest: BuiltinManifest,
+    shards: string[],
+    expectedTotal: number,
+    onProgress?: (fraction: number) => void,
+  ): Promise<number> {
+    const pending = new Map<number, Promise<CompactEntry[]>>();
+    const prefetch = (index: number) => {
+      if (index >= shards.length || pending.has(index)) return;
+      const task = this.fetchShard(prefix, manifest, shards[index]);
+      // Prefetched failures are awaited out of order; mark them handled now so the browser
+      // does not report them as unhandled while an earlier shard is still being inserted.
+      void task.catch(() => undefined);
+      pending.set(index, task);
+    };
+    for (let i = 0; i < Math.min(SHARD_CONCURRENCY, shards.length); i++) prefetch(i);
+
+    let inserted = 0;
+    try {
+      for (let i = 0; i < shards.length; i++) {
+        const rows = await pending.get(i)!;
+        pending.delete(i);
+        inserted = await this.insertCompactEntries(
+          db,
+          dictId,
+          rows,
+          inserted,
+          expectedTotal,
+          onProgress,
+          STAGING_STORE,
+        );
+        prefetch(i + SHARD_CONCURRENCY);
+      }
+    } catch (error) {
+      await Promise.allSettled(pending.values());
+      throw error;
+    }
+    return inserted;
+  }
+
+  /** Moves all staged rows into `terms` and publishes the metadata in one transaction. */
+  private finalizeStaged(db: IDBDatabase, dictId: string, record: DictionaryRecord): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction([TERM_STORE, STAGING_STORE, DICT_STORE], 'readwrite');
+      const terms = tx.objectStore(TERM_STORE);
+      const staging = tx.objectStore(STAGING_STORE);
+      const dictionaries = tx.objectStore(DICT_STORE);
+
+      const putRecord = () => dictionaries.put(record);
+      const moveStaged = () => {
+        const request = staging.openCursor();
+        request.onsuccess = () => {
+          const cursor = request.result;
+          if (!cursor) {
+            putRecord();
+            return;
+          }
+          terms.put({ ...(cursor.value as DictEntry), dict: dictId });
+          cursor.delete();
+          cursor.continue();
+        };
+      };
+
+      const oldTerms = terms.index('dict').openCursor(dictId);
+      oldTerms.onsuccess = () => {
+        const cursor = oldTerms.result;
+        if (cursor) {
+          cursor.delete();
+          cursor.continue();
+        } else {
+          moveStaged();
+        }
+      };
+      oldTerms.onerror = () => reject(oldTerms.error);
+
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error ?? new Error('词典安装事务已中止'));
+    });
+  }
+
   async ensureBuiltin(
     baseUrl = '/lookup/ja-zh/',
     onProgress?: (fraction: number) => void,
@@ -234,66 +367,62 @@ export class DictionaryStore {
     }
     const db = await this.openDb();
     const prefix = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
-    const indexRes = await this.fetchFn(`${prefix}index.json`);
+    const indexRes = await this.fetchFn(`${prefix}index.json`, { cache: 'no-cache' });
     if (!indexRes.ok) {
       throw new Error('词典加载失败');
     }
     const manifest = (await indexRes.json()) as BuiltinManifest;
     const dictId = manifest.id || 'wty-ja-zh';
     const revision = String(manifest.revision || '');
+    const shards = Array.isArray(manifest.shards) ? manifest.shards.filter((name): name is string => typeof name === 'string') : [];
+    if (!shards.length) throw new Error('词典没有可加载的分片');
+
+    const expectedCount =
+      typeof manifest.count === 'number' && Number.isFinite(manifest.count) && manifest.count > 0
+        ? Math.round(manifest.count)
+        : null;
+    const expectedTotal = expectedCount ?? shards.length * 20_000;
 
     const existingList = await this.list();
     const existing = existingList.find((d) => d.id === dictId);
-    if (existing && existing.revision >= revision && existing.count > 0) {
+    if (
+      existing &&
+      existing.count > 0 &&
+      existing.revision === revision &&
+      (expectedCount === null || existing.count === expectedCount)
+    ) {
       onProgress?.(1);
       return existing;
     }
 
-    await this.clearTermsForDict(db, dictId);
-
-    const shards = Array.isArray(manifest.shards) ? manifest.shards : [];
-    const expectedTotal =
-      typeof manifest.count === 'number' && manifest.count > 0
-        ? manifest.count
-        : shards.length * 20_000;
-
+    // A previous attempt may have been interrupted after staging some shards. The live terms
+    // and metadata are untouched until finalize, so clearing staging is always safe.
+    await this.clearStaging(db);
     let inserted = 0;
-    for (const shard of shards) {
-      const shardRes = await this.fetchFn(`${prefix}${shard}`);
-      if (!shardRes.ok) {
-        throw new Error('词典分片加载失败');
+    try {
+      inserted = await this.installShards(db, dictId, prefix, manifest, shards, expectedTotal, onProgress);
+      if (expectedCount !== null && inserted !== expectedCount) {
+        throw new Error(`词典条目数不符：期望 ${expectedCount}，实际 ${inserted}`);
       }
-      // Some servers decode .gz themselves (Content-Encoding); only gunzip bytes that are still gzip.
-      const bytes = new Uint8Array(await shardRes.arrayBuffer());
-      const gzipped = bytes[0] === 0x1f && bytes[1] === 0x8b;
-      const rows = (await new Response(
-        gzipped ? new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip')) : bytes,
-      ).json()) as CompactEntry[];
-      inserted = await this.insertCompactEntries(
-        db,
-        dictId,
-        rows,
-        inserted,
-        expectedTotal,
-        onProgress,
-      );
+      const record: DictionaryRecord = {
+        id: dictId,
+        title: manifest.title || '日中词典（维基词典）',
+        revision,
+        attribution: manifest.attribution || '',
+        license: manifest.license,
+        enabled: existing ? existing.enabled : true,
+        order: existing ? existing.order : order,
+        builtin: true,
+        count: inserted,
+      };
+      onProgress?.(0.99);
+      await this.finalizeStaged(db, dictId, record);
+      onProgress?.(1);
+      return record;
+    } catch (error) {
+      await this.clearStaging(db).catch(() => undefined);
+      throw error;
     }
-
-    const record: DictionaryRecord = {
-      id: dictId,
-      title: manifest.title || '日中词典（维基词典）',
-      revision,
-      attribution: manifest.attribution || '',
-      license: manifest.license,
-      enabled: existing ? existing.enabled : true,
-      order: existing ? existing.order : order,
-      builtin: true,
-      count: inserted,
-    };
-
-    await this.putDictionaryRecord(db, record);
-    onProgress?.(1);
-    return record;
   }
 
   async importZip(

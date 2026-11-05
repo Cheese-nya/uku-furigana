@@ -5,6 +5,14 @@ import { fileURLToPath } from 'node:url';
 import { loadTypescript } from './loadTypescript.mjs';
 
 const { plainScriptLines } = loadTypescript('../app/utils/plainScript.ts');
+const {
+  DEFAULT_READER_PREFS,
+  READER_FONT_SIZE_MAX,
+  READER_FONT_SIZE_MIN,
+  READER_PREFS_KEY,
+  clampReaderFontSize,
+  parseReaderPrefs,
+} = loadTypescript('../app/utils/readerPreferences.ts');
 
 const source = readFileSync(
   fileURLToPath(new URL('../app/components/ReaderPanel.tsx', import.meta.url)),
@@ -51,11 +59,32 @@ test('阅读器：下滑按累计距离隐藏胶囊，上滑/点按/到顶到底
 test('阅读器 Aa：注音方式、排版方向（竖排）、字体、字号、显示注音', () => {
   assert.ok(source.includes('writingMode={prefs.writingMode}'), 'reader passes the writing direction');
   assert.ok(source.includes('vertical-script-flow'), 'vertical writing kept');
-  assert.ok(source.includes("const PREFS_KEY = 'furigana_reader_prefs_v3';"));
+  assert.equal(READER_PREFS_KEY, 'furigana_reader_prefs_v3', 'existing reader preferences keep their key');
+  assert.ok(source.includes('maxFontSize={READER_FONT_SIZE_MAX}'), 'reader passes the larger upper bound');
+  assert.equal(editor.includes('maxFontSize='), false, 'editor keeps the shared 14–26 px range for export');
   assert.ok(typography.includes('reader-writing-mode-toggle'), 'writing-direction segment');
-  for (const key of ['t.fontLabel', 't.fontSizeLabel', 't.showRubyLabel', 'role="switch"']) {
+  for (const key of ['t.fontLabel', 't.fontSizeLabel', 't.showRubyLabel', 'role="switch"', 'aria-valuetext']) {
     assert.ok(typography.includes(key), `typography popover needs ${key}`);
   }
+});
+
+test('阅读器字号：最大 40 px，旧偏好被钳制，工作台仍保持 14–26 px', () => {
+  assert.equal(READER_FONT_SIZE_MIN, 14);
+  assert.equal(READER_FONT_SIZE_MAX, 40);
+  assert.equal(DEFAULT_READER_PREFS.fontSize, 19);
+  assert.equal(typography.includes('maxFontSize = 26'), true, 'shared popover defaults to the editor bounds');
+  assert.equal(clampReaderFontSize(40), 40);
+  assert.equal(clampReaderFontSize(50), 40);
+  assert.equal(clampReaderFontSize(8), 14);
+  assert.equal(clampReaderFontSize(Number.NaN), 19);
+
+  const parsed = parseReaderPrefs(JSON.stringify({ ...DEFAULT_READER_PREFS, fontSize: 40 }));
+  assert.equal(parsed.fontSize, 40, 'a stored 40 px survives reload');
+  assert.equal(parseReaderPrefs('{"fontSize":32}').fontSize, 32);
+  assert.equal(parseReaderPrefs('{"fontSize":50}').fontSize, 40);
+  assert.equal(parseReaderPrefs('not json').fontSize, 19);
+  assert.deepEqual(parseReaderPrefs(null), DEFAULT_READER_PREFS);
+  assert.ok(source.includes('fontAnchorRef'), 'size changes anchor the current line while reflowing');
 });
 
 test('阅读器：样稿以外的功能已删除', () => {

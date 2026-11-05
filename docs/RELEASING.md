@@ -35,6 +35,34 @@ GitHub 的发布文件在中国大陆经常下不动（直连实测 40 秒一个
 
 应用内的自动更新在 GitHub 取不到版本信息时会改走中转服务，并优先使用服务器镜像下载，GitHub 作为备用。
 
+## 词典静态资产与缓存
+
+网页版第一次打开会下载注音词典（约 14 MB Brotli / 19 MB gzip）和日中词典分片。只有 `DecompressionStream` 支持 `brotli` 的浏览器会用到 Brotli（按 MDN 兼容表主要是 Firefox / Safari，未逐一实测）；Chrome / Edge 实测到 157 仍不支持，会走 gzip。生成的文件都必须随整站一起上传，不能只上传 HTML：
+
+- `public/dict/manifest.json` 与 `public/dict/assets/<hash>/`；
+- `public/lookup/ja-zh/index.json`、`public/lookup/ja-zh/assets/<hash>/`；
+- `public/lookup/ja-en/...` 同上；
+- 原来的 `.gz` 分片仍要保留：Chrome / Edge、Chrome 99 / 旧 WebView 以及其他不支持 Brotli 解压的浏览器都会回退到它们。
+
+`assets/<hash>/` 里的文件名带内容哈希，可以长期缓存；`manifest.json` 和 `index.json` 会随词典更新，必须每次重新验证：
+
+```nginx
+location ~ ^/(?:dict|lookup/[^/]+)/assets/ {
+    add_header Cache-Control "public, max-age=31536000, immutable";
+}
+location ~ ^/(?:dict/manifest\.json|lookup/[^/]+/index\.json)$ {
+    add_header Cache-Control "no-cache";
+}
+```
+
+词典源更新后运行：
+
+```bash
+npm run compress:dict
+```
+
+`scripts/build-dictionary.mjs` 和 `tools/build-reading-table.mjs` 也会自动重新生成 Brotli 资产。线上服务器在下次发布前不会自动获得这些文件，不能把本地构建当作线上已经提速。
+
 标签必须和 `package.json` 的版本一致（`v1.3.0` ↔ `1.3.0`），否则发布会在第一步失败。
 
 ## 官网下载链接

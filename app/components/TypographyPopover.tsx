@@ -18,6 +18,9 @@ export interface TypographyPopoverProps {
   onFontFamilyChange: (value: 'serif' | 'sans') => void;
   fontSize: number;
   onFontSizeChange: (value: number) => void;
+  /** The reader goes larger than the editor, whose size also drives export. */
+  minFontSize?: number;
+  maxFontSize?: number;
   showRuby: boolean;
   onShowRubyChange: (value: boolean) => void;
   /** Ruby mode row (phones, where the toolbar has no room for it). */
@@ -78,10 +81,13 @@ function PretranslateRow({ state, engineLabel, onStart, onPause, t }: { state: P
 
 const SEG = 'flex w-full [&>[data-opt]]:h-7 [&>[data-opt]]:flex-1 [&>[data-opt]]:px-2 [&>[data-opt]]:text-[13px]';
 
-function Group({ label, children }: { label: string; children: React.ReactNode }) {
+function Group({ label, value, children }: { label: string; value?: string; children: React.ReactNode }) {
   return (
     <div className="px-2.5 pb-1.5 pt-2">
-      <div className="mb-1.5 text-xs font-semibold text-[var(--label-2)]">{label}</div>
+      <div className="mb-1.5 flex items-center justify-between gap-3 text-xs font-semibold text-[var(--label-2)]">
+        <span>{label}</span>
+        {value && <span className="tabular-nums font-medium">{value}</span>}
+      </div>
       {children}
     </div>
   );
@@ -89,9 +95,10 @@ function Group({ label, children }: { label: string; children: React.ReactNode }
 
 /** Mockup "排版" popover: ruby mode (phones), font, size, show-ruby switch. */
 export function TypographyPopover({
-  open, onClose, anchor, placement, fontFamily, onFontFamilyChange, fontSize, onFontSizeChange, showRuby, onShowRubyChange,
-  rubyType, onRubyTypeChange, writingMode, onWritingModeChange, bilingual, t,
+  open, onClose, anchor, placement, fontFamily, onFontFamilyChange, fontSize, onFontSizeChange, minFontSize = 14, maxFontSize = 26,
+  showRuby, onShowRubyChange, rubyType, onRubyTypeChange, writingMode, onWritingModeChange, bilingual, t,
 }: TypographyPopoverProps) {
+  const size = Math.min(maxFontSize, Math.max(minFontSize, fontSize));
   return (
     <GlassPopover open={open} onClose={onClose} anchor={anchor} placement={placement} ariaLabel={t.typographySettings} className="w-[280px]">
       {rubyType && onRubyTypeChange && (
@@ -142,13 +149,16 @@ export function TypographyPopover({
           ]}
         />
       </Group>
-      <Group label={t.fontSizeLabel}>
+      <Group label={t.fontSizeLabel} value={`${size} px`}>
         <input
           type="range"
-          min={14}
-          max={26}
-          value={fontSize}
+          min={minFontSize}
+          max={maxFontSize}
+          step={1}
+          value={size}
           aria-label={t.fontSizeLabel}
+          aria-valuetext={`${size} px`}
+          data-testid="font-size-slider"
           onChange={event => onFontSizeChange(Number(event.target.value))}
           className="w-full accent-[var(--label)]"
         />

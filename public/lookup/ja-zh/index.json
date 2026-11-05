@@ -14,5 +14,14 @@
     "terms-03.json.gz",
     "terms-04.json.gz",
     "terms-05.json.gz"
-  ]
+  ],
+  "brotliBaseUrl": "assets/0aa0ed60a5427d75/",
+  "brotliShards": {
+    "terms-00.json.gz": "assets/0aa0ed60a5427d75/terms-00.json.br",
+    "terms-01.json.gz": "assets/0aa0ed60a5427d75/terms-01.json.br",
+    "terms-02.json.gz": "assets/0aa0ed60a5427d75/terms-02.json.br",
+    "terms-03.json.gz": "assets/0aa0ed60a5427d75/terms-03.json.br",
+    "terms-04.json.gz": "assets/0aa0ed60a5427d75/terms-04.json.br",
+    "terms-05.json.gz": "assets/0aa0ed60a5427d75/terms-05.json.br"
+  }
 }

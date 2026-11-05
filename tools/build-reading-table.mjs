@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
+import { writeKuromojiCompressedAssets } from '../scripts/dictionary-compression.mjs';
 
 // Builds public/dict/readings.json.gz: every kanji-containing term of the bundled Jitendex shards
 // mapped to the readings the dictionary knows, best score first. The tokenizer's own reading is then
@@ -53,10 +54,11 @@ const json = JSON.stringify(table);
 const gz = zlib.gzipSync(Buffer.from(json, 'utf8'), { level: 9 });
 fs.mkdirSync(path.dirname(outFile), { recursive: true });
 fs.writeFileSync(outFile, gz);
+const dictCompressed = writeKuromojiCompressedAssets(path.dirname(outFile));
 
 const mb = (gz.byteLength / (1024 * 1024)).toFixed(2);
 const ambiguous = Object.values(table).filter(list => list.length > 1).length;
 console.log(
   `Built ${Object.keys(table).length} readings (${ambiguous} with alternatives) from ${examined} entries in ${shards.length} shards — ` +
-    `${outFile}: ${gz.byteLength} bytes (${mb} MB)`,
+    `${outFile}: ${gz.byteLength} bytes (${mb} MB), Brotli set ${dictCompressed?.directory ?? 'none'}`,
 );

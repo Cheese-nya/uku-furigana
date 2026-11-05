@@ -21,7 +21,20 @@ type LoadCallback = (err: unknown, buffer: ArrayBuffer | null) => void;
 const proto = BrowserDictionaryLoader.prototype as { loadArrayBuffer: (url: string, callback: LoadCallback) => void };
 const stockLoad = proto.loadArrayBuffer;
 
-let queue: Promise<unknown> = Promise.resolve();
+// Prepared from dictionaryAssetCache before the builder starts. Keys are dictionary file names
+// (base.dat.gz, …), the same names the stock loader appends to dicPath.
+let primed: Map<string, ArrayBuffer> | null = null;
+let stockQueue: Promise<unknown> = Promise.resolve();
+
+export function primeKuromojiDictionary(files: Map<string, ArrayBuffer>): void {
+  primed = files;
+}
+
+export function releasePrimedKuromojiDictionary(): void {
+  primed = null;
+}
+
+const baseName = (url: string) => decodeURIComponent(url.split('/').pop()?.split('?')[0] ?? '');
 
 const canStream = () =>
   typeof DecompressionStream === 'function' &&
@@ -32,7 +45,10 @@ async function inflate(url: string): Promise<ArrayBuffer> {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
   const blob = await response.blob();
-  if (blob.size < 18) throw new Error('not a gzip stream');
+  // Some servers decode .gz themselves via Content-Encoding.
+  if (response.headers.get('content-encoding') || blob.size < 18 || blob.type === 'application/json') {
+    return blob.arrayBuffer();
+  }
   const size = new DataView(await blob.slice(-4).arrayBuffer()).getUint32(0, true);
   const out = new Uint8Array(size);
   const reader = blob.stream().pipeThrough(new DecompressionStream('gzip')).getReader();
@@ -54,21 +70,34 @@ function stock(this: unknown, url: string): Promise<ArrayBuffer> {
   });
 }
 
+function serialStock(this: unknown, url: string): Promise<ArrayBuffer> {
+  const run = stockQueue.then(() => stock.call(this, url));
+  stockQueue = run.catch(() => undefined);
+  return run;
+}
+
 proto.loadArrayBuffer = function (this: unknown, url: string, callback: LoadCallback) {
+  const prepared = primed?.get(baseName(url));
+  if (prepared) {
+    queueMicrotask(() => callback(null, prepared));
+    return;
+  }
   const run = async () => {
     if (canStream()) {
       try {
+        // Native decompression can run in parallel: each output buffer is exactly its final size.
         return await inflate(url);
       } catch (error) {
         console.warn('Streaming dictionary load failed, using stock loader:', url, error);
       }
     }
-    return stock.call(this, url);
+    // zlibjs grows its output by doubling; keep the legacy path serialized to bound memory.
+    return serialStock.call(this, url);
   };
-  queue = queue
-    .then(run)
-    .then(buffer => callback(null, buffer), err => callback(err, null))
-    .catch(() => undefined);
+  run().then(
+    buffer => callback(null, buffer),
+    err => callback(err, null),
+  );
 };
 
 interface UnknownClass {

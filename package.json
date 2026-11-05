@@ -15,6 +15,7 @@
     "cap:android": "npx cap open android",
     "cap:ios": "npx cap open ios",
     "build:web": "node scripts/build-web.mjs",
+    "compress:dict": "node scripts/compress-dictionaries.mjs",
     "package:exe": "node scripts/build-web.mjs && python -m PyInstaller --noconfirm --onefile --windowed --icon=\"app_icon.ico\" --name UkuFurigana --add-data \"out;out\" desktop_runner.py && copy /y dist\\UkuFurigana.exe .\\UkuFurigana.exe",
     "lint": "eslint",
     "pretest": "node scripts/vendor-assets.mjs",
@@ -43,6 +44,7 @@
     "@xmldom/xmldom": "^0.9.12",
     "eslint": "^9",
     "eslint-config-next": "16.2.12",
+    "fake-indexeddb": "^6.2.7",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
