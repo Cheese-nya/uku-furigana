@@ -18,6 +18,41 @@ export interface LearnedReading {
   createdAt: number;
 }
 
+export interface ReadingHistoryTarget {
+  line: string;
+  lineOccurrence: number;
+  start: number;
+  surface: string;
+}
+
+export interface ReadingHistoryChange {
+  target: ReadingHistoryTarget;
+  /** All occurrence-scoped manual entries removed by the operation, in stored order. */
+  before: RubyOverride[];
+  /** All occurrence-scoped manual entries written by the operation. */
+  after: RubyOverride[];
+  /** Context-learned readings before and after the change (restore operations only). */
+  learnedBefore?: LearnedReading[];
+  learnedAfter?: LearnedReading[];
+}
+
+export type ReadingHistoryKind = 'edit' | 'bulk-edit' | 'restore' | 'bulk-restore' | 'undo' | 'redo';
+
+export interface ReadingHistoryEntry {
+  id: string;
+  kind: ReadingHistoryKind;
+  createdAt: number;
+  changes: ReadingHistoryChange[];
+  /** Occurrences deliberately left alone because they already had a manual reading. */
+  skippedManual?: number;
+  /** Literal substring hits considered by a bulk operation, including skipped ones. */
+  totalMatches?: number;
+  /** Operation this one reverses (undo/redo only). */
+  supersedes?: string;
+  /** Applied when reversing this entry was blocked because the current values differ. */
+  skipped?: number;
+}
+
 export interface ScriptCorrectionEntry {
   scriptId: string;
   title: string;
@@ -26,6 +61,8 @@ export interface ScriptCorrectionEntry {
   updatedAt: number;
   overrides: RubyOverride[];
   learned: LearnedReading[];
+  /** Newest-last operations; capped by the app. Older databases simply have no field. */
+  history?: ReadingHistoryEntry[];
   legacy?: boolean;
   adoptedBy?: string;
 }
@@ -63,6 +100,58 @@ function validateLearned(value: unknown): LearnedReading[] {
   });
 }
 
+const HISTORY_KINDS = ['edit', 'bulk-edit', 'restore', 'bulk-restore', 'undo', 'redo'] as const;
+
+function validateHistory(value: unknown): ReadingHistoryEntry[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new Error('注音修改历史格式无效');
+  return value.map((raw, index) => {
+    if (!object(raw) || typeof raw.id !== 'string' || !raw.id ||
+      !HISTORY_KINDS.includes(raw.kind as typeof HISTORY_KINDS[number]) || !Number.isFinite(raw.createdAt) ||
+      !Array.isArray(raw.changes) || (raw.supersedes !== undefined && typeof raw.supersedes !== 'string') ||
+      (raw.skippedManual !== undefined && (!Number.isInteger(raw.skippedManual) || (raw.skippedManual as number) < 0)) ||
+      (raw.totalMatches !== undefined && (!Number.isInteger(raw.totalMatches) || (raw.totalMatches as number) < 0)) ||
+      (raw.skipped !== undefined && (!Number.isInteger(raw.skipped) || (raw.skipped as number) < 0))) {
+      throw new Error(`注音修改历史条目无效：${index}`);
+    }
+    const changes = raw.changes.map((change, changeIndex): ReadingHistoryChange => {
+      if (!object(change) || !object(change.target)) throw new Error(`注音修改历史变更无效：${index}.${changeIndex}`);
+      const target = change.target;
+      if (typeof target.line !== 'string' || !Number.isInteger(target.lineOccurrence) || (target.lineOccurrence as number) < 0 ||
+        !Number.isInteger(target.start) || (target.start as number) < 0 || typeof target.surface !== 'string' || !target.surface ||
+        target.line.slice(target.start as number, (target.start as number) + target.surface.length) !== target.surface ||
+        !Array.isArray(change.before) || !Array.isArray(change.after)) {
+        throw new Error(`注音修改历史定位无效：${index}.${changeIndex}`);
+      }
+      const before = validOverrides(change.before);
+      const after = validOverrides(change.after);
+      if (before.length !== change.before.length || after.length !== change.after.length) {
+        throw new Error(`注音修改历史注音无效：${index}.${changeIndex}`);
+      }
+      const learnedBefore = change.learnedBefore === undefined ? undefined : validateLearned(change.learnedBefore);
+      const learnedAfter = change.learnedAfter === undefined ? undefined : validateLearned(change.learnedAfter);
+      return {
+        target: { line: target.line, lineOccurrence: target.lineOccurrence as number,
+          start: target.start as number, surface: target.surface },
+        before,
+        after,
+        ...(learnedBefore ? { learnedBefore } : {}),
+        ...(learnedAfter ? { learnedAfter } : {}),
+      };
+    });
+    return {
+      id: raw.id as string,
+      kind: raw.kind as ReadingHistoryKind,
+      createdAt: raw.createdAt as number,
+      changes,
+      ...(raw.skippedManual !== undefined ? { skippedManual: raw.skippedManual as number } : {}),
+      ...(raw.totalMatches !== undefined ? { totalMatches: raw.totalMatches as number } : {}),
+      ...(raw.supersedes !== undefined ? { supersedes: raw.supersedes as string } : {}),
+      ...(raw.skipped !== undefined ? { skipped: raw.skipped as number } : {}),
+    };
+  });
+}
+
 export function validateGlossary(value: unknown): Record<string, ProperNounEntry> {
   if (!object(value)) throw new Error('专名词典格式无效');
   return Object.fromEntries(Object.entries(value).map(([key, item]) => {
@@ -85,8 +174,10 @@ export function migrateDatabase(value: unknown): CorrectionDatabaseV2 {
         !Array.isArray(item.fingerprints) || !item.fingerprints.every(fp => typeof fp === 'string' && /^sha256:[a-f0-9]{64}$/.test(fp)) ||
         !Number.isFinite(item.updatedAt) || (item.legacy !== undefined && typeof item.legacy !== 'boolean') ||
         (item.adoptedBy !== undefined && typeof item.adoptedBy !== 'string')) throw new Error(`台本记录无效：${id}`);
+      const history = validateHistory(item.history);
       return [id, { scriptId: id, title: item.title, fingerprints: item.fingerprints as string[],
         updatedAt: item.updatedAt as number, overrides: validOverrides(item.overrides), learned: validateLearned(item.learned || []),
+        ...(history ? { history } : {}),
         ...(item.legacy ? { legacy: true } : {}), ...(item.adoptedBy ? { adoptedBy: item.adoptedBy as string } : {}) }];
     }));
     return { version: 2, glossary: validateGlossary(value.glossary), scripts };
@@ -118,7 +209,8 @@ export function resolveScript(database: CorrectionDatabaseV2, title: string, tex
   if (known) return { database, scriptId: known.scriptId };
   const legacy = Object.values(database.scripts).find(script => script.legacy && !script.adoptedBy && script.title === title &&
     script.overrides.some(entry => text.split('\n').includes(entry.line)));
-  const script: ScriptCorrectionEntry = { scriptId: id, title, fingerprints: [fingerprint], updatedAt: Date.now(), overrides: legacy?.overrides || [], learned: legacy?.learned || [] };
+  const script: ScriptCorrectionEntry = { scriptId: id, title, fingerprints: [fingerprint], updatedAt: Date.now(),
+    overrides: legacy?.overrides || [], learned: legacy?.learned || [], history: [] };
   return { scriptId: id, database: { ...database, scripts: { ...database.scripts,
     ...(legacy ? { [legacy.scriptId]: { ...legacy, adoptedBy: id } } : {}), [id]: script } } };
 }

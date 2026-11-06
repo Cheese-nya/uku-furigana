@@ -13,6 +13,8 @@ export interface AnnotationInput {
   sourceOverrides: RubyOverride[];
   overrides: RubyOverride[];
   learned?: LearnedReading[];
+  /** Identity for display continuity only; the annotation engine itself does not need it. */
+  documentId?: string;
 }
 
 export interface AnnotationChunk { offset: number; lines: ScriptLine[]; total: number }
@@ -54,12 +56,15 @@ export function createAnnotator(getTable?: () => ReadingTable | null) {
       const texts = input.text.split('\n');
       const source = groupOverrides(input.sourceOverrides);
       const overrides = groupOverrides(input.overrides);
+      const seenLines = new Map<string, number>();
       for (let offset = 0; offset < texts.length; offset += 50) {
         if (cancelled()) throw new DOMException('注音任务已取消', 'AbortError');
         // The reading table arrives in the background; lines annotated before it did are
         // re-annotated (and cached) once it is there.
         const table = getTable?.() ?? null;
         const lines = texts.slice(offset, offset + 50).map((text, index) => {
+          const occurrence = seenLines.get(text) || 0;
+          seenLines.set(text, occurrence + 1);
           const entry = cache.get(text);
           let canonical = entry && entry.checkedWithTable === Boolean(table) ? entry.line : undefined;
           if (!canonical) {
@@ -73,7 +78,7 @@ export function createAnnotator(getTable?: () => ReadingTable | null) {
             ...(token.alternatives ? { alternatives: token.alternatives.map(value => formatRuby(value, input.rubyType)) } : {}),
           })) };
           return applyRubyOverrides(applyRubyOverrides(applyLearned(applyGlossary(line, input.glossary, input.rubyType), input.learned, input.rubyType),
-            source.get(line.cleanText) || [], input.rubyType, 'source'), overrides.get(line.cleanText) || [], input.rubyType, 'manual');
+            source.get(line.cleanText) || [], input.rubyType, 'source', occurrence), overrides.get(line.cleanText) || [], input.rubyType, 'manual', occurrence);
         });
         onChunk({ offset, lines, total: texts.length });
         // Give CANCEL/ANNOTATE messages an opportunity to run between chunks.

@@ -8,6 +8,12 @@ export interface RubyOverride {
   surface: string;
   reading: string;
   type: RubyType;
+  /**
+   * Index of this line among identical lines in the document. Older records omit it and keep
+   * their documented "every identical line" behaviour; new manual edits always set it so
+   * "this occurrence only" really means one occurrence.
+   */
+  lineOccurrence?: number;
 }
 
 // Adjacent ranges (one ends exactly where the other starts) are not an overlap: the
@@ -20,13 +26,31 @@ function rangesOverlap(left: RubyOverride, right: RubyOverride): boolean {
 }
 
 export function upsertRubyOverride(entries: RubyOverride[], entry: RubyOverride): RubyOverride[] {
-  return [...entries.filter(value => value.line !== entry.line || !rangesOverlap(value, entry)), entry];
+  // A legacy (unscoped) write replaces every overlapping entry on that line. An
+  // occurrence-scoped write only replaces other writes for the same occurrence: the same text
+  // may exist on another line, and that line must not change.
+  return [...entries.filter(value => {
+    if (value.line !== entry.line || !rangesOverlap(value, entry)) return true;
+    return entry.lineOccurrence === undefined ? false : value.lineOccurrence !== entry.lineOccurrence;
+  }), entry];
 }
 
-export function applyRubyOverrides(line: ScriptLine, overrides: RubyOverride[], type: RubyType, source: ReadingSource = 'manual'): ScriptLine {
+export function applyRubyOverrides(
+  line: ScriptLine,
+  overrides: RubyOverride[],
+  type: RubyType,
+  source: ReadingSource = 'manual',
+  lineOccurrence = 0,
+): ScriptLine {
   let tokens = line.tokens;
   const applied: RubyOverride[] = [];
-  for (const entry of overrides.filter(value => value.line === line.cleanText).sort((a, b) => a.start - b.start)) {
+  // Occurrence-scoped entries win over legacy entries for the same range, even when the
+  // legacy entry starts earlier. Within one specificity the first entry of a range wins.
+  const candidates = overrides
+    .filter(value => value.line === line.cleanText &&
+      (value.lineOccurrence === undefined || value.lineOccurrence === lineOccurrence))
+    .sort((a, b) => Number(a.lineOccurrence === undefined) - Number(b.lineOccurrence === undefined) || a.start - b.start);
+  for (const entry of candidates) {
     const end = entry.start + entry.surface.length;
     if (!entry.surface || line.cleanText.slice(entry.start, end) !== entry.surface) continue;
     // A stored list may still hold overlapping entries: an older build wrote them, and a
@@ -72,6 +96,7 @@ function isRubyOverride(entry: unknown): entry is RubyOverride {
   return typeof item.line === 'string' && Number.isInteger(item.start) && (item.start ?? -1) >= 0 &&
     typeof item.surface === 'string' && item.surface.length > 0 && typeof item.reading === 'string' &&
     ['hiragana', 'katakana', 'romaji'].includes(item.type || '') &&
+    (item.lineOccurrence === undefined || (Number.isInteger(item.lineOccurrence) && item.lineOccurrence >= 0)) &&
     item.line.slice(item.start, (item.start ?? 0) + item.surface.length) === item.surface;
 }
 

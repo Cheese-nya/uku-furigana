@@ -19,7 +19,9 @@ import { LearnedReadingsModal } from './components/LearnedReadingsModal';
 import { WhatsNewModal } from './components/WhatsNewModal';
 import { RubyCorrectionModal, type EditingTokenState } from './components/RubyCorrectionModal';
 import { BatchProcessingPanel } from './components/BatchProcessingPanel';
-import { EditorWorkspace } from './components/EditorWorkspace';
+import { EditorWorkspace, PREVIEW_PAGE_SIZE, type PreviewPositionRequest } from './components/EditorWorkspace';
+import { CorrectionConfirmModal, type PendingCorrection } from './components/CorrectionConfirmModal';
+import { ReadingHistoryModal } from './components/ReadingHistoryModal';
 import type { ScriptLine } from './utils/furigana';
 import { useFuriganaWorker } from './hooks/useFuriganaWorker';
 import { useThemeMode } from './hooks/useThemeMode';
@@ -29,10 +31,12 @@ import { generateSRT, generateTXT, type SrtCue } from './utils/srt';
 import { importTextScript, scriptSourceFormat } from './utils/inlineRuby';
 
 import { cleanScriptTitle, importDocx } from './utils/docxImporter';
-import { upsertRubyOverride, type RubyOverride } from './utils/rubyOverrides';
+import { type RubyOverride } from './utils/rubyOverrides';
 import { loadCorrections, saveCorrections } from './utils/correctionStorage';
-import { emptyDatabase, fingerprintText, resolveScript, updateScript, setScriptOverrides, learnReading, deleteLearnedReading, type CorrectionDatabaseV2 } from './utils/correctionDatabase';
-import { selectReviewWord, makeLearnedReading } from './utils/review';
+import { emptyDatabase, fingerprintText, resolveScript, updateScript, deleteLearnedReading, type CorrectionDatabaseV2, type ReadingHistoryTarget } from './utils/correctionDatabase';
+import { applyCorrectionOperation, lineOccurrenceAt, occurrenceStart, revertHistoryEntry } from './utils/readingHistory';
+import { nextSearchHit, searchWorkbench, type WorkbenchSearchHit, type WorkbenchSearchMode } from './utils/workbenchSearch';
+import { selectReviewWord } from './utils/review';
 import { buildDocxBlob } from './utils/docxExporter';
 import { saveBlob } from './utils/fileSave';
 import { installBackBridge, setNavigationBack } from './utils/backStack';
@@ -139,6 +143,13 @@ export default function DubbingStudioApp() {
   const [isImporting, setIsImporting] = useState(false);
   const importSequenceRef = useRef(0);
   const [editingToken, setEditingToken] = useState<EditingTokenState | null>(null);
+  const [pendingCorrection, setPendingCorrection] = useState<PendingCorrection | null>(null);
+  const [positionRequest, setPositionRequest] = useState<PreviewPositionRequest | null>(null);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchMode, setSearchMode] = useState<WorkbenchSearchMode>('text');
+  const [activeSearchId, setActiveSearchId] = useState<string | null>(null);
 
   // Built-in library state + integration. Called here so its effects keep their original
   // position (after the tab/orientation effects, before the correction-database effects).
@@ -181,8 +192,8 @@ export default function DubbingStudioApp() {
   const learnedReadings = useMemo(() => database.scripts[documentId]?.learned || [], [database.scripts, documentId]);
   const documentCorrections = useMemo(() => database.scripts[documentId]?.overrides || [], [database.scripts, documentId]);
   const glossaryEntries = useMemo(() => Object.values(database.glossary), [database.glossary]);
-  const annotationInput = useMemo(() => ({ text: rawText, rubyType, glossary: glossaryEntries, sourceOverrides, overrides: documentCorrections, learned: learnedReadings }),
-    [rawText, rubyType, glossaryEntries, sourceOverrides, documentCorrections, learnedReadings]);
+  const annotationInput = useMemo(() => ({ text: rawText, rubyType, glossary: glossaryEntries, sourceOverrides, overrides: documentCorrections, learned: learnedReadings, documentId }),
+    [rawText, rubyType, glossaryEntries, sourceOverrides, documentCorrections, learnedReadings, documentId]);
   const { lines: annotatedLines, busy: isAnnotating, engine, error: annotationError,
     annotate, analyze, retry: retryEngine } = useFuriganaWorker(annotationInput);
   const dictionaryStatus = engine.status;
@@ -223,35 +234,161 @@ export default function DubbingStudioApp() {
   const advanceControllerRef = useRef<AbortController | null>(null);
   useEffect(() => () => { advanceControllerRef.current?.abort(); }, [rawText, rubyType, documentId]);
 
-  // 仅此处 = this occurrence; 全文同词 = every occurrence of the word in this script;
-  // 记住 = also remember it (proper-noun glossary + learned reading) for every script.
+  const lineTexts = useMemo(() => annotatedLines.map(line => line.cleanText), [annotatedLines]);
+  const documentHistory = useMemo(() => database.scripts[documentId]?.history || [], [database.scripts, documentId]);
+  const searchHits = useMemo(() => searchWorkbench(annotatedLines, searchQuery, searchMode),
+    [annotatedLines, searchQuery, searchMode]);
+  const searchUpdating = isAnnotating && Boolean(searchQuery);
+  const legacyManualCount = useMemo(() => {
+    const recorded = new Set(documentHistory.flatMap(entry =>
+      entry.changes.flatMap(change => change.after.map(value => JSON.stringify(value)))));
+    return documentCorrections.filter(entry => !recorded.has(JSON.stringify(entry))).length;
+  }, [documentHistory, documentCorrections]);
+
+  useEffect(() => {
+    // Search belongs to one script; never show a previous book's ranges after switching.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSearchOpen(false);
+    setSearchQuery('');
+    setActiveSearchId(null);
+  }, [documentId]);
+
+  const targetAppearance = (line: ScriptLine, start: number, surface: string) => {
+    let offset = 0;
+    let manual = false;
+    let longWord = false;
+    for (const token of line.tokens) {
+      const end = offset + token.surface.length;
+      if (offset < start + surface.length && start < end) {
+        if (token.readingSource === 'manual') manual = true;
+        if (offset < start || end > start + surface.length) longWord = true;
+      }
+      offset = end;
+    }
+    return { manual, longWord };
+  };
+
+  /**
+   * Restore only removes a manual reading that actually covers this exact target. A manual
+   * reading on 人生 must not make 人 inside it look restorable: doing so would delete the
+   * longer word's override while claiming to restore one character.
+   */
+  const targetIsManual = (line: ScriptLine, lineOccurrence: number, start: number, surface: string) => {
+    const exact = documentCorrections.some(entry => entry.line === line.cleanText &&
+      (entry.lineOccurrence === undefined || entry.lineOccurrence === lineOccurrence) &&
+      entry.start === start && entry.surface === surface);
+    if (exact) return true;
+    const appearance = targetAppearance(line, start, surface);
+    return appearance.manual && !appearance.longWord;
+  };
+
+  const collectLiteralTargets = (surface: string) => {
+    const seen = new Map<string, number>();
+    const found: PendingCorrection['changes'] = [];
+    annotatedLines.forEach(line => {
+      const lineOccurrence = seen.get(line.cleanText) || 0;
+      seen.set(line.cleanText, lineOccurrence + 1);
+      for (let at = line.cleanText.indexOf(surface); at >= 0; at = line.cleanText.indexOf(surface, at + 1)) {
+        const appearance = targetAppearance(line, at, surface);
+        found.push({ mutation: { line: line.cleanText, lineOccurrence, start: at, surface, reading: null, type: rubyType },
+          ...appearance });
+      }
+    });
+    return found;
+  };
+
+  const revertReadingHistory = (historyId: string, onlyChange?: number) => {
+    if (!correctionsReady) return;
+    const result = revertHistoryEntry(databaseRef.current, documentId, rawText, historyId, onlyChange);
+    if (!result.entry) {
+      setImportToast({ kind: 'info', title: t.readingHistorySkippedConflicts.replace('{count}', String(result.skipped)) });
+      return;
+    }
+    databaseRef.current = result.database;
+    setDatabase(result.database);
+    setImportToast({
+      kind: result.skipped ? 'info' : 'done',
+      title: t.readingHistoryResult.replace('{count}', String(result.applied)).replace('{skipped}', String(result.skipped)),
+      ...(result.skipped ? { detail: t.readingHistorySkippedConflicts.replace('{count}', String(result.skipped)) } : {}),
+      action: { label: t.readingHistoryUndo, onClick: () => revertReadingHistory(result.entry!.id) },
+    });
+  };
+
+  const commitCorrections = (
+    changes: PendingCorrection['changes'],
+    kind: 'edit' | 'bulk-edit' | 'restore' | 'bulk-restore',
+    meta: { skippedManual?: number; totalMatches?: number },
+    glossary?: { surface: string; reading: string },
+  ) => {
+    const mutations = changes.map(change => change.mutation);
+    let base = databaseRef.current;
+    if (glossary && glossary.reading) {
+      base = { ...base, glossary: { ...base.glossary,
+        [glossary.surface]: { surface: glossary.surface, reading: glossary.reading, type: rubyType,
+          createdAt: base.glossary[glossary.surface]?.createdAt || Date.now() } } };
+    }
+    const result = applyCorrectionOperation(base, documentId, rawText, mutations, kind, meta);
+    if (!result.entry) {
+      if (base !== databaseRef.current) {
+        databaseRef.current = base;
+        setDatabase(base);
+        setImportToast({ kind: 'done', title: t.glossaryUpdatedNotice });
+      } else {
+        setImportToast({ kind: 'info', title: t.restoreNone });
+      }
+      return null;
+    }
+    const updated = result.database;
+    databaseRef.current = updated;
+    setDatabase(updated);
+    setImportToast({
+      kind: 'done',
+      title: t.readingHistoryChanged.replace('{count}', String(result.entry.changes.length)),
+      ...(meta.skippedManual ? { detail: t.readingHistorySkippedManual.replace('{count}', String(meta.skippedManual)) } : {}),
+      action: { label: t.readingHistoryUndo, onClick: () => revertReadingHistory(result.entry!.id) },
+    });
+    return result.entry;
+  };
+
+  // 仅此处 = this occurrence; 全文相同文字 = every literal match in this script;
+  // 记住 = also remember it in the proper-noun glossary for every script.
   const updateTokenRuby = (reading: string) => {
     if (!editingToken || isAnnotating || !correctionsReady) return;
     const line = annotatedLines.find(value => value.id === editingToken.lineId);
     if (!line) return;
-    const start = line.tokens.slice(0, editingToken.tokenIndex).reduce((sum, token) => sum + token.surface.length, 0);
+    const start = editingToken.rangeStart ??
+      line.tokens.slice(0, editingToken.tokenIndex).reduce((sum, token) => sum + token.surface.length, 0);
     const surface = editingToken.surface;
-    const entries: RubyOverride[] = correctionScope === 'occurrence'
-      ? [{ line: line.cleanText, start, surface, reading, type: rubyType }]
-      : annotatedLines.flatMap(value => {
-          const found: RubyOverride[] = [];
-          for (let at = value.cleanText.indexOf(surface); at !== -1; at = value.cleanText.indexOf(surface, at + surface.length)) {
-            found.push({ line: value.cleanText, start: at, surface, reading, type: rubyType });
-          }
-          return found;
-        });
-    const learned = makeLearnedReading(selectReviewWord(line, editingToken.tokenIndex), reading, rubyType);
-    setDatabase(previous => {
-      const overrides = entries.reduce((list, entry) => upsertRubyOverride(list, entry), previous.scripts[documentId]?.overrides || []);
-      let updated = setScriptOverrides(previous, documentId, overrides);
-      if (correctionScope === 'glossary' && reading) {
-        updated = learnReading(updated, documentId, learned);
-        updated = { ...updated, glossary: { ...updated.glossary,
-          [surface]: { surface, reading, type: rubyType, createdAt: previous.glossary[surface]?.createdAt || Date.now() } } };
-      }
-      return updated;
-    });
+    const lineIndex = Number(editingToken.lineId);
     setEditingToken(null);
+    setPositionRequest({ lineIndex, start, nonce: Date.now() });
+
+    if (correctionScope === 'occurrence') {
+      commitCorrections([{
+        mutation: { line: line.cleanText, lineOccurrence: lineOccurrenceAt(lineTexts, lineIndex), start, surface, reading, type: rubyType },
+        manual: targetAppearance(line, start, surface).manual,
+        longWord: targetAppearance(line, start, surface).longWord,
+      }], 'edit', {});
+      return;
+    }
+
+    const candidates = collectLiteralTargets(surface).map(change => ({
+      ...change,
+      mutation: { ...change.mutation, reading, type: rubyType },
+    }));
+    if (!candidates.length) {
+      setImportToast({ kind: 'error', title: t.bulkConfirmEmpty });
+      return;
+    }
+    setPendingCorrection({
+      mode: correctionScope === 'glossary' ? 'glossary' : 'bulk',
+      surface,
+      reading,
+      changes: candidates,
+      manualCount: candidates.filter(change => change.manual).length,
+      longWordCount: candidates.filter(change => change.longWord).length,
+      totalMatches: candidates.length,
+    });
   };
 
   const openTokenEditor = (lineId: string, tokenIndex: number, lines = annotatedLines, endIndex = tokenIndex) => {
@@ -261,7 +398,7 @@ export default function DubbingStudioApp() {
     setCorrectionScope('occurrence');
     setReviewError('');
     rubyCompositionRef.current = false;
-    setPreviewPage(Math.floor(Number(lineId) / 200));
+    setPreviewPage(Math.floor(Number(lineId) / PREVIEW_PAGE_SIZE));
     const selection = selectReviewWord(line, tokenIndex);
     const end = endIndex !== tokenIndex ? endIndex : selection.tokenEndIndex;
     const selected = line.tokens.slice(selection.tokenIndex, end + 1);
@@ -276,6 +413,193 @@ export default function DubbingStudioApp() {
   };
 
   const saveTokenRuby = () => updateTokenRuby(customRubyInput.trim());
+
+  const openSearchHit = (hit: WorkbenchSearchHit) => {
+    const line = annotatedLines[hit.lineIndex];
+    const token = line?.tokens[hit.tokenIndex];
+    if (!line || !token || !correctionsReady) return;
+    const lineOccurrence = lineOccurrenceAt(lineTexts, hit.lineIndex);
+    const exact = documentCorrections.find(entry => entry.line === line.cleanText &&
+      (entry.lineOccurrence === undefined || entry.lineOccurrence === lineOccurrence) &&
+      entry.start === hit.start && entry.surface === hit.surface);
+    const currentRuby = exact?.reading || (hit.insideLongerToken ? '' : token.ruby || '');
+    setCorrectionScope('occurrence');
+    setReviewError('');
+    rubyCompositionRef.current = false;
+    setActiveSearchId(hit.id);
+    setPreviewPage(Math.floor(hit.lineIndex / PREVIEW_PAGE_SIZE));
+    setEditingToken({
+      lineId: line.id,
+      tokenIndex: hit.tokenIndex,
+      tokenEndIndex: hit.tokenEndIndex,
+      surface: hit.surface,
+      currentRuby,
+      alternatives: hit.insideLongerToken ? [] : (token.ruby ? [token.ruby] : []),
+      rangeStart: hit.start,
+      rangeEnd: hit.end,
+    });
+    setCustomRubyInput(currentRuby);
+    setPositionRequest({ lineIndex: hit.lineIndex, start: hit.start, nonce: Date.now() });
+  };
+
+  const tryRestoreTargets = (targets: Array<{ line: string; lineOccurrence: number; start: number; surface: string }>) => {
+    if (!targets.length) {
+      setImportToast({ kind: 'info', title: t.restoreNone });
+      return;
+    }
+    const seen = new Set<string>();
+    const changes: PendingCorrection['changes'] = [];
+    for (const target of targets) {
+      const key = `${target.line}\0${target.lineOccurrence}\0${target.start}\0${target.surface}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const lineIndex = occurrenceStart(lineTexts, target.line, target.lineOccurrence);
+      if (lineIndex < 0) continue;
+      const line = annotatedLines[lineIndex];
+      if (!line) continue;
+      if (!targetIsManual(line, target.lineOccurrence, target.start, target.surface)) continue;
+      const appearance = targetAppearance(line, target.start, target.surface);
+      changes.push({
+        mutation: { ...target, reading: null, type: rubyType, removeLearned: true },
+        manual: true,
+        longWord: appearance.longWord,
+      });
+    }
+    if (!changes.length) {
+      setImportToast({ kind: 'info', title: t.restoreNone });
+      return;
+    }
+    setPendingCorrection({
+      mode: 'restore',
+      surface: '',
+      reading: '',
+      changes,
+      manualCount: changes.length,
+      longWordCount: changes.filter(change => change.longWord).length,
+      totalMatches: changes.length,
+    });
+  };
+
+  const requestRestoreSearchHits = (hits: WorkbenchSearchHit[]) => {
+    tryRestoreTargets(hits.map(hit => ({
+      line: annotatedLines[hit.lineIndex]?.cleanText || '',
+      lineOccurrence: lineOccurrenceAt(lineTexts, hit.lineIndex),
+      start: hit.start,
+      surface: hit.surface,
+    })));
+  };
+
+  const openSearch = () => setSearchOpen(true);
+  const closeSearch = () => {
+    setSearchOpen(false);
+    setSearchQuery('');
+    setActiveSearchId(null);
+  };
+  const changeSearchQuery = (query: string) => {
+    setSearchQuery(query);
+    setActiveSearchId(null);
+  };
+  const changeSearchMode = (mode: WorkbenchSearchMode) => {
+    setSearchMode(mode);
+    setActiveSearchId(null);
+  };
+  const navigateSearch = (direction: 1 | -1) => {
+    if (!searchHits.length) return;
+    let index: number;
+    if (activeSearchId) {
+      index = nextSearchHit(searchHits, activeSearchId, direction);
+    } else if (direction === 1) {
+      // Start from where the reader is now, like a browser's find bar.
+      index = searchHits.findIndex(hit => hit.lineIndex >= previewPage * PREVIEW_PAGE_SIZE);
+      if (index < 0) index = 0;
+    } else {
+      index = searchHits.length - 1;
+    }
+    const hit = searchHits[index];
+    if (!hit) return;
+    setActiveSearchId(hit.id);
+    setPreviewPage(Math.floor(hit.lineIndex / PREVIEW_PAGE_SIZE));
+    setPositionRequest({ lineIndex: hit.lineIndex, start: hit.start, nonce: Date.now() });
+  };
+
+  const restoreEditingToken = () => {
+    if (!editingToken || isAnnotating || !correctionsReady) return;
+    const line = annotatedLines.find(value => value.id === editingToken.lineId);
+    if (!line) return;
+    const start = editingToken.rangeStart ??
+      line.tokens.slice(0, editingToken.tokenIndex).reduce((sum, token) => sum + token.surface.length, 0);
+    const lineOccurrence = lineOccurrenceAt(lineTexts, Number(editingToken.lineId));
+    if (!targetIsManual(line, lineOccurrence, start, editingToken.surface)) {
+      setImportToast({ kind: 'info', title: t.restoreNone });
+      return;
+    }
+    setEditingToken(null);
+    setPositionRequest({ lineIndex: Number(editingToken.lineId), start, nonce: Date.now() });
+    tryRestoreTargets([{
+      line: line.cleanText,
+      lineOccurrence,
+      start,
+      surface: editingToken.surface,
+    }]);
+  };
+
+  const canRestoreEditingToken = (() => {
+    if (!editingToken) return false;
+    const line = annotatedLines.find(value => value.id === editingToken.lineId);
+    if (!line) return false;
+    const start = editingToken.rangeStart ??
+      line.tokens.slice(0, editingToken.tokenIndex).reduce((sum, token) => sum + token.surface.length, 0);
+    return targetIsManual(line, lineOccurrenceAt(lineTexts, Number(editingToken.lineId)), start, editingToken.surface);
+  })();
+
+  const confirmPendingCorrection = (overwriteManual: boolean) => {
+    if (!pendingCorrection) return;
+    const restore = pendingCorrection.mode === 'restore';
+    // Re-check the targets against the document as it is now. A reading made manual while the
+    // confirmation was open must not be overwritten by default.
+    const selected = pendingCorrection.changes.filter(change => {
+      const index = occurrenceStart(lineTexts, change.mutation.line, change.mutation.lineOccurrence);
+      if (index < 0) return true;
+      const line = annotatedLines[index];
+      if (!line) return true;
+      if (restore) return targetIsManual(line, change.mutation.lineOccurrence, change.mutation.start, change.mutation.surface);
+      return overwriteManual || !targetAppearance(line, change.mutation.start, change.mutation.surface).manual;
+    });
+    const skipped = pendingCorrection.totalMatches - selected.length;
+    const glossary = pendingCorrection.mode === 'glossary'
+      ? { surface: pendingCorrection.surface, reading: pendingCorrection.reading }
+      : undefined;
+    if (!selected.length) {
+      if (glossary) {
+        // "Remember" still belongs in the glossary even when every occurrence already has a
+        // manual reading and the bulk change is skipped.
+        commitCorrections([], 'bulk-edit', { skippedManual: skipped, totalMatches: pendingCorrection.totalMatches }, glossary);
+        setPendingCorrection(null);
+      } else {
+        setImportToast({ kind: 'error', title: t.bulkConfirmEmpty });
+      }
+      return;
+    }
+    const entry = commitCorrections(
+      selected,
+      restore ? 'bulk-restore' : 'bulk-edit',
+      { skippedManual: skipped, totalMatches: pendingCorrection.totalMatches },
+      glossary,
+    );
+    if (entry) setPendingCorrection(null);
+  };
+
+  const locateHistoryTarget = (target: ReadingHistoryTarget) => {
+    const index = occurrenceStart(lineTexts, target.line, target.lineOccurrence);
+    if (index < 0) {
+      setImportToast({ kind: 'info', title: t.readingHistorySkippedConflicts.replace('{count}', '1') });
+      return;
+    }
+    setPreviewPage(Math.floor(index / PREVIEW_PAGE_SIZE));
+    setPositionRequest({ lineIndex: index, start: target.start, nonce: Date.now() });
+    setIsHistoryOpen(false);
+  };
+
   const jumpToNextReview = () => {
     if (!reviewTargets.length || isAnnotating) return;
     const target = reviewTargets[reviewCursorRef.current % reviewTargets.length];
@@ -555,6 +879,22 @@ export default function DubbingStudioApp() {
             reviewCount={reviewCount} jumpToNextReview={jumpToNextReview} reviewError={reviewError}
             openTokenEditor={openTokenEditor} previewPage={previewPage} setPreviewPage={setPreviewPage}
             renderSettings={renderSettings}
+            documentId={documentId}
+            positionRequest={positionRequest}
+            searchOpen={searchOpen}
+            searchQuery={searchQuery}
+            searchMode={searchMode}
+            searchHits={searchHits}
+            activeSearchId={activeSearchId}
+            searchUpdating={searchUpdating}
+            onOpenSearch={openSearch}
+            onCloseSearch={closeSearch}
+            onSearchQueryChange={changeSearchQuery}
+            onSearchModeChange={changeSearchMode}
+            onSearchNavigate={navigateSearch}
+            onOpenSearchHit={openSearchHit}
+            onRestoreSearchHits={requestRestoreSearchHits}
+            onOpenHistory={() => setIsHistoryOpen(true)}
             updateDot={updater.state.hasUpdate}
           />
         )}
@@ -658,7 +998,8 @@ export default function DubbingStudioApp() {
           if (!editingToken) return null;
           const line = annotatedLines.find(l => l.id === editingToken.lineId);
           if (!line) return null;
-          const start = line.tokens.slice(0, editingToken.tokenIndex).reduce((sum, token) => sum + token.surface.length, 0);
+          const start = editingToken.rangeStart ??
+            line.tokens.slice(0, editingToken.tokenIndex).reduce((sum, token) => sum + token.surface.length, 0);
           const word = editingToken.surface;
           return {
             before: line.cleanText.slice(0, start).slice(-40),
@@ -674,6 +1015,30 @@ export default function DubbingStudioApp() {
         setCorrectionScope={setCorrectionScope}
         rubyCompositionRef={rubyCompositionRef}
         saveTokenRuby={saveTokenRuby}
+        canRestoreAutomatic={canRestoreEditingToken}
+        restoreAutomatic={restoreEditingToken}
+        t={t}
+      />
+
+      <CorrectionConfirmModal
+        key={pendingCorrection
+          ? `${pendingCorrection.mode}:${pendingCorrection.totalMatches}:${pendingCorrection.changes[0]?.mutation.line}:${pendingCorrection.changes[0]?.mutation.start}`
+          : 'closed'}
+        correction={pendingCorrection}
+        onCancel={() => setPendingCorrection(null)}
+        onConfirm={confirmPendingCorrection}
+        t={t}
+      />
+
+      <ReadingHistoryModal
+        isOpen={isHistoryOpen}
+        onClose={() => setIsHistoryOpen(false)}
+        history={documentHistory}
+        currentOverrides={documentCorrections}
+        documentLines={lineTexts}
+        manualOverrideCount={legacyManualCount}
+        onLocate={locateHistoryTarget}
+        onRevert={revertReadingHistory}
         t={t}
       />
 

@@ -12,6 +12,9 @@ export interface EditingTokenState {
   surface: string;
   currentRuby: string;
   alternatives: string[];
+  /** Exact character range when a search hit is only part of a token. */
+  rangeStart?: number;
+  rangeEnd?: number;
 }
 
 export type CorrectionScope = 'occurrence' | 'document' | 'glossary';
@@ -27,13 +30,15 @@ interface RubyCorrectionModalProps {
   setCorrectionScope: (scope: CorrectionScope) => void;
   rubyCompositionRef: React.MutableRefObject<boolean>;
   saveTokenRuby: () => void;
+  canRestoreAutomatic: boolean;
+  restoreAutomatic: () => void;
   t: Translations;
 }
 
 /** Mockup "修改读音" sheet: the word, candidate readings, a custom reading, scope, cancel / apply. */
 export function RubyCorrectionModal({
   editingToken, context, onClose, needsReview, customRubyInput, setCustomRubyInput, correctionScope, setCorrectionScope,
-  rubyCompositionRef, saveTokenRuby, t,
+  rubyCompositionRef, saveTokenRuby, canRestoreAutomatic, restoreAutomatic, t,
 }: RubyCorrectionModalProps) {
   const candidates = editingToken ? [...new Set([editingToken.currentRuby, ...editingToken.alternatives].filter(Boolean))] : [];
 
@@ -104,7 +109,18 @@ export function RubyCorrectionModal({
             ]}
           />
 
-          <div className="mt-4 flex gap-2">
+          {canRestoreAutomatic && (
+            <button
+              type="button"
+              className="btn mt-4 h-10 w-full !text-[var(--ok)]"
+              data-testid="restore-automatic-btn"
+              onClick={restoreAutomatic}
+            >
+              {t.restoreAutomatic}
+            </button>
+          )}
+
+          <div className="mt-2 flex gap-2">
             <button type="button" className="btn h-11 flex-1" onClick={onClose}>{t.cancel}</button>
             <button type="button" className="btn btn-ink h-11 flex-1" onClick={saveTokenRuby}>{t.applyButton}</button>
           </div>

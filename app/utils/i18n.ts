@@ -74,6 +74,53 @@ export interface Translations {
   nextPage: string;
   previewPageInfo: string;
 
+  // Workbench search, bulk corrections and reading history
+  workbenchSearchTitle: string;
+  workbenchSearchPlaceholder: string;
+  workbenchSearchText: string;
+  workbenchSearchReading: string;
+  workbenchSearchPrev: string;
+  workbenchSearchNext: string;
+  workbenchSearchNoResults: string;
+  workbenchSearchCount: string;
+  workbenchSearchUpdating: string;
+  workbenchSearchRestore: string;
+  readingHistoryTitle: string;
+  readingHistoryEmpty: string;
+  readingHistoryLocate: string;
+  readingHistoryUndo: string;
+  readingHistoryRedo: string;
+  readingHistoryChanged: string;
+  readingHistorySkippedManual: string;
+  readingHistoryLongWord: string;
+  readingHistoryEntryEdit: string;
+  readingHistoryEntryBulkEdit: string;
+  readingHistoryEntryRestore: string;
+  readingHistoryEntryBulkRestore: string;
+  readingHistoryEntryUndo: string;
+  readingHistoryEntryRedo: string;
+  readingHistoryResult: string;
+  readingHistorySkippedConflicts: string;
+  readingHistoryRestoreItem: string;
+  readingHistoryChangedLater: string;
+  readingHistoryOriginalChanged: string;
+  readingHistoryAuto: string;
+  readingHistoryLegacyNote: string;
+  readingHistoryDetails: string;
+  bulkConfirmTitle: string;
+  bulkConfirmText: string;
+  bulkConfirmApply: string;
+  bulkConfirmOverwrite: string;
+  bulkConfirmOverwriteCount: string;
+  bulkConfirmSkip: string;
+  bulkConfirmLong: string;
+  bulkConfirmEmpty: string;
+  bulkConfirmPreview: string;
+  restoreAutomatic: string;
+  restoreApplied: string;
+  restoreConfirmText: string;
+  restoreNone: string;
+
   // Export Bar
   singleExportTitle: string;
   singleExportDesc: string;
@@ -712,6 +759,52 @@ export const translations: Record<Locale, Translations> = {
     nextPage: '下一页',
     previewPageInfo: '预览第',
 
+    workbenchSearchTitle: '查找正文',
+    workbenchSearchPlaceholder: '输入原文或读音',
+    workbenchSearchText: '原文',
+    workbenchSearchReading: '读音',
+    workbenchSearchPrev: '上一处',
+    workbenchSearchNext: '下一处',
+    workbenchSearchNoResults: '没有找到匹配内容',
+    workbenchSearchCount: '第 {current} / {total} 处',
+    workbenchSearchUpdating: '正在更新查找结果…',
+    workbenchSearchRestore: '恢复这些结果中的人工注音',
+    readingHistoryTitle: '修改记录',
+    readingHistoryEmpty: '这篇台本还没有注音修改记录。',
+    readingHistoryLocate: '定位',
+    readingHistoryUndo: '撤销此操作',
+    readingHistoryRedo: '重做此操作',
+    readingHistoryChanged: '修改 {count} 处',
+    readingHistorySkippedManual: '跳过 {count} 处人工注音',
+    readingHistoryLongWord: '{count} 处位于长词内部',
+    readingHistoryEntryEdit: '单处修改',
+    readingHistoryEntryBulkEdit: '全文相同文字',
+    readingHistoryEntryRestore: '恢复自动注音',
+    readingHistoryEntryBulkRestore: '按查找结果恢复',
+    readingHistoryEntryUndo: '撤销',
+    readingHistoryEntryRedo: '重做',
+    readingHistoryResult: '已恢复 {count} 处，跳过 {skipped} 处冲突',
+    readingHistorySkippedConflicts: '{count} 处原文或读音已变化，未覆盖',
+    readingHistoryRestoreItem: '恢复此项',
+    readingHistoryChangedLater: '此后又修改过',
+    readingHistoryOriginalChanged: '原文已变化',
+    readingHistoryAuto: '自动',
+    readingHistoryLegacyNote: '另有 {count} 处早期人工注音没有修改历史，可在预览中定位后恢复。',
+    readingHistoryDetails: '逐处明细',
+    bulkConfirmTitle: '确认批量修改',
+    bulkConfirmText: '将把匹配「{surface}」的文字改为「{reading}」。',
+    bulkConfirmApply: '应用 {count} 处',
+    bulkConfirmOverwrite: '也覆盖已有人工注音',
+    bulkConfirmOverwriteCount: '已有 {count} 处人工注音',
+    bulkConfirmSkip: '默认跳过 {count} 处人工注音',
+    bulkConfirmLong: '{count} 处位于长词内部',
+    bulkConfirmEmpty: '没有可修改的项',
+    bulkConfirmPreview: '查看命中上下文',
+    restoreAutomatic: '恢复自动注音',
+    restoreApplied: '已恢复 {count} 处自动注音',
+    restoreConfirmText: '将把 {count} 处人工注音恢复为自动注音。',
+    restoreNone: '这些结果中没有可恢复的人工注音',
+
     singleExportTitle: '单文件导出',
     singleExportDesc: '导出以「{title}」命名的 Word (.docx)、SRT 字幕与 TXT 文本',
     exportTxt: '导出 TXT',
@@ -978,7 +1071,7 @@ export const translations: Record<Locale, Translations> = {
     libraryCategoryLabel: '分类',
     librarySortLabel: '排序',
     scopeOccurrence: '仅此处',
-    scopeDocument: '全文同词',
+    scopeDocument: '全文相同文字',
     scopeRemember: '记住',
     customRubyPlaceholder: '自定义读音',
     applyButton: '应用',
@@ -1330,6 +1423,52 @@ export const translations: Record<Locale, Translations> = {
     nextPage: 'Next Page',
     previewPageInfo: 'Preview lines',
 
+    workbenchSearchTitle: 'Search text',
+    workbenchSearchPlaceholder: 'Search original text or readings',
+    workbenchSearchText: 'Text',
+    workbenchSearchReading: 'Reading',
+    workbenchSearchPrev: 'Previous',
+    workbenchSearchNext: 'Next',
+    workbenchSearchNoResults: 'No matches found',
+    workbenchSearchCount: 'Match {current} of {total}',
+    workbenchSearchUpdating: 'Updating search results…',
+    workbenchSearchRestore: 'Restore manual readings in these results',
+    readingHistoryTitle: 'Edit history',
+    readingHistoryEmpty: 'No reading edits have been recorded for this script yet.',
+    readingHistoryLocate: 'Locate',
+    readingHistoryUndo: 'Undo this operation',
+    readingHistoryRedo: 'Redo this operation',
+    readingHistoryChanged: '{count} changed',
+    readingHistorySkippedManual: '{count} manual readings skipped',
+    readingHistoryLongWord: '{count} inside longer words',
+    readingHistoryEntryEdit: 'Single edit',
+    readingHistoryEntryBulkEdit: 'Same text in script',
+    readingHistoryEntryRestore: 'Restore automatic reading',
+    readingHistoryEntryBulkRestore: 'Restore from search results',
+    readingHistoryEntryUndo: 'Undo',
+    readingHistoryEntryRedo: 'Redo',
+    readingHistoryResult: 'Restored {count}, skipped {skipped} conflicts',
+    readingHistorySkippedConflicts: '{count} changed since then and were left alone',
+    readingHistoryRestoreItem: 'Restore this',
+    readingHistoryChangedLater: 'Changed again later',
+    readingHistoryOriginalChanged: 'Original text changed',
+    readingHistoryAuto: 'Auto',
+    readingHistoryLegacyNote: '{count} earlier manual readings have no edit history. Locate them in the preview to restore.',
+    readingHistoryDetails: 'Details',
+    bulkConfirmTitle: 'Confirm bulk edit',
+    bulkConfirmText: 'Change text matching “{surface}” to “{reading}”.',
+    bulkConfirmApply: 'Apply to {count}',
+    bulkConfirmOverwrite: 'Also overwrite existing manual readings',
+    bulkConfirmOverwriteCount: '{count} already have manual readings',
+    bulkConfirmSkip: 'Skip {count} manual readings by default',
+    bulkConfirmLong: '{count} are inside longer words',
+    bulkConfirmEmpty: 'Nothing to change',
+    bulkConfirmPreview: 'Show matching context',
+    restoreAutomatic: 'Restore automatic reading',
+    restoreApplied: 'Restored {count} automatic readings',
+    restoreConfirmText: 'Restore {count} manual readings to automatic.',
+    restoreNone: 'No manual readings to restore in these results',
+
     singleExportTitle: 'Single File Export',
     singleExportDesc: 'Export "{title}" to Word (.docx), SRT subtitles or plain TXT',
     exportTxt: 'Export TXT',
@@ -1596,7 +1735,7 @@ export const translations: Record<Locale, Translations> = {
     libraryCategoryLabel: 'Category',
     librarySortLabel: 'Sort',
     scopeOccurrence: 'This one',
-    scopeDocument: 'All in script',
+    scopeDocument: 'Same text in script',
     scopeRemember: 'Remember',
     customRubyPlaceholder: 'Custom reading',
     applyButton: 'Apply',

@@ -13,6 +13,10 @@ export function useFuriganaWorker(input: AnnotationInput) {
   const clientRef = useRef<AnnotationClient | null>(null);
   const [revision, setRevision] = useState(0);
   const [snapshot, setSnapshot] = useState<{ input: AnnotationInput | null; revision: number; lines: ScriptLine[]; done: boolean; error: string }>({ input: null, revision: -1, lines: [], done: false, error: '' });
+  // Last finished result for the same document. A correction re-runs annotation, but the
+  // workbench keeps showing this snapshot until the replacement is complete instead of
+  // unmounting the page and snapping the reader back to the first line.
+  const [stableSnapshot, setStableSnapshot] = useState<{ input: AnnotationInput; lines: ScriptLine[] } | null>(null);
 
   useEffect(() => {
     // Kuromoji joins paths with path.join; URL schemes would lose a slash.
@@ -40,6 +44,7 @@ export function useFuriganaWorker(input: AnnotationInput) {
         });
       }, controller.signal).then(lines => {
         if (controller.signal.aborted) return;
+        setStableSnapshot({ input, lines });
         setSnapshot({ input, revision, lines, done: true, error: '' });
         const settings = loadTranslationSettings();
         if (settings.engine === 'llm' && settings.aiReadingReview && settings.llm.apiKey.trim()) {
@@ -86,7 +91,16 @@ export function useFuriganaWorker(input: AnnotationInput) {
   }, []);
 
   const current = snapshot.input === input && snapshot.revision === revision;
-  const lines = current ? snapshot.lines : [];
+  const sameDocument = (left: AnnotationInput, right: AnnotationInput) =>
+    left.text === right.text && (left.documentId || '') === (right.documentId || '');
+  const retained = stableSnapshot && sameDocument(stableSnapshot.input, input) ? stableSnapshot.lines : [];
+  // Once a same-document snapshot exists, keep showing all of it while the replacement streams
+  // in. Exposing the new run's first 50-line chunk would shrink the page list and throw the
+  // reader back to the first page until the rest arrived.
+  // Keep it too if the replacement run fails: clearing the preview on a transient worker error
+  // would recreate the jump-to-top this hook prevents.
+  const showSnapshot = current && !snapshot.error && (snapshot.done || retained.length === 0);
+  const lines = showSnapshot ? snapshot.lines : retained;
   const busy = !current || !snapshot.done;
   return { lines, busy, engine, error: current ? snapshot.error : '',
     progress: busy ? Math.round(lines.length / Math.max(1, input.text.split('\n').length) * 100) : 100,
