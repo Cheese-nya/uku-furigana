@@ -12,6 +12,24 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '1.8.2',
+    date: '2026-11-06',
+    items: {
+      'zh-CN': [
+        '阅读器字号上限从 26 px 提升到 40 px，可在 14–40 px 之间调整；横排、竖排和双语对照都生效，调整时当前阅读行保持不动。工作台与导出仍保持 26 px 上限。',
+        '网页版词典加载明显加快：注音词典改为 Brotli 压缩，点词词典的日中/日英分片并发下载；不支持 Brotli 的浏览器会自动回退到 gzip。',
+        '注音词典会缓存在浏览器中，刷新或重新打开页面不再重复下载和解压那份约 100 MB 的数据。',
+        '点词词典升级改为原子替换：下载或校验失败时旧词典仍可继续查询，不会留下半套词典；同时移除了会在慢网络下反复重启下载的 60 秒超时。',
+      ],
+      en: [
+        'Reader type now goes up to 40 px (adjustable from 14–40 px) in horizontal, vertical and bilingual reading, and the current line stays in place while resizing. The editor and exports keep their 26 px limit.',
+        'Web dictionary loading is much faster: the tokenizer dictionary is Brotli-compressed and the ja–zh/ja–en shards download concurrently, with an automatic gzip fallback for browsers without Brotli support.',
+        'The tokenizer dictionary is cached in the browser, so a reload no longer downloads and unpacks the same ~100 MB again.',
+        'Point-dictionary upgrades now install atomically: if a download or check fails, the previous dictionary stays usable instead of leaving half an install. The 60-second timeout that restarted slow downloads is gone.',
+      ],
+    },
+  },
+  {
     version: '1.8.1',
     date: '2026-11-02',
     items: {
