@@ -172,7 +172,7 @@ function FeedbackForm({
         {t.feedbackLogPreview}
         <IconChevronDown
           size={16}
-          className={`shrink-0 text-[var(--label-3)] transition-transform duration-[420ms] [transition-timing-function:var(--spring-bouncy)] ${previewOpen ? 'rotate-180' : ''}`}
+          className={`feedback-chevron shrink-0 text-[var(--label-3)] transition-transform duration-[420ms] [transition-timing-function:var(--spring-bouncy)] ${previewOpen ? 'rotate-180' : ''}`}
         />
       </button>
       <div className={`disclosure ${previewOpen ? 'is-open' : ''}`}>
@@ -267,26 +267,26 @@ function FeedbackForm({
 
       {preview}
 
-      <p className="rounded-[18px] bg-[color-mix(in_srgb,var(--review)_12%,transparent)] p-3.5 text-xs leading-relaxed text-[var(--label-2)]">{t.feedbackPrivacy}</p>
+      <p className="rounded-[18px] bg-[var(--review-soft)] p-3.5 text-xs leading-relaxed text-[var(--label-2)]">{t.feedbackPrivacy}</p>
 
       <div className={cardClass}>
         <SwitchRow label={t.feedbackConsent} checked={consent} onChange={setConsent} />
       </div>
 
       {phase === 'success' && result?.ok && (
-        <p ref={statusRef} role="status" className="rise-in scroll-mb-20 flex items-center gap-2 rounded-[18px] bg-[color-mix(in_srgb,var(--ok)_12%,transparent)] p-3.5 text-xs font-medium text-[var(--ok)]">
+        <p ref={statusRef} role="status" className="rise-in scroll-mb-20 flex items-center gap-2 rounded-[18px] bg-[var(--ok-wash)] p-3.5 text-xs font-medium text-[var(--ok)]">
           <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-[var(--ok)] text-white"><IconCheck size={13} /></span>
           {t.feedbackSuccess.replace('{number}', String(result.number ?? ''))}
         </p>
       )}
       {phase === 'error' && (
-        <p ref={statusRef} role="alert" className="rise-in scroll-mb-20 rounded-[18px] bg-[color-mix(in_srgb,var(--danger)_12%,transparent)] p-3.5 text-xs font-medium text-[var(--danger)]">
+        <p ref={statusRef} role="alert" className="rise-in scroll-mb-20 rounded-[18px] bg-[var(--danger-soft)] p-3.5 text-xs font-medium text-[var(--danger)]">
           {errorText(result?.error, t)}
         </p>
       )}
 
       {/* pinned to the bottom of the sheet while the form scrolls, like the footer of the other sheets */}
-      <div className="sticky bottom-0 z-10 -mb-px flex gap-2 border-t border-[var(--sep)] bg-[color-mix(in_srgb,var(--surface)_84%,transparent)] pt-3 backdrop-blur-xl sm:justify-end">{footer}</div>
+      <div className="sticky bottom-0 z-10 -mb-px flex gap-2 border-t border-[var(--sep)] bg-[var(--sheet-fill)] pt-3 backdrop-blur-xl sm:justify-end">{footer}</div>
     </div>
   );
 }

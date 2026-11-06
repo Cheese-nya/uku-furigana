@@ -652,7 +652,7 @@ function BookCover({ book, t, categoryText, lifted, onOpen, onMenu }: {
         onPointerUp={cancel}
         onPointerCancel={cancel}
         onPointerLeave={cancel}
-        className={`relative aspect-[3/4.2] cursor-pointer overflow-hidden rounded-[4px_10px_10px_4px] transition-[scale,box-shadow] duration-[560ms] [transition-timing-function:var(--spring-bouncy)] active:scale-[0.96] active:duration-[140ms] ${
+        className={`library-book relative aspect-[3/4.2] cursor-pointer overflow-hidden rounded-[4px_10px_10px_4px] transition-[scale,box-shadow] duration-[560ms] [transition-timing-function:var(--spring-bouncy)] active:scale-[0.96] active:duration-[140ms] ${
           lifted
             ? 'scale-[1.05] shadow-[0_2px_4px_rgba(0,0,0,0.12),0_24px_40px_-14px_rgba(0,0,0,0.5)]'
             : 'shadow-[0_1px_2px_rgba(0,0,0,0.12),0_8px_20px_-10px_rgba(0,0,0,0.35)]'

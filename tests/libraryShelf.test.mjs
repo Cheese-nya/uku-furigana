@@ -99,7 +99,7 @@ test('移动端玻璃 Tab 栏与底部弹出面板', () => {
     'utf8',
   );
   assert.ok(mobileNavSource.includes('data-testid="mobile-nav-bar"'), 'MobileNavBar must include mobile-nav-bar testid');
-  assert.ok(mobileNavSource.includes('className={`glass'), 'MobileNavBar must use the glass material');
+  assert.ok(mobileNavSource.includes('glass glass-solid glass-nav'), 'MobileNavBar must use the glass material');
   assert.ok(mobileNavSource.includes('safe-area-inset-bottom'), 'MobileNavBar must respect safe-area-inset-bottom');
   assert.ok(modalSource.includes('max-sm:rounded-t-[34px]'), 'Modal must render as bottom sheet on mobile screens');
   assert.ok(modalSource.includes('max-sm:translate-y-full'), 'bottom sheet slides up from the bottom');

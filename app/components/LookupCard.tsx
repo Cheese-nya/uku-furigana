@@ -125,7 +125,7 @@ export function BottomCard({ open, onClose, label, children }: { open: boolean; 
       role="dialog"
       aria-label={label}
       aria-hidden={!open}
-      className={`glass glass-sheet fixed inset-x-2 bottom-[max(8px,env(safe-area-inset-bottom))] z-[72] flex flex-col overflow-hidden rounded-[30px] transition-[translate,height] duration-[560ms,520ms] [transition-timing-function:var(--spring-smooth)] ${
+      className={`lookup-bottom-card glass glass-sheet fixed inset-x-2 bottom-[max(8px,env(safe-area-inset-bottom))] z-[72] flex flex-col overflow-hidden rounded-[30px] transition-[translate,height] duration-[560ms,520ms] [transition-timing-function:var(--spring-smooth)] ${
         tall ? 'h-[86%]' : 'h-[46%]'} ${open ? 'translate-y-0' : 'pointer-events-none translate-y-[calc(100%+64px)]'}`}
     >
       <div

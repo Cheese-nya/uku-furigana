@@ -457,8 +457,8 @@ function PreviewCard({
               }}
               className={`cursor-pointer rounded-[3px] px-[0.5px] text-inherit outline-none ${
                 active
-                  ? 'bg-[color-mix(in_srgb,var(--review)_36%,transparent)] shadow-[0_0_0_1px_var(--review)]'
-                  : 'bg-[color-mix(in_srgb,var(--update-dot)_32%,transparent)]'
+                  ? 'bg-[var(--review-hit)] shadow-[0_0_0_1px_var(--review)]'
+                  : 'bg-[var(--update-hit)]'
               }`}
             >
               {text}

@@ -103,7 +103,7 @@ export function ReadingToolsSheet({
               role="switch"
               aria-checked={settings.quickDraft !== false}
               aria-label={t.quickDraft}
-              className="switch shrink-0 origin-right scale-[.85]"
+              className="switch reading-tools-switch shrink-0 origin-right scale-[.85]"
               onClick={() => set({ quickDraft: settings.quickDraft === false })}
             ><i /></button>
           </div>
@@ -118,7 +118,7 @@ export function ReadingToolsSheet({
                 role="switch"
                 aria-checked={Boolean(settings.aiReadingReview)}
                 aria-label={t.aiReadingReview}
-                className="switch shrink-0 origin-right scale-[.85]"
+                className="switch reading-tools-switch shrink-0 origin-right scale-[.85]"
                 onClick={() => set({ aiReadingReview: !settings.aiReadingReview })}
               ><i /></button>
             </div>
@@ -161,7 +161,7 @@ export function ReadingToolsSheet({
               role="switch"
               aria-checked={dict.enabled}
               aria-label={dict.title}
-              className="switch shrink-0 origin-right scale-[.85]"
+              className="switch reading-tools-switch shrink-0 origin-right scale-[.85]"
               onClick={() => onToggleDictionary(dict.id, !dict.enabled)}
             ><i /></button>
             {!dict.builtin && (

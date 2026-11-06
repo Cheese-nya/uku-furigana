@@ -23,7 +23,7 @@ export function GlassToast({ toast, onDismiss }: { toast: ToastState | null; onD
       ref={ref}
       role="status"
       aria-live="polite"
-      className={`glass glass-sheet fixed bottom-[max(24px,env(safe-area-inset-bottom))] left-4 right-4 z-[65] flex min-h-[44px] items-center gap-2.5 rounded-[22px] py-1 pl-4 pr-2 text-[13px] font-medium max-md:bottom-[calc(92px+env(safe-area-inset-bottom))] md:left-1/2 md:right-auto md:max-w-[min(560px,calc(100%-24px))] md:-translate-x-1/2 md:rounded-full ${
+      className={`glass-toast glass glass-sheet fixed bottom-[max(24px,env(safe-area-inset-bottom))] left-4 right-4 z-[65] flex min-h-[44px] items-center gap-2.5 rounded-[22px] py-1 pl-4 pr-2 text-[13px] font-medium max-md:bottom-[calc(92px+env(safe-area-inset-bottom))] md:left-1/2 md:right-auto md:max-w-[min(560px,calc(100%-24px))] md:-translate-x-1/2 md:rounded-full ${
         toast
           ? 'translate-y-0 opacity-100 transition-[translate,opacity] duration-[560ms,200ms] [transition-timing-function:var(--spring-bouncy),ease]'
           : 'pointer-events-none translate-y-[160%] opacity-0 transition-[translate,opacity] duration-[300ms,200ms]'

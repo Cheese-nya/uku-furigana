@@ -74,8 +74,8 @@ export function GlossaryModal({ isOpen, onClose, entries, onChange, t }: Props) 
       <label className="grid gap-1.5 text-xs font-medium text-[var(--label)]">{t.searchEntryLabel}<input className={inputClass} value={search} onChange={event => setSearch(event.target.value)} placeholder={t.searchEntryPlaceholder} /></label>
       <p className="text-xs tabular-nums text-[var(--label-2)]">{t.entryCountSummary.replace('{total}', String(Object.keys(entries).length)).replace('{visible}', String(visible.length))}</p>
       <ul className="max-h-64 overflow-y-auto rounded-[18px] bg-[var(--surface)] shadow-[var(--card-shadow)]">{visible.map(entry => <li key={entry.surface} className="flex items-center justify-between gap-3 border-b border-[var(--sep)] p-3 last:border-b-0"><div lang="ja" className="min-w-0"><strong className="font-semibold text-[var(--label)]">{entry.surface}</strong><span className="ml-3 font-semibold text-[var(--ruby)]">{entry.reading}</span></div><div className="flex shrink-0 gap-2"><button type="button" aria-label={`${t.editButton} ${entry.surface}`} className="btn" onClick={() => { setSurface(entry.surface); setReading(entry.reading); setType(entry.type); setEditingSurface(entry.surface); }}>{t.editButton}</button><button type="button" aria-label={`${t.deleteButton} ${entry.surface}`} className="btn btn-danger" onClick={() => { const next = { ...entries }; delete next[entry.surface]; onChange(next); if (editingSurface === entry.surface) reset(); }}>{t.deleteButton}</button></div></li>)}</ul>
-      {error && <p role="alert" className="rounded-xl bg-[color-mix(in_srgb,var(--danger)_12%,transparent)] p-3 text-xs font-medium text-[var(--danger)]">{error}</p>}
-      {message && <p role="status" className="rounded-xl bg-[color-mix(in_srgb,var(--ok)_12%,transparent)] p-3 text-xs font-medium text-[var(--ok)]">{message}</p>}
+      {error && <p role="alert" className="rounded-xl bg-[var(--danger-soft)] p-3 text-xs font-medium text-[var(--danger)]">{error}</p>}
+      {message && <p role="status" className="rounded-xl bg-[var(--ok-wash)] p-3 text-xs font-medium text-[var(--ok)]">{message}</p>}
     </div>
   </Modal>;
 }

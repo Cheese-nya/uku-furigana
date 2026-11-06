@@ -51,8 +51,12 @@ export const Modal: React.FC<ModalProps> = ({
     if (!sheet || !backdrop) return;
     sheet.style.transition = 'none';
     sheet.style.translate = `0 ${offset}px`;
-    // a touch narrower as it sinks, like glass drawing away from the screen
-    if (!prefersReducedMotion()) sheet.style.scale = String(1 - Math.min(0.04, dragProgress(offset, height) * 0.08));
+    // Chromium <104 ignores individual transform properties. A legacy drag
+    // owns the whole transform, then clears it before closing / springing back.
+    const legacyTransform = typeof CSS !== 'undefined' && !CSS.supports?.('translate', '0');
+    const scale = prefersReducedMotion() ? 1 : 1 - Math.min(0.04, dragProgress(offset, height) * 0.08);
+    if (legacyTransform) sheet.style.transform = `translateY(${offset}px) scale(${scale})`;
+    else sheet.style.scale = String(scale);
     backdrop.style.transition = 'none';
     backdrop.style.opacity = String(1 - dragProgress(offset, height));
   };
@@ -63,6 +67,7 @@ export const Modal: React.FC<ModalProps> = ({
       el.style.transition = '';
       el.style.translate = '';
       el.style.scale = '';
+      el.style.transform = '';
       el.style.opacity = '';
     }
   };
@@ -180,7 +185,8 @@ export const Modal: React.FC<ModalProps> = ({
       <div
         ref={modalRef}
         tabIndex={-1}
-        className={`glass glass-sheet relative flex max-h-[92dvh] w-full ${maxWidthClasses[maxWidth]} flex-col overflow-hidden rounded-[30px] bg-[color-mix(in_srgb,var(--surface)_80%,transparent)] p-[22px] text-[var(--label)] shadow-[var(--glass-shadow)] outline-none transition-[scale,opacity,translate] max-sm:rounded-t-[34px] max-sm:rounded-b-none max-sm:pb-[max(22px,env(safe-area-inset-bottom))] sm:duration-[560ms,200ms,560ms] sm:[transition-timing-function:var(--spring-bouncy),ease,var(--spring-smooth)] max-sm:scale-100 max-sm:opacity-100 max-sm:duration-[560ms] max-sm:[transition-timing-function:var(--spring-smooth)] ${visible ? 'sm:scale-100 sm:opacity-100 max-sm:translate-y-0' : 'sm:scale-90 sm:opacity-0 max-sm:translate-y-full'}`}
+        data-visible={visible ? 'true' : 'false'}
+        className={`modal-sheet glass glass-sheet relative flex w-full ${maxWidthClasses[maxWidth]} flex-col overflow-hidden rounded-[30px] bg-[var(--sheet-fill)] p-[22px] text-[var(--label)] shadow-[var(--glass-shadow)] outline-none transition-[scale,opacity,translate] max-sm:rounded-t-[34px] max-sm:rounded-b-none max-sm:pb-[max(22px,env(safe-area-inset-bottom))] sm:duration-[560ms,200ms,560ms] sm:[transition-timing-function:var(--spring-bouncy),ease,var(--spring-smooth)] max-sm:scale-100 max-sm:opacity-100 max-sm:duration-[560ms] max-sm:[transition-timing-function:var(--spring-smooth)] ${visible ? 'sm:scale-100 sm:opacity-100 max-sm:translate-y-0' : 'sm:scale-90 sm:opacity-0 max-sm:translate-y-full'}`}
       >
         {/* the whole top strip is the grab area (not just the 5px pill), and the pill swells under the finger */}
         <div
@@ -199,7 +205,7 @@ export const Modal: React.FC<ModalProps> = ({
           </button>
         </header>
         )}
-        <div className="max-h-[calc(92dvh-130px)] overflow-y-auto text-[var(--label-2)]">{children}</div>
+        <div className="modal-body overflow-y-auto text-[var(--label-2)]">{children}</div>
         {footer && <footer className="mt-4 flex shrink-0 justify-end gap-3 border-t border-[var(--sep)] pt-4">{footer}</footer>}
       </div>
     </div>

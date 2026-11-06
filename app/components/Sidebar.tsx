@@ -45,7 +45,7 @@ export function Sidebar({ activeTab, onSelectTab, libraryBookCount, batchCount, 
       data-testid="sidebar"
       aria-hidden={hidden || undefined}
       style={{ width: SIDEBAR_WIDTH }}
-      className={`glass fixed bottom-2.5 left-2.5 top-[max(10px,env(safe-area-inset-top))] z-40 hidden flex-col rounded-[24px] px-2.5 py-3.5 overscroll-none touch-none transition-[translate,opacity] duration-[620ms] [transition-timing-function:var(--spring-smooth)] md:flex ${
+      className={`sidebar glass fixed bottom-2.5 left-2.5 top-[max(10px,env(safe-area-inset-top))] z-40 hidden flex-col rounded-[24px] px-2.5 py-3.5 overscroll-none touch-none transition-[translate,opacity] duration-[620ms] [transition-timing-function:var(--spring-smooth)] md:flex ${
         hidden ? 'pointer-events-none -translate-x-[calc(100%+20px)] opacity-0' : ''
       }`}
     >
@@ -81,7 +81,7 @@ export function Sidebar({ activeTab, onSelectTab, libraryBookCount, batchCount, 
           <IconGear />
           <span>{t.settingsTitle}</span>
         </GlassButton>
-        {updateDot && <UpdateDot className="!right-3 !top-1/2 -translate-y-1/2" />}
+        {updateDot && <UpdateDot className="update-dot !right-3 !top-1/2 -translate-y-1/2" />}
       </div>
       {renderSettings(settingsAnchor, settingsOpen, () => setSettingsOpen(false))}
     </aside>

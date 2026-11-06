@@ -3,6 +3,12 @@
   "version": "1.8.2",
   "license": "PolyForm-Noncommercial-1.0.0",
   "private": true,
+  "browserslist": [
+    "Chrome >= 92",
+    "Edge >= 92",
+    "Firefox >= 111",
+    "Safari >= 16.4"
+  ],
   "scripts": {
     "predev": "node scripts/vendor-assets.mjs",
     "dev": "next dev",
@@ -35,6 +41,7 @@
     "react-dom": "19.2.4"
   },
   "devDependencies": {
+    "@csstools/postcss-cascade-layers": "^6.0.2",
     "@tailwindcss/postcss": "^4",
     "@types/file-saver": "^2.0.7",
     "@types/kuromoji": "^0.1.3",
@@ -45,6 +52,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.12",
     "fake-indexeddb": "^6.2.7",
+    "postcss": "^8.5.32",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

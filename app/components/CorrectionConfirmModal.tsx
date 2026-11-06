@@ -131,7 +131,7 @@ export function CorrectionConfirmModal({ correction, onCancel, onConfirm, t }: C
                   className="rounded-lg bg-[var(--fill-2)] px-2.5 py-2 text-xs">
                   <div lang="ja" className="leading-relaxed text-[var(--label-2)]">
                     {context.before}
-                    <b className={change.longWord ? 'bg-[color-mix(in_srgb,var(--review)_22%,transparent)] px-0.5 font-semibold text-[var(--label)]' : 'px-0.5 font-semibold text-[var(--label)]'}>
+                    <b className={change.longWord ? 'bg-[var(--review-wash)] px-0.5 font-semibold text-[var(--label)]' : 'px-0.5 font-semibold text-[var(--label)]'}>
                       {surface}
                     </b>
                     {context.after}

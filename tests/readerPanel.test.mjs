@@ -149,7 +149,7 @@ test('设置菜单：语言、外观（自动/浅色/深色）、学到的读音
 test('外壳：桌面玻璃侧栏，手机 52px 玻璃 Tab 栏（无额外按钮）', () => {
   assert.ok(sidebar.includes('data-testid="app-brand-title"'));
   assert.ok(sidebar.includes('t.settingsTitle'), 'sidebar keeps the mockup settings row');
-  assert.ok(mobileNav.includes('h-[52px]') && mobileNav.includes('className={`glass') && mobileNav.includes('<LiquidSelector'));
+  assert.ok(mobileNav.includes('h-[52px]') && mobileNav.includes('glass glass-solid glass-nav') && mobileNav.includes('<LiquidSelector'));
   assert.equal(mobileNav.includes('IconGear'), false, 'no extra settings button next to the tab bar');
 });
 
