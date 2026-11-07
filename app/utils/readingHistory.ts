@@ -8,6 +8,7 @@ import {
   type ScriptCorrectionEntry,
 } from './correctionDatabase';
 import { readingContext } from './review';
+import { sanitizeText } from './textSanitize';
 import type { RubyType } from './furigana';
 import { validateRubyOverrides, type RubyOverride } from './rubyOverrides';
 
@@ -30,7 +31,7 @@ export interface CorrectionOperationMeta {
 }
 
 function normalizedLines(text: string): string[] {
-  return text.replace(/\r\n?/g, '\n').split('\n');
+  return sanitizeText(text).split('\n');
 }
 
 function rangesOverlap(left: { start: number; surface: string }, right: { start: number; surface: string }) {
@@ -214,8 +215,13 @@ export function revertHistoryEntry(
   const changes: ReadingHistoryChange[] = [];
   let skipped = 0;
 
-  for (const change of selected) {
+  // Reverse the writes in reverse order: literal matches may overlap each other.
+  for (const change of [...selected].reverse()) {
+    const restoredRangeHasNewerEntries = change.before.some(previous =>
+      specificEntries(overrides, { ...change.target, start: previous.start, surface: previous.surface })
+        .some(current => !change.after.some(expected => sameEntries([current], [expected]))));
     if (occurrenceStart(lines, change.target.line, change.target.lineOccurrence) < 0 ||
+      restoredRangeHasNewerEntries ||
       !sameEntries(specificEntries(overrides, change.target), change.after)) {
       skipped++;
       continue;

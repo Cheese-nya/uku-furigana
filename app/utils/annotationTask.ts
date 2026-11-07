@@ -53,7 +53,7 @@ export function createAnnotator(getTable?: () => ReadingTable | null) {
   return {
     clear: () => cache.clear(),
     async run(input: AnnotationInput, cancelled: () => boolean, onChunk: (chunk: AnnotationChunk) => void): Promise<void> {
-      const texts = input.text.split('\n');
+      const texts = sanitizeText(input.text).split('\n');
       const source = groupOverrides(input.sourceOverrides);
       const overrides = groupOverrides(input.overrides);
       const seenLines = new Map<string, number>();

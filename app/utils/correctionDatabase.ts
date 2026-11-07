@@ -1,3 +1,4 @@
+import { uniqueId } from './uniqueId';
 import type { RubyType } from './furigana';
 import { validateRubyOverrides, type RubyOverride } from './rubyOverrides';
 
@@ -204,7 +205,7 @@ export function findScript(database: CorrectionDatabaseV2, fingerprint: string):
   return Object.values(database.scripts).find(script => !script.legacy && script.fingerprints.includes(fingerprint));
 }
 
-export function resolveScript(database: CorrectionDatabaseV2, title: string, text: string, fingerprint: string, id = `script:${crypto.randomUUID()}`) {
+export function resolveScript(database: CorrectionDatabaseV2, title: string, text: string, fingerprint: string, id = `script:${uniqueId()}`) {
   const known = findScript(database, fingerprint);
   if (known) return { database, scriptId: known.scriptId };
   const legacy = Object.values(database.scripts).find(script => script.legacy && !script.adoptedBy && script.title === title &&

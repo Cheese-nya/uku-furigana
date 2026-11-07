@@ -1,4 +1,5 @@
 'use client';
+import { uniqueId } from '../utils/uniqueId';
 
 import { useEffect, useMemo, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import type { AppTab } from '../components/MobileNavBar';
@@ -247,7 +248,7 @@ export function useLibraryController({
     parsed, fingerprint, edit, duplicate, duplicateMode,
   }: ImportCommitArgs): Promise<BookItem> => {
     const keepBoth = duplicateMode === 'keep-both' && Boolean(duplicate);
-    const generatedId = keepBoth ? `book:${crypto.randomUUID()}` : undefined;
+    const generatedId = keepBoth ? `book:${uniqueId()}` : undefined;
     const coverUrl = parsed.cover ? await downscaleCover(parsed.cover).catch(() => undefined) : undefined;
     const next = await upsertBook(libraryDbRef.current, importEditToUpsertInput(parsed, edit, fingerprint, {
       ...(duplicateMode === 'merge' && duplicate ? { bookId: duplicate.bookId } : {}),

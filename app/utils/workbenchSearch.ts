@@ -54,7 +54,7 @@ export function searchWorkbench(
   query: string,
   mode: WorkbenchSearchMode,
 ): WorkbenchSearchHit[] {
-  const needle = query.normalize('NFKC');
+  const needle = query;
   if (!needle) return [];
   const readingNeedle = normalizeSearchReading(needle);
   const hits: WorkbenchSearchHit[] = [];

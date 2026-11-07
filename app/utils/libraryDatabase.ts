@@ -1,3 +1,4 @@
+import { uniqueId } from './uniqueId';
 import { fingerprintText } from './correctionDatabase';
 import { cleanScriptTitle, stripExportWatermark } from './docxImporter';
 import type { RubyOverride } from './rubyOverrides';
@@ -248,7 +249,7 @@ export async function upsertBook(db: LibraryDatabase, input: UpsertBookInput): P
     : input.allowDuplicate
       ? undefined
       : findByFingerprint(db, fingerprint);
-  const bookId = existing?.bookId || input.bookId || `book:${crypto.randomUUID()}`;
+  const bookId = existing?.bookId || input.bookId || `book:${uniqueId()}`;
   const readingProgress = existing?.readingProgress ?? emptyProgress(now);
   const author = existing
     ? (input.author !== undefined ? input.author.trim() : existing.author)
@@ -393,7 +394,7 @@ export function createFolder(db: LibraryDatabase, name: string, now = Date.now()
   if (!clean) return { db, folder: null };
   const same = Object.values(db.folders).find(folder => folder.name.toLowerCase() === clean.toLowerCase());
   if (same) return { db, folder: same };
-  const folder: LibraryFolder = { folderId: `folder:${crypto.randomUUID()}`, name: clean, createdAt: now };
+  const folder: LibraryFolder = { folderId: `folder:${uniqueId()}`, name: clean, createdAt: now };
   return { db: { ...db, folders: { ...db.folders, [folder.folderId]: folder } }, folder };
 }
 
@@ -482,7 +483,7 @@ export function addBookmark(db: LibraryDatabase, bookId: string, bookmark: Omit<
   const book = db.books[bookId];
   if (!book) return db;
   const item: BookmarkItem = {
-    id: bookmark.id || `bookmark:${crypto.randomUUID()}`,
+    id: bookmark.id || `bookmark:${uniqueId()}`,
     chapterIndex: bookmark.chapterIndex,
     lineIndex: bookmark.lineIndex,
     label: bookmark.label,

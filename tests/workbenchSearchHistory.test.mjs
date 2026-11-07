@@ -168,6 +168,39 @@ test('reading search treats hiragana and katakana as equal', () => {
   assert.equal(searchWorkbench(lines, 'ジンセイ', 'reading')[0].surface, '人生');
 });
 
+test('literal search preserves fullwidth and compatibility characters', () => {
+  const line = scriptLine(0, 'Ａ①㍿', [{ surface: 'Ａ①㍿' }]);
+  for (const query of ['Ａ', '①', '㍿']) {
+    assert.equal(searchWorkbench([line], query, 'text')[0].surface, query);
+  }
+});
+
+test('undo never restores a larger override over a newer neighboring edit', async () => {
+  const { database, id } = await newScript('人生');
+  const edit = (db, start, surface, reading) => applyCorrectionOperation(db, id, '人生', [
+    { line: '人生', lineOccurrence: 0, start, surface, reading, type: 'hiragana' },
+  ], 'edit');
+  const whole = edit(database, 0, '人生', 'じんせい');
+  const first = edit(whole.database, 0, '人', 'ひと');
+  const neighbor = edit(first.database, 1, '生', 'せい');
+  const undone = revertHistoryEntry(neighbor.database, id, '人生', first.entry.id);
+  assert.equal(undone.applied, 0);
+  assert.equal(undone.skipped, 1);
+  assert.deepEqual(undone.database, neighbor.database);
+});
+
+test('overlapping literal bulk writes undo in reverse order', async () => {
+  const { database, id } = await newScript('人人人');
+  const bulk = applyCorrectionOperation(database, id, '人人人', [0, 1].map(start => ({
+    line: '人人人', lineOccurrence: 0, start, surface: '人人', reading: 'ひとびと', type: 'hiragana',
+  })), 'bulk-edit');
+  const undone = revertHistoryEntry(bulk.database, id, '人人人', bulk.entry.id);
+  assert.equal(undone.applied, 2);
+  assert.deepEqual(undone.database.scripts[id].overrides, []);
+  const redone = revertHistoryEntry(undone.database, id, '人人人', undone.entry.id);
+  assert.deepEqual(redone.database.scripts[id].overrides, bulk.database.scripts[id].overrides);
+});
+
 test('occurrenceStart distinguishes identical lines and rejects an impossible occurrence', () => {
   const lines = ['同じ', '違う', '同じ'];
   assert.equal(occurrenceStart(lines, '同じ', 0), 0);
