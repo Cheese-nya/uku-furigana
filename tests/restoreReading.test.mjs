@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { before, test } from 'node:test';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { loadTypescript } from './loadTypescript.mjs';
 

@@ -21,16 +21,6 @@ const source = readFileSync(
 
 const line = readFileSync(fileURLToPath(new URL('../app/components/ReaderLine.tsx', import.meta.url)), 'utf8');
 
-// app/page.tsx was split: its Editor view, sidebar items, library and batch logic now live in
-// these files, so page-level source assertions read them all together.
-const readPageSplitSource = () => [
-  '../app/page.tsx',
-  '../app/components/EditorWorkspace.tsx',
-  '../app/components/Sidebar.tsx',
-  '../app/hooks/useLibraryController.ts',
-  '../app/hooks/useBatchProcessing.ts',
-].map(path => readFileSync(fileURLToPath(new URL(path, import.meta.url)), 'utf8')).join('\n');
-
 const read = path => readFileSync(fileURLToPath(new URL(path, import.meta.url)), 'utf8');
 const typography = read('../app/components/TypographyPopover.tsx');
 const settings = read('../app/components/SettingsMenu.tsx');
