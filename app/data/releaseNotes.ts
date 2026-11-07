@@ -12,6 +12,26 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '1.8.3',
+    date: '2026-11-07',
+    items: {
+      'zh-CN': [
+        '工作台新增整篇原文与读音查找：可逐处定位、跨分页导航，直接打开命中位置的注音编辑；查找只在本机进行，不上传正文或搜索词。',
+        '「全文同词」改为「全文相同文字」并增加执行前确认：显示命中、将修改和跳过的人工注音数量；默认不覆盖已有人工修改。',
+        '新增独立的注音「修改记录」，支持撤销/重做、跨重启保留，以及单处或按查找结果恢复自动注音；后来被改过的冲突项不会被静默覆盖。',
+        '「仅此处」现在精确作用于当前行和字符范围；修改后保留当前位置，重新导入时保留人工校对并提供明确的恢复入口。',
+        '兼容 Chrome 92 与部分 HarmonyOS 4 WebView：脚本和样式增加旧版回退，避免页面初始化失败以及弹层、导航栏和动画错位。',
+      ],
+      en: [
+        'The workbench now searches the full source text or readings, navigates hits across pages, and opens the exact furigana occurrence for editing. Search stays on the device; text and queries are never uploaded.',
+        '“Apply to all matching words” is now clearly labelled as matching identical literal text and asks for confirmation first, showing affected and skipped counts while preserving existing manual corrections by default.',
+        'A dedicated furigana modification history adds undo/redo, persistence across restarts, and restoring automatic readings for one hit or a whole result set; later conflicting edits are listed rather than silently overwritten.',
+        '“Only here” now targets the exact line and character range, keeps the current page, scroll position and search hit after an edit, and preserves manual corrections on re-import with an explicit restore option.',
+        'Chrome 92 and some HarmonyOS 4 WebViews are supported with downgraded client JavaScript and CSS fallbacks, preventing hydration failures and misplaced panels, navigation and animations.',
+      ],
+    },
+  },
+  {
     version: '1.8.2',
     date: '2026-11-06',
     items: {
