@@ -7,6 +7,7 @@ import { IconDictionary, IconImport, IconTrash } from './glass/icons';
 import type { Translations } from '../utils/i18n';
 import type { DictionaryInfo } from '../utils/readingTools';
 import type { TranslationSettings } from '../utils/translation';
+import { llmNeedsApiKey } from '../utils/translation';
 import { LlmFields } from './LlmFields';
 
 export interface ReadingToolsSheetProps {
@@ -107,7 +108,7 @@ export function ReadingToolsSheet({
               onClick={() => set({ quickDraft: settings.quickDraft === false })}
             ><i /></button>
           </div>
-          {Boolean(settings.llm.apiKey.trim()) && (
+          {(Boolean(settings.llm.apiKey.trim()) || !llmNeedsApiKey(settings.llm)) && (
             <div className="mt-2.5 flex items-center justify-between gap-2.5 rounded-[14px] bg-[var(--fill-2)] px-3 py-2.5">
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-semibold text-[var(--label)]">{t.aiReadingReview}</div>

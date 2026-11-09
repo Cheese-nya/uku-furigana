@@ -12,6 +12,11 @@ export interface LlmSettings {
   provider?: string;
 }
 
+/** A custom endpoint can be a local/open server without authentication; hosted presets require a key. */
+export function llmNeedsApiKey(llm: Partial<LlmSettings>): boolean {
+  return (llm.provider ?? 'custom') !== 'custom';
+}
+
 export interface TranslationSettings {
   engine: TranslationEngine;
   target: TranslationTarget;
@@ -233,6 +238,10 @@ export function cleanLlmReply(reply: string): string {
     .trim();
 }
 
+// A truncated or otherwise malformed model answer can echo the request header. It is
+// never a translation, even when a bare-text fallback would otherwise accept the whole reply.
+const LLM_INSTRUCTION = /(?:需要翻译的句子|Sentences to translate)\s*[（(]?\s*JSON(?:数组|\s*array)/i;
+
 /**
  * Extracts every fully-closed string element of the top-level JSON array from a growing streamed reply,
  * skipping `<think>…</think>` blocks and markdown code fences.
@@ -298,6 +307,12 @@ export function reasoningParams(llm: LlmSettings): Record<string, unknown> {
   return {};
 }
 
+function chatHeaders(llm: LlmSettings): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (llm.apiKey.trim()) headers.Authorization = `Bearer ${llm.apiKey.trim()}`;
+  return headers;
+}
+
 /**
  * Read the model's translations, forgiving what models really send: an object around the array, single
  * quotes, trailing commas, unescaped double quotes inside a translation, or a numbered list.
@@ -324,6 +339,13 @@ export function parseLlmTranslations(reply: string, expected: number): string[] 
       const items = text.split('\n').map(line => line.match(/^\s*\[\s*["'](.*?)["']*\s*\]\s*,?\s*$/)?.[1]).filter((line): line is string => line !== undefined);
       return items.length ? items.map(item => item.replace(/\\(["'\\])/g, '$1')) : undefined;
     },
+    // A model may repeat the prompt and truncate the final JSON string. For a single
+    // sentence, the text inside that last unterminated string is still unambiguous.
+    () => {
+      if (expected !== 1) return undefined;
+      const item = text.match(/\[\s*["']([\s\S]*?)["']{0,2}\s*$/)?.[1];
+      return item?.trim() ? [item.replace(/\\n/g, '\n').replace(/\\(["'\\])/g, '$1').trim()] : undefined;
+    },
     () => {
       const items = text.split('\n').map(line => line.match(/^\s*(?:\d+|[-*•])\s*[.)、:：]?\s+(.+)$/)?.[1]).filter((line): line is string => Boolean(line));
       return items.length ? items.map(item => item.replace(/^["'「“]|["'」”],?$/g, '')) : undefined;
@@ -336,6 +358,31 @@ export function parseLlmTranslations(reply: string, expected: number): string[] 
   }
   if (found) throw new TranslationError('译文条数不一致', false);
   throw new TranslationError('模型返回的 JSON 无法解析', false);
+}
+
+/** Keep the actual answer out of a prompt-echoing reply; reject a bare prompt fragment. */
+function usableLlmReply(reply: string): string | undefined {
+  const bare = cleanLlmReply(reply).replace(/^["'「“]|["'」”]$/g, '').trim();
+  if (!bare) return undefined;
+  if (LLM_INSTRUCTION.test(bare)) {
+    try { return parseLlmTranslations(bare, 1).find(item => item.trim())?.trim(); }
+    catch { return undefined; }
+  }
+  try { return parseLlmTranslations(bare, 1)[0].trim() || undefined; }
+  catch { return bare; }
+}
+
+/** Do not retain old prompt-echoing cache rows; recover the truncated array when possible. */
+export function usableCachedTranslation(engine: TranslationEngine, value: string): string | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  if (engine !== 'llm') return value;
+  // Recover an already displayed truncated array; a bare prompt echo must be re-fetched.
+  if (LLM_INSTRUCTION.test(trimmed)) {
+    try { return parseLlmTranslations(trimmed, 1)[0]?.trim() || undefined; }
+    catch { return undefined; }
+  }
+  return usableLlmReply(value);
 }
 
 const FORMAT_ERRORS = new Set(['模型返回的 JSON 无法解析', '译文条数不一致', '模型没有返回译文']);
@@ -364,7 +411,7 @@ export async function chat(
   const extra = includeReasoning ? reasoningParams(llm) : {};
   const response = await fetchImpl(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${llm.apiKey}` },
+    headers: chatHeaders(llm),
     body: JSON.stringify({ model: llm.model, temperature: 0.3, stream: true, ...extra, messages }),
     signal,
   });
@@ -464,7 +511,7 @@ export async function translateLlm(
   onItem?: (index: number, text: string) => void,
 ): Promise<string[]> {
   if (!texts.length) return [];
-  if (!llm.apiKey.trim()) throw new TranslationError('请先在设置里填写 API Key', false);
+  if (!llm.apiKey.trim() && llmNeedsApiKey(llm)) throw new TranslationError('请先在设置里填写 API Key', false);
   const url = `${llm.baseUrl.replace(/\/+$/, '')}/chat/completions`;
   const language = TARGET_NAMES[target] || target;
   let emitted = 0;
@@ -490,8 +537,8 @@ export async function translateLlm(
         return [one];
       } catch (error) {
         // A one-sentence answer without the array around it is still the answer.
-        const bare = cleanLlmReply(reply);
-        if (bare && !/^[[{]/.test(bare) && !bare.includes('\n\n')) return [bare.replace(/^["'「“]|["'」”]$/g, '').trim()];
+        const bare = usableLlmReply(reply);
+        if (bare && !/^[[{]/.test(cleanLlmReply(reply))) return [bare];
         throw error;
       }
     } catch (error) {
@@ -501,7 +548,9 @@ export async function translateLlm(
         { role: 'system', content: `Translate the Japanese text into ${language}. Reply with the translation only, no quotes, notes or explanations.` },
         { role: 'user', content: texts[0] },
       ], fetchImpl, signal));
-      return [reply.replace(/^["'「“]|["'」”]$/g, '').trim()];
+      const usable = usableLlmReply(reply);
+      if (!usable) throw new TranslationError('模型返回的 JSON 无法解析', false);
+      return [usable];
     }
   }
   try {
@@ -745,7 +794,9 @@ export class Translator {
     const cached = await this.store.get(bookId, slot, pending.map(item => item.text));
     const misses = pending.filter(item => {
       if (!cached.has(item.text)) return true;
-      result.set(item.text, cached.get(item.text) as string);
+      const usable = usableCachedTranslation(engine, cached.get(item.text) as string);
+      if (usable === undefined) return true;
+      result.set(item.text, usable);
       return false;
     });
     options.onPartial?.(new Map(result));
@@ -773,17 +824,20 @@ export class Translator {
         : [];
       const translations = await this.request(engine, list, target, context, signal, (index, value) => {
         const source = list[index];
-        if (source !== undefined && value.trim()) {
-          result.set(source, value);
-          options.onPartial?.(new Map([[source, value]]));
+        const usable = usableCachedTranslation(engine, value);
+        if (source !== undefined && usable !== undefined) {
+          result.set(source, usable);
+          options.onPartial?.(new Map([[source, usable]]));
         }
       });
       const pairs: [string, string][] = [];
       list.forEach((source, index) => {
         const value = translations[index];
         if (typeof value !== 'string') return;
-        result.set(source, value);
-        pairs.push([source, value]);
+        const usable = usableCachedTranslation(engine, value);
+        if (usable === undefined) return;
+        result.set(source, usable);
+        pairs.push([source, usable]);
       });
       options.onPartial?.(new Map(pairs));
       await this.store.put(bookId, slot, engine, pairs);

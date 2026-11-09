@@ -67,3 +67,19 @@ test('testConnection translates one sentence through the chat endpoint', async (
   });
   assert.equal(text, '你好。');
 });
+
+test('local custom endpoints list models, test connection and accept no-key replies', async () => {
+  const local = { provider: 'custom', baseUrl: 'http://192.168.1.10:8000/v1', model: 'local-model', apiKey: '' };
+  const seen = [];
+  const fetchImpl = async (url, init = {}) => {
+    seen.push([String(url), init.headers?.Authorization]);
+    if (String(url).endsWith('/models')) return json({ data: [{ id: 'local-model' }] });
+    return json({ choices: [{ message: { content: '["你好。"]' } }] });
+  };
+  assert.deepEqual(await listModels(local, fetchImpl), [{ id: 'local-model', price: 'unknown' }]);
+  assert.equal(await testConnection(local, 'zh-Hans', fetchImpl), '你好。');
+  assert.deepEqual(seen, [
+    ['http://192.168.1.10:8000/v1/models', undefined],
+    ['http://192.168.1.10:8000/v1/chat/completions', undefined],
+  ]);
+});

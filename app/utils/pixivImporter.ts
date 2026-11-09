@@ -1,5 +1,8 @@
 import { logEvent } from './appLog';
 import { RELAY_BASE } from './updateTypes';
+import { PIXIV_EMPTY_CONTENT, PIXIV_LOGIN_REQUIRED, requirePixivContent } from './pixivErrors';
+import { getPixivAccountStatus } from './pixivAccount';
+import { hasPixivWebHelper, requestPixivWeb, type PixivWebNovel } from './pixivWebBridge';
 import {
   fetchNativePixivNovel,
   getNativePixivBridge,
@@ -99,6 +102,34 @@ export function toPixivMirrorCoverUrl(coverUrl: string): string {
   return trimmed.replace(/^https?:\/\/i\.pximg\.net\//i, 'https://i.pixiv.re/');
 }
 
+// Bound the whole operation (including response.json), even if a native bridge or
+// WebView ignores AbortSignal. Always consume late rejections and release timers.
+async function withPixivTimeout<T>(run: (signal?: AbortSignal) => Promise<T>, timeoutMs: number): Promise<T> {
+  const controller = typeof AbortController === 'undefined' ? undefined : new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(() => run(controller?.signal)),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error('Pixiv 请求超时，请稍后重试'));
+          controller?.abort();
+        }, Math.max(1, timeoutMs));
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchPixivJson(url: string, timeoutMs: number) {
+  return withPixivTimeout(async signal => {
+    const res = await fetch(url, { signal, headers: { Accept: 'application/json' } });
+    const data = await res.json().catch(() => null);
+    return { res, data };
+  }, timeoutMs);
+}
+
 export async function fetchPixivNovel(urlOrId: string): Promise<PixivNovelResult> {
   const id = extractPixivNovelId(urlOrId);
   if (!id) {
@@ -110,11 +141,42 @@ export async function fetchPixivNovel(urlOrId: string): Promise<PixivNovelResult
   // failure is reported as such instead of as a misleading 404 from the cascade below.
   // What each transport answered, for the bug-report log (no novel text, only reasons and status codes).
   const attempts: string[] = [];
+  // The browser helper reads with the user's own browser session. Never replace
+  // a failed authenticated request with an anonymous server response.
+  if (hasPixivWebHelper() && !getNativePixivBridge()) {
+    try {
+      const body = await requestPixivWeb<PixivWebNovel>('novel', id);
+      const { content, rubyOverrides } = cleanPixivContent(body.content);
+      requirePixivContent(content, body.isLoginOnly);
+      return {
+        id, title: body.title.trim() || `Pixiv #${id}`, author: body.userName.trim(),
+        description: cleanPixivDescription(body.description), content, rubyOverrides,
+        coverUrl: toPixivMirrorCoverUrl(body.coverUrl), sourceUrl: `https://www.pixiv.net/novel/show.php?id=${id}`,
+      };
+    } catch (error) {
+      logEvent('warn', 'pixiv', `browser helper import failed: ${error instanceof Error ? error.message : 'request failed'}`);
+      throw error;
+    }
+  }
+  const sameOrigin = typeof window !== 'undefined' && window.location?.origin === RELAY_BASE;
+  const account = await withPixivTimeout(() => getPixivAccountStatus(), 2_000).catch(() => null);
+  const hasLocalSession = account?.supported && account.loggedIn;
+  // A blocked device connection must not delay the working relay indefinitely.
+  const deadline = Date.now() + (sameOrigin || hasLocalSession ? RELAY_TIMEOUT_MS : 8_000);
+  const remaining = () => Math.max(1, deadline - Date.now());
+  let contentErrorMessage: string | null = null;
+  const validateContent = (content: unknown, isLoginOnly?: boolean) => {
+    try { requirePixivContent(content, isLoginOnly); }
+    catch (error) {
+      if (error instanceof Error && error.message === PIXIV_EMPTY_CONTENT) contentErrorMessage = error.message;
+      throw error;
+    }
+  };
   const describe = (error: unknown) => error instanceof Error ? `${error.name}: ${error.message}` : String(error);
   let nativeErrorMessage: string | null = null;
   if (getNativePixivBridge()) {
     try {
-      return await fetchNativePixivNovel(id);
+      return await withPixivTimeout(() => fetchNativePixivNovel(id), remaining());
     } catch (error) {
       nativeErrorMessage = error instanceof Error ? error.message : String(error);
       attempts.push(`native bridge: ${describe(error)}`);
@@ -123,15 +185,16 @@ export async function fetchPixivNovel(urlOrId: string): Promise<PixivNovelResult
 
   let apiErrorMessage: string | null = null;
   try {
-    const apiRes = await fetch(`/api/pixiv?id=${encodeURIComponent(id)}`);
+    const { res: apiRes, data: apiData } = await fetchPixivJson(`/api/pixiv?id=${encodeURIComponent(id)}`, remaining());
     if (apiRes.ok) {
-      const data = (await apiRes.json()) as PixivNovelResult;
+      const data = (apiData) as PixivNovelResult;
       if (data && typeof data.content === 'string') {
+        validateContent(data.content);
         return data;
       }
     } else {
       try {
-        const errJson = (await apiRes.json()) as { error?: string };
+        const errJson = (apiData) as { error?: string };
         if (errJson?.error) apiErrorMessage = errJson.error;
       } catch {
         // Ignore non-JSON error body
@@ -159,22 +222,16 @@ export async function fetchPixivNovel(urlOrId: string): Promise<PixivNovelResult
   for (const endpoint of ajaxEndpoints) {
     const label = endpoint.startsWith('/') ? '/api/pixiv-ajax' : 'pixiv.net direct';
     try {
-      const directRes = await fetch(endpoint, {
-        headers: {
-          Accept: 'application/json',
-        },
-      });
+      if (Date.now() >= deadline) break;
+      const { res: directRes, data: directData } = await fetchPixivJson(endpoint, remaining());
       if (!directRes.ok) {
-        const reason = await directRes.json().then(
-          (body: { message?: unknown }) => (typeof body?.message === 'string' ? body.message.trim() : ''),
-          () => '',
-        );
+        const reason = typeof directData?.message === 'string' ? directData.message.trim() : '';
         attempts.push(`${label}: HTTP ${directRes.status}${reason ? ` ${reason}` : ''}`);
         if (reason && label === '/api/pixiv-ajax' && directRes.status === 502) proxyNetworkMessage = reason;
         else if (reason) cascadePixivMessage = reason;
         throw new Error(`Pixiv 请求失败 (HTTP ${directRes.status})`);
       }
-      const json = (await directRes.json()) as {
+      const json = (directData) as {
         error?: boolean;
         message?: string;
         body?: {
@@ -183,26 +240,34 @@ export async function fetchPixivNovel(urlOrId: string): Promise<PixivNovelResult
           description?: string;
           content?: string;
           coverUrl?: string;
+          isLoginOnly?: boolean;
         };
       };
-      if (json.error !== false || !json.body) {
-        if (json.message) cascadePixivMessage = json.message;
-        throw new Error(json.message || '未找到该 Pixiv 小说');
+      if (!json || json.error !== false || !json.body) {
+        if (json?.message) cascadePixivMessage = json.message;
+        throw new Error(json?.message || '未找到该 Pixiv 小说');
       }
       const body = json.body;
       const title = (body.title || `Pixiv #${id}`).trim();
       const author = (body.userName || '').trim();
       const description = cleanPixivDescription(body.description || '');
       const { content, rubyOverrides } = cleanPixivContent(body.content || '');
+      try {
+        validateContent(content, body.isLoginOnly);
+      } catch (error) {
+        // A login requirement is authoritative; an empty response alone can be retried.
+        if (body.isLoginOnly && error instanceof Error) cascadePixivMessage = error.message;
+        throw error;
+      }
       let coverUrl = toPixivMirrorCoverUrl(body.coverUrl || '');
 
       if (body.coverUrl && typeof body.coverUrl === 'string') {
         try {
-          const imgRes = await fetch(
-            `/api/pixiv-image?url=${encodeURIComponent(body.coverUrl)}`,
+          const { res: imgRes, data: imageData } = await fetchPixivJson(
+            `/api/pixiv-image?url=${encodeURIComponent(body.coverUrl)}`, Math.min(3_000, remaining()),
           );
           if (imgRes.ok) {
-            const imgData = (await imgRes.json()) as { dataUrl?: string };
+            const imgData = (imageData) as { dataUrl?: string };
             if (imgData?.dataUrl?.startsWith('data:image/')) {
               coverUrl = imgData.dataUrl;
             }
@@ -232,27 +297,29 @@ export async function fetchPixivNovel(urlOrId: string): Promise<PixivNovelResult
   // fetches it from Singapore. Skipped when pixiv itself answered, and on the online build, whose
   // own /api/pixiv above already is the relay.
   let relayErrorMessage: string | null = null;
-  const sameOrigin = typeof window !== 'undefined' && window.location?.origin === RELAY_BASE;
-  if (!cascadePixivMessage && !sameOrigin) {
-    const controller = typeof AbortController === 'undefined' ? null : new AbortController();
-    const timer = controller ? setTimeout(() => controller.abort(), RELAY_TIMEOUT_MS) : undefined;
+  let relayTimeoutMessage: string | null = null;
+  if (!cascadePixivMessage && !sameOrigin && !hasLocalSession) {
     try {
-      const relayRes = await fetch(`${RELAY_BASE}/api/pixiv?id=${encodeURIComponent(id)}`, { signal: controller?.signal });
-      const data = (await relayRes.json().catch(() => null)) as (PixivNovelResult & { error?: unknown }) | null;
+      const { res: relayRes, data: relayData } = await fetchPixivJson(`${RELAY_BASE}/api/pixiv?id=${encodeURIComponent(id)}`, RELAY_TIMEOUT_MS);
+      const data = relayData as (PixivNovelResult & { error?: unknown }) | null;
       if (relayRes.ok && data && typeof data.content === 'string') {
+        validateContent(data.content);
         logEvent('info', 'pixiv', `fetched through the relay after: ${attempts.join(' | ')}`);
         return data;
       }
       if (typeof data?.error === 'string' && data.error.trim()) relayErrorMessage = data.error.trim();
       attempts.push(`relay: HTTP ${relayRes.status}${relayErrorMessage ? ` ${relayErrorMessage}` : ''}`);
     } catch (error) {
+      if (error instanceof Error && error.message === 'Pixiv 请求超时，请稍后重试') relayTimeoutMessage = error.message;
       attempts.push(`relay: ${describe(error)}`);
-    } finally {
-      clearTimeout(timer);
     }
   }
 
   logEvent('warn', 'pixiv', `import failed: ${attempts.join(' | ')}`);
+  // An explicit access restriction is more useful than an earlier device timeout.
+  if ([nativeErrorMessage, apiErrorMessage, cascadePixivMessage, relayErrorMessage].includes(PIXIV_LOGIN_REQUIRED)) {
+    throw new Error(PIXIV_LOGIN_REQUIRED);
+  }
   // Precedence: the native bridge reason (the only real transport in the shells), then
   // the local /api/pixiv reason, then Pixiv's own cascade message, then the native proxy's
   // network reason, then the last failure.
@@ -269,6 +336,8 @@ export async function fetchPixivNovel(urlOrId: string): Promise<PixivNovelResult
   if (relayErrorMessage) {
     throw new Error(relayErrorMessage);
   }
+  if (contentErrorMessage) throw new Error(contentErrorMessage);
+  if (relayTimeoutMessage) throw new Error(relayTimeoutMessage);
   if (proxyNetworkMessage) {
     throw new Error(`${PIXIV_UNREACHABLE}（${proxyNetworkMessage}）`);
   }

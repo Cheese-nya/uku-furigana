@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Uku Pixiv 登录助手",
+  "description": "让 Uku 网页版通过当前浏览器的 Pixiv 登录态导入小说。Cookie 不会交给网页或服务器。",
+  "version": "1.0.0",
+  "minimum_chrome_version": "111",
+  "incognito": "not_allowed",
+  "permissions": ["cookies", "scripting"],
+  "host_permissions": ["https://*.pixiv.net/*", "https://uku.saiaino.xyz/*", "https://cloud.saiaino.xyz/*", "http://localhost/*", "http://127.0.0.1/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "content_scripts": [{
+    "matches": ["https://uku.saiaino.xyz/*", "https://cloud.saiaino.xyz/*", "http://localhost/*", "http://127.0.0.1/*"],
+    "js": ["content.js"],
+    "run_at": "document_start",
+    "all_frames": false
+  }]
+}

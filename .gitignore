@@ -43,6 +43,7 @@ __pycache__/
 /tools/dict-src/
 # Copied from node_modules by scripts/vendor-assets.mjs
 /public/vendor/
+/public/uku-pixiv-helper.zip
 /tests/.tmp/
 /public/__e2e/
 

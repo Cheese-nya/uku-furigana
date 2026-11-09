@@ -38,6 +38,8 @@ export interface TypographyPopoverProps {
     onStart: () => void;
     onPause: () => void;
   };
+  /** Local-only placement of the reader's quick translation switch. */
+  floatingTranslation?: { floating: boolean; onFloat: () => void; onDock: () => void };
   t: Translations;
 }
 
@@ -96,7 +98,7 @@ function Group({ label, value, children }: { label: string; value?: string; chil
 /** Mockup "排版" popover: ruby mode (phones), font, size, show-ruby switch. */
 export function TypographyPopover({
   open, onClose, anchor, placement, fontFamily, onFontFamilyChange, fontSize, onFontSizeChange, minFontSize = 14, maxFontSize = 26,
-  showRuby, onShowRubyChange, rubyType, onRubyTypeChange, writingMode, onWritingModeChange, bilingual, t,
+  showRuby, onShowRubyChange, rubyType, onRubyTypeChange, writingMode, onWritingModeChange, bilingual, floatingTranslation, t,
 }: TypographyPopoverProps) {
   const size = Math.min(maxFontSize, Math.max(minFontSize, fontSize));
   return (
@@ -178,6 +180,20 @@ export function TypographyPopover({
               <i />
             </button>
           </div>
+          {floatingTranslation && (
+            <div className="px-3 pb-2">
+              <button
+                type="button"
+                className="btn min-h-[44px] w-full px-3 text-[13px]"
+                onClick={() => { onClose(); (floatingTranslation.floating ? floatingTranslation.onDock : floatingTranslation.onFloat)(); }}
+              >
+                {floatingTranslation.floating ? t.readerDockTranslation : t.readerFloatTranslation}
+              </button>
+              <p className="mt-1.5 text-xs leading-relaxed text-[var(--label-2)]">
+                {t.readerFloatHint}
+              </p>
+            </div>
+          )}
           <PretranslateRow state={bilingual.pretranslate} engineLabel={bilingual.engineLabel} onStart={bilingual.onStart} onPause={bilingual.onPause} t={t} />
         </>
       )}

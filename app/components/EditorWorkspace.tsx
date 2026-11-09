@@ -1,4 +1,5 @@
 'use client';
+import { ImportErrorNotice } from './ImportErrorNotice';
 
 import React, { type Dispatch, type RefObject, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
 import { TypographyPopover } from './TypographyPopover';
@@ -70,6 +71,7 @@ export interface EditorWorkspaceProps {
   handleEditorFileImport: (event: React.ChangeEvent<HTMLInputElement>) => Promise<void>;
   isImporting: boolean;
   importError: string;
+  onOpenPixivAccount?: () => void;
   libraryBooks: BookItem[];
   onImportFromLibrary: (book: BookItem) => void;
   handleSaveToLibrary: () => Promise<void>;
@@ -271,7 +273,7 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
       </div>
 
       {isImporting && <p role="status" className="mb-3 text-xs text-[var(--label-2)]">{t.readingScriptProgress}</p>}
-      {importError && <p role="alert" className="mb-3 text-xs font-medium text-[var(--danger)]">{importError}</p>}
+      <ImportErrorNotice message={importError} t={t} onOpenPixivAccount={props.onOpenPixivAccount} />
 
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 md:grid-cols-2">
         <SourceCard {...props} hidden={pane !== 'source'} onStartSearch={() => { setPane('preview'); onOpenSearch(); }} />

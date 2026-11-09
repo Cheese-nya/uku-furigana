@@ -12,6 +12,28 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '1.8.4',
+    date: '2026-11-09',
+    items: {
+      'zh-CN': [
+        '新增 Pixiv 账号登录与退出，登录限制错误可直达设置；网页版可安装浏览器助手，使用本机登录态导入，Cookie 不经过服务器。',
+        '开关对照翻译与译文陆续出现时保持上方原文位置；滑动期间等停稳再显示新译文，减少阅读跳动。',
+        '长按翻译按钮可拖出圆形悬浮开关，仅以图标明暗表示状态；自由放置并记住横竖屏位置，靠近工具栏原位置时随距离渐进让位，松手或通过排版设置可收回，无凹槽占位。',
+        '限制移动端整页手势缩放，减少误触导致的界面放大；阅读字号仍可在阅读设置中调整。',
+        '自定义大模型接口可留空 API Key，以便连接无需鉴权的本地或局域网模型服务。',
+        '修复个别模型回显翻译提示并截断结果时，提示语被误当作译文显示和缓存。',
+      ],
+      en: [
+        'Sign in to Pixiv under Settings and recover from login-required imports. The web browser helper imports with your local session without sending cookies to a server.',
+        'Keep the visible source passage in place when toggling bilingual reading or receiving translations; new translations appear after scrolling settles.',
+        'Hold and drag out a circular translation toggle with brightness-only state. Place it freely, remember separate portrait and landscape positions, and return it near its original toolbar position with distance-driven reflow and blending, or through typography settings.',
+        'Limit whole-page gesture zoom on mobile to reduce accidental enlargement; reader text size remains adjustable in reading settings.',
+        'Custom LLM endpoints can now leave the API key empty for local or LAN model servers that require no authentication.',
+        'Stop showing or caching a model’s echoed translation prompt when its answer is truncated; recover or refetch affected cached rows.',
+      ],
+    },
+  },
+  {
     version: '1.8.3',
     date: '2026-11-07',
     items: {

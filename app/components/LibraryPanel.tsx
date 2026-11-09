@@ -2,6 +2,7 @@
 
 import React, { useMemo, useRef, useState } from 'react';
 import { Modal } from './Modal';
+import { ImportErrorNotice } from './ImportErrorNotice';
 import { GlassButton, GlassCapsule } from './glass/GlassButton';
 import { GlassPopover, PopoverItem, PopoverSeparator } from './glass/GlassPopover';
 import { LiquidSelector } from './glass/LiquidSelector';
@@ -41,6 +42,7 @@ export interface LibraryPanelProps {
   onOpenInEditor: (book: BookItem) => void;
   onImportFiles: (files: FileList, folderId?: string | null) => Promise<void>;
   onImportPixivNovel: (urlOrId: string, folderId?: string | null) => Promise<void>;
+  onOpenPixivAccount?: () => void;
   onUpdateBookMetadata: (bookId: string, patch: BookMetadataPatch) => void;
   onCreateOrUpdateBook: (input: { title: string; author?: string; category?: BookCategory; folderId?: string | null; content: string }) => void;
   onToggleFavorite: (bookId: string) => void;
@@ -71,7 +73,7 @@ const fill = (template: string, values: Record<string, string | number>) =>
 
 export function LibraryPanel({
   t, books, folders, onCreateFolder, onRenameFolder, onDeleteFolder, onMoveBook, onOpenInReader, onOpenInEditor, onImportFiles, onImportPixivNovel, onUpdateBookMetadata,
-  onCreateOrUpdateBook, onToggleFavorite, onDeleteBook,
+  onCreateOrUpdateBook, onToggleFavorite, onDeleteBook, onOpenPixivAccount,
 }: LibraryPanelProps) {
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<Filter>('all');
@@ -497,7 +499,7 @@ export function LibraryPanel({
       <Modal isOpen={pixivOpen} onClose={() => setPixivOpen(false)} title={t.libPixivImportBtn} maxWidth="sm">
         <form className="flex flex-col gap-3" onSubmit={submitPixiv}>
           <Field testId="pixiv-url-input" value={pixivUrl} onChange={setPixivUrl} placeholder={t.libPixivInputPlaceholder} />
-          {pixivError && <p role="alert" className="text-xs font-medium text-[var(--danger)]">{pixivError}</p>}
+          <ImportErrorNotice message={pixivError} t={t} onOpenPixivAccount={onOpenPixivAccount ? () => { setPixivOpen(false); onOpenPixivAccount(); } : undefined} />
           <div className="flex gap-2">
             <button type="button" className="btn h-11 flex-1" onClick={() => setPixivOpen(false)}>{t.cancel}</button>
             <button type="submit" data-testid="pixiv-import-submit-btn" disabled={pixivBusy || !pixivUrl.trim()} className="btn btn-ink h-11 flex-1">

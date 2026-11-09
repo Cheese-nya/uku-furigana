@@ -23,6 +23,7 @@ export interface SettingsMenuProps {
   glossaryCount: number;
   onOpenLearned: () => void;
   onOpenGlossary: () => void;
+  onOpenPixivAccount?: () => void;
   /** Release notes sheet; the row carries the yellow dot until the newest version has been opened once. */
   onOpenWhatsNew?: () => void;
   hasUnseenNotes?: boolean;
@@ -63,6 +64,7 @@ export function SettingsMenu({
   glossaryCount,
   onOpenLearned,
   onOpenGlossary,
+  onOpenPixivAccount,
   onOpenWhatsNew,
   hasUnseenNotes = false,
   onOpenReadingTools,
@@ -185,6 +187,7 @@ export function SettingsMenu({
         />
       </div>
       <PopoverSeparator />
+      {onOpenPixivAccount && <PopoverItem icon={<IconUsers size={17} />} onClick={() => { onClose(); onOpenPixivAccount(); }}>{t.pixivAccountTitle}</PopoverItem>}
       <PopoverItem icon={<IconCheck size={17} />} detail={learnedCount} onClick={() => { onClose(); onOpenLearned(); }}>{t.learnedReadingsMenu}</PopoverItem>
       <PopoverItem icon={<IconDictionary size={17} />} detail={glossaryCount} onClick={() => { onClose(); onOpenGlossary(); }}>{t.properNounGlossary}</PopoverItem>
       {onOpenReadingTools && (

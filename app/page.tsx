@@ -8,6 +8,7 @@ import { detectBookFormat, parseBookFile } from './utils/bookImport';
 import { withoutImageLines } from './utils/bookAssets';
 import { Sidebar } from './components/Sidebar';
 import { SettingsMenu } from './components/SettingsMenu';
+import { PixivAccountSheet } from './components/PixivAccountSheet';
 import { MobileNavBar, type AppTab } from './components/MobileNavBar';
 import { LibraryPanel } from './components/LibraryPanel';
 import { ImportPreviewModal } from './components/ImportPreviewModal';
@@ -140,6 +141,7 @@ export default function DubbingStudioApp() {
   const [exportOutcome, setExportOutcome] = useState<'processing' | 'saved' | 'download' | 'cancelled' | 'error'>('processing');
   const [exportError, setExportError] = useState('');
   const [importError, setImportError] = useState('');
+  const [pixivAccountOpen, setPixivAccountOpen] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const importSequenceRef = useRef(0);
   const [editingToken, setEditingToken] = useState<EditingTokenState | null>(null);
@@ -805,6 +807,7 @@ export default function DubbingStudioApp() {
       glossaryCount={glossaryEntries.length}
       onOpenLearned={() => setIsLearnedModalOpen(true)}
       onOpenGlossary={() => { advanceControllerRef.current?.abort(); setIsGlossaryOpen(true); }}
+      onOpenPixivAccount={() => setPixivAccountOpen(true)}
       onOpenWhatsNew={openWhatsNew}
       hasUnseenNotes={unseenNotes}
       onOpenReadingTools={() => readingTools.setSheetOpen(true)}
@@ -826,6 +829,7 @@ export default function DubbingStudioApp() {
 
   return (
     <main className="fixed inset-0 overflow-hidden text-[var(--label)] transition-colors">
+      <PixivAccountSheet open={pixivAccountOpen} onClose={() => setPixivAccountOpen(false)} t={t} />
       <ReadingToolsSheet
         open={readingTools.sheetOpen}
         onClose={() => readingTools.setSheetOpen(false)}
@@ -871,6 +875,7 @@ export default function DubbingStudioApp() {
             advanceControllerRef={advanceControllerRef} setIsGlossaryOpen={setIsGlossaryOpen}
             editorFileInputRef={editorFileInputRef} handleEditorFileImport={handleEditorFileImport}
             isImporting={isImporting} importError={importError}
+            onOpenPixivAccount={() => setPixivAccountOpen(true)}
             libraryBooks={libraryBooks} onImportFromLibrary={book => loadBookIntoWorkspace(book, 'editor')}
             handleSaveToLibrary={handleSaveToLibrary}
             isExporting={isExporting} handleExport={handleExport}
@@ -913,6 +918,7 @@ export default function DubbingStudioApp() {
             onOpenInEditor={book => loadBookIntoWorkspace(book, 'editor')}
             onImportFiles={importLibraryFiles}
             onImportPixivNovel={handleImportPixivNovel}
+            onOpenPixivAccount={() => setPixivAccountOpen(true)}
             onCreateOrUpdateBook={input => { void createOrUpdateBook(input); }}
             onUpdateBookMetadata={handleUpdateBookMetadata}
             onToggleFavorite={handleToggleFavorite}

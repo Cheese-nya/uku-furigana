@@ -714,6 +714,26 @@ def _novel_json(**body):
 
 
 class PixivClientTest(unittest.TestCase):
+    def test_login_only_metadata_is_a_403_not_a_successful_blank_book(self):
+        opener = FakeOpener({NOVEL_URL: FakeResponse(_novel_json(
+            content="", isLoginOnly=True, characterCount=18089,
+            title="ひみつのはなし【ネップリ再録】"))})
+        with self.assertRaises(relay.PixivError) as caught:
+            relay.PixivClient(opener=opener).fetch_novel("22148644")
+        self.assertEqual(caught.exception.status_code, 403)
+        self.assertIn("需要登录", str(caught.exception))
+        self.assertEqual(opener.urls, [NOVEL_URL])
+
+    def test_empty_or_image_only_content_is_rejected_before_fetching_cover(self):
+        for content in ("", " \n\t", None, "[uploadedimage:1]"):
+            with self.subTest(content=content):
+                opener = FakeOpener({NOVEL_URL: FakeResponse(_novel_json(content=content))})
+                with self.assertRaises(relay.PixivError) as caught:
+                    relay.PixivClient(opener=opener).fetch_novel("22148644")
+                self.assertEqual(caught.exception.status_code, 502)
+                self.assertIn("正文为空", str(caught.exception))
+                self.assertEqual(opener.urls, [NOVEL_URL])
+
     def test_fetch_novel_matches_the_next_route_shape(self):
         opener = FakeOpener({
             NOVEL_URL: FakeResponse(_novel_json()),

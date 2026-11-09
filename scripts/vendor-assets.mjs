@@ -38,3 +38,4 @@ writeFileSync(join(target, 'pdf.worker.min.js'), chrome99Polyfills + patchedWork
 cpSync(join(pdfjs, 'cmaps'), join(target, 'cmaps'), { recursive: true });
 cpSync(join(pdfjs, 'standard_fonts'), join(target, 'standard_fonts'), { recursive: true });
 console.log('==> pdf.js runtime copied to public/vendor/pdfjs');
+await import('./build-pixiv-browser-helper.mjs');

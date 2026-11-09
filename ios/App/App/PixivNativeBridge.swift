@@ -1,5 +1,6 @@
 import Foundation
 import WebKit
+import UIKit
 
 /// Native Pixiv transport for the packaged iOS app.
 ///
@@ -21,6 +22,13 @@ final class PixivNativeBridge: NSObject, WKScriptMessageHandler {
     private static let metadataTimeout: TimeInterval = 20
     private static let imageTimeout: TimeInterval = 15
     private static weak var activeWebView: WKWebView?
+    private static var loginController: UINavigationController?
+    private static let accountStore = WKWebsiteDataStore.default()
+    private static let requestSession: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.httpShouldSetCookies = false
+        return URLSession(configuration: config, delegate: PixivRedirectGuard(), delegateQueue: nil)
+    }()
 
     /// Call once the bridge web view exists so replies have a target to evaluate on.
     static func attach(_ webView: WKWebView) {
@@ -94,7 +102,8 @@ final class PixivNativeBridge: NSObject, WKScriptMessageHandler {
       window.furiganaPixiv = {
         isNative: true,
         novel: function (id) { return request('novel', id); },
-        image: function (url) { return request('image', url); }
+        image: function (url) { return request('image', url); },
+        account: function (action) { return request('account', action); }
       };
       try {
         document.documentElement.setAttribute('data-furigana-native', 'ios');
@@ -108,13 +117,19 @@ final class PixivNativeBridge: NSObject, WKScriptMessageHandler {
         _ userContentController: WKUserContentController,
         didReceive message: WKScriptMessage
     ) {
-        guard let body = message.body as? [String: Any],
+        guard message.frameInfo.isMainFrame,
+              message.frameInfo.securityOrigin.host == "localhost",
+              let body = message.body as? [String: Any],
               let requestId = body["requestId"] as? String,
               !requestId.isEmpty else {
             return
         }
         let kind = body["kind"] as? String ?? ""
         let param = body["param"] as? String ?? ""
+        if kind == "account" {
+            handleAccount(requestId: requestId, action: param)
+            return
+        }
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
@@ -129,6 +144,75 @@ final class PixivNativeBridge: NSObject, WKScriptMessageHandler {
             }
             self.deliver(result)
         }
+    }
+
+    // MARK: - Local Pixiv account
+
+    private static func isPixivCookie(_ cookie: HTTPCookie) -> Bool {
+        let domain = cookie.domain.trimmingCharacters(in: CharacterSet(charactersIn: ".")).lowercased()
+        return (domain == "pixiv.net" || domain.hasSuffix(".pixiv.net"))
+            && (cookie.expiresDate == nil || cookie.expiresDate! > Date())
+    }
+
+    private func accountStatus(requestId: String) {
+        Self.accountStore.httpCookieStore.getAllCookies { cookies in
+            let saved = cookies.contains { Self.isPixivCookie($0) && $0.name == "PHPSESSID"
+                && $0.value.range(of: "^[1-9][0-9]*_[^;\\s]+$", options: .regularExpression) != nil }
+            self.deliver(["requestId": requestId, "ok": true,
+                          "data": ["supported": true, "loggedIn": saved]])
+        }
+    }
+
+    private func handleAccount(requestId: String, action: String) {
+        switch action {
+        case "status": accountStatus(requestId: requestId)
+        case "login":
+            guard Self.loginController == nil,
+                  let root = Self.activeWebView?.window?.rootViewController else {
+                deliver(Self.failure(requestId: requestId, error: "Pixiv 登录窗口不可用"))
+                return
+            }
+            var presenter = root
+            while let presented = presenter.presentedViewController { presenter = presented }
+            let page = PixivLoginController(store: Self.accountStore) { [weak self] in
+                Self.loginController = nil
+                self?.accountStatus(requestId: requestId)
+            }
+            let navigation = UINavigationController(rootViewController: page)
+            navigation.modalPresentationStyle = .fullScreen
+            Self.loginController = navigation
+            presenter.present(navigation, animated: true)
+        case "logout":
+            Self.accountStore.httpCookieStore.getAllCookies { cookies in
+                let group = DispatchGroup()
+                for cookie in cookies where Self.isPixivCookie(cookie) {
+                    group.enter()
+                    Self.accountStore.httpCookieStore.delete(cookie) { group.leave() }
+                }
+                group.notify(queue: .main) { self.accountStatus(requestId: requestId) }
+            }
+        default: deliver(Self.failure(requestId: requestId, error: "Unknown Pixiv account action"))
+        }
+    }
+
+    /// Only native requests to Pixiv can receive these cookies, never the JS UI or relay.
+    private static func cookieHeader(for url: URL) -> String? {
+        guard let host = url.host, host == "pixiv.net" || host.hasSuffix(".pixiv.net") else { return nil }
+        let semaphore = DispatchSemaphore(value: 0)
+        var header: String?
+        DispatchQueue.main.async {
+            accountStore.httpCookieStore.getAllCookies { cookies in
+                let matching = cookies.filter { cookie in
+                    let domain = cookie.domain.trimmingCharacters(in: CharacterSet(charactersIn: ".")).lowercased()
+                    return isPixivCookie(cookie) && (host == domain || host.hasSuffix("." + domain))
+                        && url.path.hasPrefix(cookie.path)
+                }
+                header = HTTPCookie.requestHeaderFields(with: matching)["Cookie"]
+                semaphore.signal()
+            }
+        }
+        guard semaphore.wait(timeout: .now() + 5) == .success else { return nil }
+        return header
     }
 
     private func deliver(_ result: [String: Any]) {
@@ -171,6 +255,12 @@ final class PixivNativeBridge: NSObject, WKScriptMessageHandler {
             }
             let title = Self.trimmed(body["title"]) ?? "Pixiv #\(id)"
             let content = PixivContent.clean(Self.string(body["content"]) ?? "")
+            guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                let message = body["isLoginOnly"] as? Bool == true
+                    ? "这篇 Pixiv 小说需要登录后才能阅读。请前往「设置 → Pixiv 账号」登录自己的账号后重试。"
+                    : "Pixiv 返回的正文为空，未导入空白书籍。作品可能需要登录或受到访问限制，请在 Pixiv 页面确认正文是否可见。"
+                return Self.failure(requestId: requestId, error: message)
+            }
             var coverUrl = PixivContent.mirrorCoverUrl(Self.string(body["coverUrl"]) ?? "")
             if let rawCover = Self.string(body["coverUrl"]), !rawCover.isEmpty,
                let dataUrl = fetchCoverDataUrl(rawCover) {
@@ -246,6 +336,8 @@ final class PixivNativeBridge: NSObject, WKScriptMessageHandler {
         request.setValue(pixivUserAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("https://www.pixiv.net/", forHTTPHeaderField: "Referer")
         request.setValue("ja,zh-CN;q=0.9,en;q=0.8", forHTTPHeaderField: "Accept-Language")
+        request.httpShouldHandleCookies = false
+        if let cookies = cookieHeader(for: url) { request.setValue(cookies, forHTTPHeaderField: "Cookie") }
         return request
     }
 
@@ -257,7 +349,7 @@ final class PixivNativeBridge: NSObject, WKScriptMessageHandler {
     private static func perform(_ request: URLRequest) -> FetchResult {
         let semaphore = DispatchSemaphore(value: 0)
         var outcome = FetchResult.failure(PixivBridgeError(message: "请求 Pixiv 失败"))
-        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+        let task = requestSession.dataTask(with: request) { data, response, error in
             defer { semaphore.signal() }
             if let error {
                 outcome = .failure(PixivBridgeError(message: error.localizedDescription))
@@ -331,6 +423,65 @@ final class PixivNativeBridge: NSObject, WKScriptMessageHandler {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
+}
+
+/// Avoid forwarding an authenticated request to a redirect target.
+private final class PixivRedirectGuard: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+
+/// A separate configuration deliberately has no application scripts or message handlers.
+private final class PixivLoginController: UIViewController, WKNavigationDelegate {
+    private let loginView: WKWebView
+    private let completed: () -> Void
+
+    init(store: WKWebsiteDataStore, completed: @escaping () -> Void) {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = store
+        loginView = WKWebView(frame: .zero, configuration: configuration)
+        self.completed = completed
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = "Pixiv"
+        navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(finish))
+        navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .refresh, target: self, action: #selector(reload))
+        loginView.navigationDelegate = self
+        view = loginView
+        loginView.load(URLRequest(url: URL(string: "https://accounts.pixiv.net/login?return_to=https%3A%2F%2Fwww.pixiv.net%2F")!))
+    }
+
+    @objc private func reload() { loginView.reload() }
+    @objc private func finish() {
+        loginView.stopLoading()
+        dismiss(animated: true, completion: completed)
+    }
+
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        guard let url = navigationAction.request.url, url.scheme == "https" else {
+            decisionHandler(.cancel)
+            return
+        }
+        if navigationAction.targetFrame?.isMainFrame != false {
+            let host = url.host ?? ""
+            guard host == "pixiv.net" || host.hasSuffix(".pixiv.net") else { decisionHandler(.cancel); return }
+        }
+        decisionHandler(.allow)
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        navigationItem.prompt = "无法连接 Pixiv / Cannot connect to Pixiv"
+    }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { navigationItem.prompt = nil }
 }
 
 /// String-level transform mirrored from `app/utils/pixivImporter.ts`.

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { requirePixivContent } from '../../utils/pixivErrors';
 import {
   cleanPixivContent,
   cleanPixivDescription,
@@ -41,6 +42,7 @@ export async function GET(request: Request) {
         description?: string;
         content?: string;
         coverUrl?: string;
+        isLoginOnly?: boolean;
       };
     };
 
@@ -56,6 +58,11 @@ export async function GET(request: Request) {
     const author = (body.userName || '').trim();
     const description = cleanPixivDescription(body.description || '');
     const { content, rubyOverrides } = cleanPixivContent(body.content || '');
+    try {
+      requirePixivContent(content, body.isLoginOnly);
+    } catch (error) {
+      return NextResponse.json({ error: (error as Error).message }, { status: body.isLoginOnly ? 403 : 502 });
+    }
 
     let coverUrl = '';
     if (body.coverUrl && typeof body.coverUrl === 'string') {

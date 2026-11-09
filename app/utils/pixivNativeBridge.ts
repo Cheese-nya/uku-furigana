@@ -1,3 +1,5 @@
+import { requirePixivContent } from './pixivErrors';
+
 export interface NativePixivNovel {
   id: string;
   title: string;
@@ -13,6 +15,7 @@ interface NativePixivBridge {
   isNative?: boolean;
   novel?: (id: string) => Promise<unknown>;
   image?: (url: string) => Promise<unknown>;
+  account?: (action: 'status' | 'login' | 'logout') => Promise<{ supported: boolean; loggedIn: boolean; error?: string }>;
 }
 
 declare global {
@@ -71,7 +74,7 @@ export function normalizeNativePixivNovel(raw: unknown, fallbackId: string): Nat
   const record = asRecord(raw);
   if (!record) return null;
   const content = asString(record.content);
-  if (!content) return null;
+  if (!content.trim()) return null;
 
   const id = asString(record.id) || fallbackId;
   const title = asString(record.title).trim() || `Pixiv #${id}`;
@@ -94,6 +97,8 @@ export async function fetchNativePixivNovel(id: string): Promise<NativePixivNove
     throw new Error('原生 Pixiv 通道不可用');
   }
   const raw = await bridge.novel(id);
+  const record = asRecord(raw);
+  requirePixivContent(record?.content, record?.isLoginOnly === true);
   const novel = normalizeNativePixivNovel(raw, id);
   if (!novel) {
     throw new Error('Pixiv 返回的正文为空');

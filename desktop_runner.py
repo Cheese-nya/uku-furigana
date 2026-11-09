@@ -17,8 +17,9 @@ import urllib.request
 import json
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from http.server import SimpleHTTPRequestHandler, HTTPServer
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import webview
+from desktop_pixiv import DesktopPixivSession
 
 
 # Version of the running build; the packaging script can override it.
@@ -150,7 +151,7 @@ def get_bundle_dir():
         return os.path.join(os.path.dirname(os.path.abspath(__file__)), 'out')
 
 
-def start_http_server(web_dir, port, ready_event):
+def start_http_server(web_dir, port, ready_event, pixiv_session=None):
     """Start HTTP server and signal when ready."""
     class QuietHandler(SimpleHTTPRequestHandler):
         # The Windows registry can map .js/.mjs to text/plain, and module workers (pdf.js) refuse
@@ -170,7 +171,23 @@ def start_http_server(web_dir, port, ready_event):
         def log_message(self, format, *args):
             pass  # Suppress HTTP request logs
 
-    server = HTTPServer(('127.0.0.1', port), QuietHandler)
+        def do_GET(self):
+            from urllib.parse import urlsplit, parse_qs
+            parsed = urlsplit(self.path)
+            if parsed.path == '/api/pixiv-ajax' and pixiv_session is not None:
+                status, result = pixiv_session.novel(parse_qs(parsed.query).get('id', [''])[0])
+                body = json.dumps(result, ensure_ascii=False).encode('utf-8')
+                self.send_response(status)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Cache-Control', 'no-store')
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            super().do_GET()
+
+    # A slow authenticated Pixiv request must not block dictionary/worker assets.
+    server = ThreadingHTTPServer(('127.0.0.1', port), QuietHandler)
     ready_event.set()  # Signal that server is bound and listening
     server.serve_forever()
 
@@ -552,6 +569,7 @@ class UpdateDownloader:
 class Api:
     def __init__(self, data_dir=None):
         self._window = None
+        self._pixiv = DesktopPixivSession(self._pixiv_changed)
         # The HTTP port changes on every launch, so browser localStorage alone
         # cannot retain corrections. Store them outside the temporary EXE bundle.
         root = Path(data_dir) if data_dir else default_data_dir()
@@ -696,6 +714,22 @@ class Api:
     def set_window(self, window):
         self._window = window
 
+    def _pixiv_changed(self):
+        if self._window is not None:
+            try:
+                self._window.evaluate_js("window.dispatchEvent(new Event('uku-pixiv-account-change'))")
+            except Exception:
+                pass
+
+    def pixiv_account_status(self):
+        return self._pixiv.status()
+
+    def pixiv_account_login(self):
+        return self._pixiv.login()
+
+    def pixiv_account_logout(self):
+        return self._pixiv.logout()
+
     def get_log(self):
         """Tail of logs/uku.log so the feedback panel can show native errors."""
         return read_log_tail(self._logs_dir / LOG_FILENAME)
@@ -830,7 +864,8 @@ def main():
     port = get_free_port()
     ready_event = threading.Event()
 
-    server_thread = threading.Thread(target=start_http_server, args=(web_dir, port, ready_event), daemon=True)
+    api = Api(data_dir)
+    server_thread = threading.Thread(target=start_http_server, args=(web_dir, port, ready_event, api._pixiv), daemon=True)
     server_thread.start()
 
     # Wait for the server thread to bind the port
@@ -847,16 +882,17 @@ def main():
     url = f"http://127.0.0.1:{port}/?desktop=1"
 
     # Use PyWebView for a stable, dedicated application window with Native Save Dialog API bridge
-    api = Api(data_dir)
     logger.info('Serving %s on port %s', web_dir, port)
     window = webview.create_window('浮く Uku Furigana', url, width=1280, height=830, js_api=api)
     api.set_window(window)
+    api._pixiv.create_window(hidden=True)
+    window.events.closed += api._pixiv.close
     # Test setup only: UKU_DEBUG_PORT opens WebView2's DevTools port so the update test can drive the page.
     debug_port = os.environ.get('UKU_DEBUG_PORT', '').strip()
     if debug_port.isdigit():
         webview.settings['REMOTE_DEBUGGING_PORT'] = int(debug_port)
     try:
-        webview.start(private_mode=False)
+        webview.start(private_mode=False, storage_path=str(Path(data_dir) / 'webview'))
     finally:
         logger.info('Window closed, exiting')
 

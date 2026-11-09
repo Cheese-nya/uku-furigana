@@ -79,9 +79,25 @@ public class MainActivity extends Activity {
     private static final Object LOG_LOCK = new Object();
 
     private WebView webView;
+    private PixivAccount pixivAccount;
     private ValueCallback<Uri[]> filePathCallback;
 
     public class AndroidNativeBridge {
+        @JavascriptInterface
+        public String getPixivAccountStatus() { return pixivAccount.statusJson(); }
+
+        @JavascriptInterface
+        public String openPixivLogin() {
+            pixivAccount.login();
+            return pixivAccount.statusJson();
+        }
+
+        @JavascriptInterface
+        public String logoutPixiv() {
+            pixivAccount.logout();
+            return "{\"supported\":true,\"loggedIn\":false}";
+        }
+
         @JavascriptInterface
         public String saveFile(String filename, String base64Data) {
             if (filename == null || filename.trim().isEmpty()) {
@@ -269,6 +285,9 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        pixivAccount = new PixivAccount(this, () -> {
+            if (webView != null) webView.evaluateJavascript("window.dispatchEvent(new Event('uku-pixiv-account-change'));", null);
+        });
         recordHistoricalExitReasons();
         UpdateManager.cleanupInstalled(this);
 
@@ -295,6 +314,7 @@ public class MainActivity extends Activity {
         settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setLoadWithOverviewMode(true);
         settings.setUseWideViewPort(true);
+        settings.setSupportZoom(false);
         settings.setBuiltInZoomControls(false);
         settings.setDisplayZoomControls(false);
         settings.setTextZoom(100);
@@ -505,6 +525,10 @@ public class MainActivity extends Activity {
             conn.setRequestProperty("Referer", "https://www.pixiv.net/");
             conn.setRequestProperty("Accept", "application/json");
             conn.setRequestProperty("Accept-Language", "ja,zh-CN;q=0.9,en;q=0.8");
+            // Only this fixed Pixiv endpoint gets the local account session. Never relay it.
+            conn.setInstanceFollowRedirects(false);
+            String cookies = pixivAccount.cookieHeader();
+            if (cookies != null && !cookies.isEmpty()) conn.setRequestProperty("Cookie", cookies);
 
             int status = conn.getResponseCode();
             InputStream in = (status >= 200 && status < 400) ? conn.getInputStream() : conn.getErrorStream();
@@ -608,6 +632,12 @@ public class MainActivity extends Activity {
             if (mime != null) return mime;
         }
         return "application/octet-stream";
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (pixivAccount != null) pixivAccount.destroy();
+        super.onDestroy();
     }
 
     @Override

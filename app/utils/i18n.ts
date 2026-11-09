@@ -373,6 +373,38 @@ export interface Translations {
   // Dark mode
   navDarkModeToggle: string;
   settingsTitle: string;
+  pixivAccountTitle: string;
+  pixivAccountDescription: string;
+  pixivAccountStatus: string;
+  pixivAccountChecking: string;
+  pixivAccountUnavailable: string;
+  pixivAccountSaved: string;
+  pixivAccountSignedOut: string;
+  pixivAccountPrivacy: string;
+  pixivAccountNetworkHint: string;
+  pixivAccountLogin: string;
+  pixivAccountRelogin: string;
+  pixivAccountLogout: string;
+  pixivAccountWorking: string;
+  pixivAccountRetryHint: string;
+  pixivAccountWebHint: string;
+  pixivBrowserCheck: string;
+  pixivBrowserDisconnected: string;
+  pixivBrowserConnected: string;
+  pixivBrowserDescription: string;
+  pixivBrowserDownload: string;
+  pixivBrowserInstallOne: string;
+  pixivBrowserInstallTwo: string;
+  pixivBrowserInstallThree: string;
+  pixivBrowserReload: string;
+  pixivBrowserLogoutHint: string;
+
+  pixivAccountUpgradeHint: string;
+  pixivAccountError: string;
+  pixivAccountRefresh: string;
+  pixivAccountImportHint: string;
+  pixivAccountOpenSettings: string;
+
   batchAddFiles: string;
   batchExportAll: string;
   batchStatusDone: string;
@@ -466,6 +498,7 @@ export interface Translations {
   toolsProxy: string;
   toolsGetKey: string;
   toolsKeyPlaceholder: string;
+  toolsKeyOptionalPlaceholder: string;
   toolsPickModel: string;
   toolsFree: string;
   toolsModelsFailed: string;
@@ -568,6 +601,11 @@ export interface Translations {
   lookupPreparing: string;
   lookupFailed: string;
   bilingualLabel: string;
+  readerFloatTranslation: string;
+  readerDockTranslation: string;
+  readerFloatHint: string;
+  readerTranslationGuide: string;
+  readerTranslationGuideDismiss: string;
   pretranslateTitle: string;
   pretranslateStart: string;
   pretranslatePause: string;
@@ -591,6 +629,7 @@ export interface Translations {
   toolsLlmModel: string;
   toolsLlmKey: string;
   toolsLlmNote: string;
+  toolsLlmLocalNote: string;
   toolsTarget: string;
   toolsDicts: string;
   toolsDictBuiltin: string;
@@ -1043,6 +1082,38 @@ export const translations: Record<Locale, Translations> = {
     // Dark mode
     navDarkModeToggle: '切换日间/黑夜模式',
     settingsTitle: '设置',
+    pixivAccountTitle: 'Pixiv 账号',
+    pixivBrowserCheck: '检测登录状态',
+    pixivBrowserDisconnected: '助手未连接',
+    pixivBrowserConnected: '浏览器助手已连接，将使用当前浏览器的 Pixiv 登录态读取作品。',
+    pixivBrowserDescription: '网页版需要安装一次浏览器助手来连接 Pixiv 账号。支持桌面 Chrome / Edge 的普通窗口，登录在 Pixiv 官方页面完成。',
+    pixivBrowserDownload: '下载 Pixiv 浏览器助手',
+    pixivBrowserInstallOne: '下载并解压助手 ZIP。',
+    pixivBrowserInstallTwo: '打开浏览器的扩展程序管理页面。',
+    pixivBrowserInstallThree: '开启「开发者模式」，点击「加载已解压的扩展程序」，选择包含 manifest.json 的文件夹，然后刷新此页面。',
+    pixivBrowserReload: '安装完成，刷新并检测',
+    pixivBrowserLogoutHint: '退出会同时清除当前浏览器的 Pixiv 登录态，其他 Pixiv 标签页也会退出。',
+
+    pixivAccountDescription: '登录自己的 Pixiv 账号，导入需要登录才能阅读的小说。',
+    pixivAccountStatus: '账号状态',
+    pixivAccountChecking: '正在检查…',
+    pixivAccountUnavailable: '暂不支持',
+    pixivAccountSaved: '登录态已保存',
+    pixivAccountSignedOut: '未登录',
+    pixivAccountPrivacy: '在 Pixiv 官方页面登录。登录态仅保存在本机，不会发送到中转服务器。',
+    pixivAccountNetworkHint: '登录和已登录导入需要本机能访问 Pixiv。登录完成后关闭登录窗口，返回这里重试导入。',
+    pixivAccountLogin: '登录 Pixiv 账号',
+    pixivAccountRelogin: '重新登录 Pixiv',
+    pixivAccountLogout: '退出 Pixiv 账号',
+    pixivAccountWorking: '正在处理…',
+    pixivAccountRetryHint: '登录态可能过期；如仍提示需要登录，请重新登录。已入库的书籍不会因退出而删除。',
+    pixivAccountWebHint: '网页版可通过浏览器助手连接当前浏览器的 Pixiv 账号，安装后在官方页面登录并返回导入。',
+    pixivAccountUpgradeHint: '当前客户端不支持 Pixiv 账号登录，请更新客户端后重试。',
+    pixivAccountError: '无法获取 Pixiv 登录状态，请重试。',
+    pixivAccountRefresh: '重新检查',
+    pixivAccountImportHint: '这篇 Pixiv 小说需要登录后才能阅读，请在「设置 → Pixiv 账号」登录自己的账号后重试。',
+    pixivAccountOpenSettings: '前往设置登录 Pixiv',
+
     batchAddFiles: '添加文件',
     batchExportAll: '全部导出',
     batchStatusDone: '完成',
@@ -1134,6 +1205,7 @@ export const translations: Record<Locale, Translations> = {
     toolsProxy: '国内可能需要代理',
     toolsGetKey: '获取 Key ↗',
     toolsKeyPlaceholder: '粘贴 Key',
+    toolsKeyOptionalPlaceholder: '可留空（本地接口）',
     toolsPickModel: '选择模型',
     toolsFree: '免费',
     toolsModelsFailed: '读取模型列表失败：{error}',
@@ -1236,6 +1308,11 @@ export const translations: Record<Locale, Translations> = {
     lookupPreparing: '正在准备词典 {percent}%',
     lookupFailed: '查词失败：{error}',
     bilingualLabel: '对照翻译',
+    readerFloatTranslation: '悬浮翻译按钮',
+    readerDockTranslation: '收回翻译按钮到工具栏',
+    readerFloatHint: '长按翻译按钮拖出；拖近工具栏原位置，松手即可放回。',
+    readerTranslationGuide: '长按并拖动，可把翻译按钮放到顺手的位置',
+    readerTranslationGuideDismiss: '知道了',
     pretranslateTitle: '整本翻译',
     pretranslateStart: '开始',
     pretranslatePause: '暂停',
@@ -1259,6 +1336,7 @@ export const translations: Record<Locale, Translations> = {
     toolsLlmModel: '模型',
     toolsLlmKey: 'API Key',
     toolsLlmNote: 'Key 只保存在本机，翻译请求由本机直接发给该平台。',
+    toolsLlmLocalNote: 'Key 只保存在本机；本地或局域网接口不要求鉴权时可以留空。地址请填完整，例如 http://192.168.1.10:8000/v1，并确认电脑上的服务允许局域网访问及跨域请求。',
     toolsTarget: '译文语言',
     toolsDicts: '查词词典',
     toolsDictBuiltin: '内置 · {count} · {license}',
@@ -1707,6 +1785,38 @@ export const translations: Record<Locale, Translations> = {
     // Dark mode
     navDarkModeToggle: 'Toggle Light/Dark Mode',
     settingsTitle: 'Settings',
+    pixivAccountTitle: 'Pixiv account',
+    pixivBrowserCheck: 'Check sign-in status',
+    pixivBrowserDisconnected: 'Helper not connected',
+    pixivBrowserConnected: 'Browser helper connected. Imports use your Pixiv session in this browser.',
+    pixivBrowserDescription: 'Install the browser helper once to connect your Pixiv account. Supports regular desktop Chrome / Edge windows. Sign in on the official Pixiv page.',
+    pixivBrowserDownload: 'Download Pixiv browser helper',
+    pixivBrowserInstallOne: 'Download and unzip the helper ZIP.',
+    pixivBrowserInstallTwo: 'Open your browser’s Extensions page.',
+    pixivBrowserInstallThree: 'Enable Developer mode, choose Load unpacked, select the folder containing manifest.json, then refresh this page.',
+    pixivBrowserReload: 'Installed — refresh and detect',
+    pixivBrowserLogoutHint: 'Signing out also clears the Pixiv session used by other tabs in this browser.',
+
+    pixivAccountDescription: 'Sign in to your Pixiv account to import novels that require login.',
+    pixivAccountStatus: 'Account status',
+    pixivAccountChecking: 'Checking…',
+    pixivAccountUnavailable: 'Unavailable',
+    pixivAccountSaved: 'Session saved',
+    pixivAccountSignedOut: 'Not signed in',
+    pixivAccountPrivacy: 'Sign in on the official Pixiv page. Your session stays on this device and is never sent to the relay server.',
+    pixivAccountNetworkHint: 'This device needs access to Pixiv for login and signed-in imports. Close the login window when finished, then retry the import.',
+    pixivAccountLogin: 'Sign in to Pixiv',
+    pixivAccountRelogin: 'Sign in to Pixiv again',
+    pixivAccountLogout: 'Sign out of Pixiv',
+    pixivAccountWorking: 'Working…',
+    pixivAccountRetryHint: 'Sessions can expire. Sign in again if an import still requires login. Signing out keeps your imported books.',
+    pixivAccountWebHint: 'Connect your browser’s Pixiv account with the browser helper, sign in on the official Pixiv page, then return to import.',
+    pixivAccountUpgradeHint: 'Update this app to enable Pixiv account login.',
+    pixivAccountError: 'Could not update the Pixiv session. Please try again.',
+    pixivAccountRefresh: 'Check again',
+    pixivAccountImportHint: 'This novel requires login. Sign in under Settings → Pixiv account, then retry.',
+    pixivAccountOpenSettings: 'Sign in under Settings',
+
     batchAddFiles: 'Add Files',
     batchExportAll: 'Export All',
     batchStatusDone: 'Done',
@@ -1798,6 +1908,7 @@ export const translations: Record<Locale, Translations> = {
     toolsProxy: 'May need a proxy in mainland China',
     toolsGetKey: 'Get a key ↗',
     toolsKeyPlaceholder: 'Paste the key',
+    toolsKeyOptionalPlaceholder: 'Optional (local endpoint)',
     toolsPickModel: 'Choose a model',
     toolsFree: 'free',
     toolsModelsFailed: 'Could not load models: {error}',
@@ -1900,6 +2011,11 @@ export const translations: Record<Locale, Translations> = {
     lookupPreparing: 'Preparing the dictionary {percent}%',
     lookupFailed: 'Lookup failed: {error}',
     bilingualLabel: 'Bilingual',
+    readerFloatTranslation: 'Float translation button',
+    readerDockTranslation: 'Return translation button to toolbar',
+    readerFloatHint: 'Hold the translation button to drag it out; release near its original toolbar position to return.',
+    readerTranslationGuide: 'Hold and drag to place this translation button anywhere',
+    readerTranslationGuideDismiss: 'Got it',
     pretranslateTitle: 'Translate whole book',
     pretranslateStart: 'Start',
     pretranslatePause: 'Pause',
@@ -1923,6 +2039,7 @@ export const translations: Record<Locale, Translations> = {
     toolsLlmModel: 'Model',
     toolsLlmKey: 'API key',
     toolsLlmNote: 'The key stays on this device; translations go straight from here to the platform.',
+    toolsLlmLocalNote: 'The key stays on this device. Leave it empty for a local or LAN endpoint that needs no authentication. Enter the full endpoint, such as http://192.168.1.10:8000/v1, and allow LAN access and cross-origin requests on the host.',
     toolsTarget: 'Translate into',
     toolsDicts: 'Dictionaries',
     toolsDictBuiltin: 'Built-in · {count} · {license}',

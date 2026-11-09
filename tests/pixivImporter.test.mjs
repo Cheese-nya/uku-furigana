@@ -308,7 +308,7 @@ test('fetchPixivNovel falls back to the AJAX cascade and cleans the fields', asy
 test('fetchPixivNovel falls back with title and author defaults', async () => {
   const stub = stubFetch(url => {
     if (url.startsWith('/api/pixiv?')) return jsonResponse({}, { ok: false, status: 500 });
-    if (url.startsWith('/api/pixiv-ajax')) return jsonResponse({ error: false, body: { content: '' } });
+    if (url.startsWith('/api/pixiv-ajax')) return jsonResponse({ error: false, body: { content: '本文' } });
     throw new Error(`unexpected request: ${url}`);
   });
   try {
@@ -317,7 +317,7 @@ test('fetchPixivNovel falls back with title and author defaults', async () => {
       title: 'Pixiv #123456',
       author: '',
       description: '',
-      content: '',
+      content: '本文',
       rubyOverrides: {},
       coverUrl: '',
       sourceUrl: 'https://www.pixiv.net/novel/show.php?id=123456',
@@ -611,6 +611,136 @@ test('fetchPixivNovel keeps pixiv\'s own reason from a failed proxy response', a
 
 const RELAY = 'https://uku.saiaino.xyz/api/pixiv?id=';
 const notJson = { ok: false, status: 404, json: async () => { throw new SyntaxError('not json'); } };
+
+test('Issue #58: login-only metadata never becomes a blank book', async () => {
+  const stub = stubFetch(url => {
+    if (url.startsWith('/api/pixiv?')) return notJson;
+    if (url.startsWith('/api/pixiv-ajax')) return jsonResponse({
+      error: false, body: { title: 'ひみつのはなし【ネップリ再録】', userName: '作者',
+        content: '', isLoginOnly: true, characterCount: 18089 },
+    });
+    throw new TypeError('Failed to fetch');
+  });
+  try {
+    await assert.rejects(() => fetchPixivNovel('14910277'), /需要登录后才能阅读/);
+    assert.equal(stub.calls.some(url => url.startsWith(RELAY)), false);
+  } finally { stub.restore(); }
+});
+
+test('empty API/AJAX content is retried through the relay; an old empty relay is rejected too', async () => {
+  const novel = { id: '123456', title: 'T', content: '本文', rubyOverrides: {} };
+  let relayContent = '本文';
+  const stub = stubFetch(url => {
+    if (url.startsWith('/api/pixiv?')) return jsonResponse({ ...novel, content: '  \n' });
+    if (url.startsWith('/api/pixiv-ajax')) return jsonResponse({ error: false, body: { content: '' } });
+    if (url.startsWith(RELAY)) return jsonResponse({ ...novel, content: relayContent });
+    throw new TypeError('Failed to fetch');
+  });
+  try {
+    assert.equal((await fetchPixivNovel('123456')).content, '本文');
+    relayContent = '';
+    await assert.rejects(() => fetchPixivNovel('123456'), /正文为空/);
+  } finally { stub.restore(); }
+});
+
+test('a stalled device request or response body cannot block relay fallback', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  for (const stallBody of [false, true]) {
+    let deviceSignal;
+    const stub = stubFetch((url, init) => {
+      if (url.startsWith('/api/pixiv?')) {
+        deviceSignal = init.signal;
+        const stalled = new Promise(() => {});
+        return stallBody ? { ok: true, json: () => stalled } : stalled;
+      }
+      if (url.startsWith(RELAY)) return jsonResponse({ content: '本文' });
+      throw new Error(`unexpected request: ${url}`);
+    });
+    try {
+      const pending = fetchPixivNovel('123456');
+      await new Promise(resolve => setImmediate(resolve));
+      t.mock.timers.tick(8_000);
+      assert.equal((await pending).content, '本文');
+      assert.equal(deviceSignal.aborted, true);
+      assert.deepEqual(stub.calls, ['/api/pixiv?id=123456', `${RELAY}123456`]);
+    } finally { stub.restore(); }
+  }
+});
+
+test('a stalled relay body eventually fails instead of leaving import spinning', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const stub = stubFetch(url => {
+    if (url.startsWith(RELAY)) return { ok: true, json: () => new Promise(() => {}) };
+    if (url.startsWith('/api/')) return notJson;
+    throw new TypeError('Failed to fetch');
+  });
+  try {
+    const pending = assert.rejects(() => fetchPixivNovel('123456'), /请求超时/);
+    await new Promise(resolve => setImmediate(resolve));
+    t.mock.timers.tick(30_000);
+    await pending;
+  } finally { stub.restore(); }
+});
+
+test('a stalled native bridge falls back and surfaces the relay login requirement', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const native = withNativeBridge(() => new Promise(() => {}));
+  const { PIXIV_LOGIN_REQUIRED } = loadTypescript('../app/utils/pixivErrors.ts');
+  const stub = stubFetch(url => {
+    if (url.startsWith(RELAY)) return jsonResponse({ error: PIXIV_LOGIN_REQUIRED }, { ok: false, status: 403 });
+    return notJson;
+  });
+  try {
+    const pending = assert.rejects(() => fetchPixivNovel('123456'), /需要登录后才能阅读/);
+    await new Promise(resolve => setImmediate(resolve));
+    t.mock.timers.tick(8_000);
+    await pending;
+  } finally { stub.restore(); native.restore(); }
+});
+
+test('a stalled optional cover does not discard an already fetched novel', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const stub = stubFetch(url => {
+    if (url.startsWith('/api/pixiv?')) return notJson;
+    if (url.startsWith('/api/pixiv-ajax')) return jsonResponse({ error: false, body: { content: '本文', coverUrl: 'https://i.pximg.net/cover.jpg' } });
+    if (url.startsWith('/api/pixiv-image')) return new Promise(() => {});
+    throw new Error(`unexpected request: ${url}`);
+  });
+  try {
+    const pending = fetchPixivNovel('123456');
+    await new Promise(resolve => setImmediate(resolve));
+    t.mock.timers.tick(3_000);
+    const novel = await pending;
+    assert.equal(novel.content, '本文');
+    assert.equal(novel.coverUrl, 'https://i.pixiv.re/cover.jpg');
+  } finally { stub.restore(); }
+});
+
+test('a saved local account imports login-only works on-device without sending the session to the relay', async () => {
+  const originalWindow = globalThis.window;
+  globalThis.window = { AndroidBridge: {
+    getPixivAccountStatus: () => '{"supported":true,"loggedIn":true}',
+    openPixivLogin() {}, logoutPixiv() {},
+  } };
+  let restricted = false;
+  const stub = stubFetch(url => {
+    if (url.startsWith('/api/pixiv?')) return notJson;
+    if (url.startsWith('/api/pixiv-ajax')) return jsonResponse({ error: false, body: {
+      title: 'ひみつのはなし【ネップリ再録】', isLoginOnly: true, content: restricted ? '' : '認証済みの本文',
+    } });
+    throw new TypeError('Failed to fetch');
+  });
+  try {
+    assert.equal((await fetchPixivNovel('14910277')).content, '認証済みの本文');
+    restricted = true;
+    await assert.rejects(() => fetchPixivNovel('14910277'), /设置 → Pixiv 账号/);
+    assert.equal(stub.calls.some(url => url.startsWith(RELAY)), false);
+  } finally {
+    stub.restore();
+    if (originalWindow === undefined) delete globalThis.window;
+    else globalThis.window = originalWindow;
+  }
+});
 
 test('fetchPixivNovel falls back to the relay when the native proxy cannot reach pixiv', async () => {
   const novel = { id: '123456', title: 'T', author: 'A', description: '', content: '本文', rubyOverrides: {}, coverUrl: '', sourceUrl: 'https://www.pixiv.net/novel/show.php?id=123456' };

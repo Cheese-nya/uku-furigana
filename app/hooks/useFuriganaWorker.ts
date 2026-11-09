@@ -6,7 +6,7 @@ import { AnnotationClient, type EngineState } from '../utils/annotationClient';
 import type { AnnotationInput } from '../utils/annotationTask';
 import { logEvent } from '../utils/appLog';
 import { formatRuby, type ScriptLine } from '../utils/furigana';
-import { loadTranslationSettings } from '../utils/translation';
+import { llmNeedsApiKey, loadTranslationSettings } from '../utils/translation';
 
 export function useFuriganaWorker(input: AnnotationInput) {
   const [engine, setEngine] = useState<EngineState>({ status: 'loading', mode: 'worker' });
@@ -47,7 +47,7 @@ export function useFuriganaWorker(input: AnnotationInput) {
         setStableSnapshot({ input, lines });
         setSnapshot({ input, revision, lines, done: true, error: '' });
         const settings = loadTranslationSettings();
-        if (settings.engine === 'llm' && settings.aiReadingReview && settings.llm.apiKey.trim()) {
+        if (settings.engine === 'llm' && settings.aiReadingReview && (settings.llm.apiKey.trim() || !llmNeedsApiKey(settings.llm))) {
           void reviewReadings(lines, settings.llm, controller.signal)
             .then(results => {
               if (controller.signal.aborted || results.length === 0) return;

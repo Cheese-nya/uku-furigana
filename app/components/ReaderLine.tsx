@@ -86,7 +86,7 @@ export const ReaderLine = memo(function ReaderLine({ line, lineIndex, bookId, ve
     const delimiter = text.slice(speaker.length).match(/^[：:]\s*/);
     skip = speaker.length + (delimiter ? delimiter[0].length : 0);
   }
-  const sentences = bilingual ? splitSentences(text) : [];
+  const sentences = splitSentences(text);
   const cuts = [...sentences.map(sentence => sentence.end), ...(hit ? [hit.start, hit.end] : [])];
   const all = pieces(line, cuts);
   const rtStyle = { color: 'var(--ruby)', visibility: showRuby ? 'visible' : 'hidden' } as const;
@@ -116,7 +116,7 @@ export const ReaderLine = memo(function ReaderLine({ line, lineIndex, bookId, ve
           const failed = bilingual.failed.has(sentence.text);
           return (
             <React.Fragment key={sentence.start}>
-              <span className="reader-sentence">{render(sentence.start, sentence.end)}</span>
+              <span data-reader-sentence={sentence.start} className="reader-sentence">{render(sentence.start, sentence.end)}</span>
               {translation !== undefined
                 ? <span className="reader-tr">{translation.trim()}</span>
                 : failed
@@ -130,7 +130,7 @@ export const ReaderLine = memo(function ReaderLine({ line, lineIndex, bookId, ve
             </React.Fragment>
           );
         })
-        : render(0, text.length)}
+        : sentences.map(sentence => <span key={sentence.start} data-reader-sentence={sentence.start}>{render(sentence.start, sentence.end)}</span>)}
     </p>
   );
 }, sameLine);

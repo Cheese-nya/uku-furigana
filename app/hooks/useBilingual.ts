@@ -1,10 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { IMAGE_LINE } from '../utils/bookAssets';
 import { logEvent } from '../utils/appLog';
 import type { ReaderTools } from '../utils/readingTools';
 import { splitSentences } from '../utils/sentences';
+import type { ReaderTranslationAnchor } from './useReaderTranslationAnchor';
 
 export interface PretranslateState {
   status: 'idle' | 'running' | 'paused' | 'done' | 'error';
@@ -33,7 +34,7 @@ export function bookSentences(content: string): string[] {
  * Per-sentence translations for the reader: sentences of the lines near the viewport are translated
  * (and cached) as they come into view; the whole book can also be translated in the background.
  */
-export function useBilingual({ enabled, wantCount, bookId, content, lineTexts, articleRef, tools }: {
+export function useBilingual({ enabled, wantCount, bookId, content, lineTexts, articleRef, tools, translationAnchor }: {
   enabled: boolean;
   /** The Aa popover is open: it shows how much of the book is translated. */
   wantCount: boolean;
@@ -42,6 +43,7 @@ export function useBilingual({ enabled, wantCount, bookId, content, lineTexts, a
   lineTexts: string[];
   articleRef: RefObject<HTMLElement | null>;
   tools: ReaderTools | null;
+  translationAnchor?: ReaderTranslationAnchor;
 }) {
   const [translations, setTranslations] = useState<Map<string, string>>(() => new Map());
   const [failed, setFailed] = useState<Set<string>>(() => new Set());
@@ -51,9 +53,37 @@ export function useBilingual({ enabled, wantCount, bookId, content, lineTexts, a
   const timer = useRef<number | null>(null);
   const pretranslateAbort = useRef<AbortController | null>(null);
   const settingsKey = tools?.settingsKey ?? '';
+  const publication = useRef({ owner: {}, found: new Map<string, string>(), failures: new Set<string>(), cleared: new Set<string>() });
+  const activeKey = useRef('');
+  const mounted = useRef(true);
+  const anchorRef = useRef(translationAnchor);
+  useLayoutEffect(() => { anchorRef.current = translationAnchor; }, [translationAnchor]);
+  const publishPending = useCallback(() => {
+    const batch = publication.current;
+    const found = batch.found, failures = batch.failures, cleared = batch.cleared;
+    batch.found = new Map(); batch.failures = new Set(); batch.cleared = new Set();
+    if (!mounted.current) return;
+    if (found.size) setTranslations(previous => {
+      const next = new Map(previous); found.forEach((value, text) => next.set(text, value)); return next;
+    });
+    if (found.size || failures.size || cleared.size) setFailed(previous => {
+      const next = new Set(previous);
+      cleared.forEach(text => next.delete(text));
+      failures.forEach(text => next.add(text));
+      found.forEach((_, text) => next.delete(text));
+      return next;
+    });
+  }, []);
+  const schedule = useCallback(() => {
+    const anchor = anchorRef.current;
+    if (anchor) anchor.schedulePublish(publication.current.owner, publishPending);
+    else publishPending();
+  }, [publishPending]);
+
 
   // A different book, engine or target language starts from a clean slate (the cache still answers instantly).
   const key = `${bookId}|${settingsKey}`;
+  const generation = useRef({ key });
   const [shownKey, setShownKey] = useState(key);
   if (key !== shownKey) {
     setShownKey(key);
@@ -61,13 +91,26 @@ export function useBilingual({ enabled, wantCount, bookId, content, lineTexts, a
     setFailed(new Set());
     setPretranslate({ status: 'idle', done: 0, total: 0 });
   }
-  useEffect(() => {
+  useLayoutEffect(() => {
+    activeKey.current = key;
+    generation.current = { key };
+    anchorRef.current?.cancelPublish(publication.current.owner);
+    publication.current = { owner: {}, found: new Map(), failures: new Set(), cleared: new Set() };
     requested.current = new Set();
     pretranslateAbort.current?.abort();
+    visible.current.clear();
   }, [key]);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      anchorRef.current?.cancelPublish(publication.current.owner);
+    };
+  }, []);
 
   const request = useCallback((texts: string[], onScreen = texts.length) => {
     if (!tools || !bookId) return;
+    const requestGeneration = generation.current;
     const leading = texts.slice(0, onScreen).filter(text => !requested.current.has(text)).length;
     const fresh = texts.filter(text => !requested.current.has(text));
     if (!fresh.length) return;
@@ -77,19 +120,20 @@ export function useBilingual({ enabled, wantCount, bookId, content, lineTexts, a
     const show = (found: Map<string, string>) => {
       if (!found.size) return;
       found.forEach((_, text) => arrived.add(text));
-      setTranslations(previous => { const next = new Map(previous); found.forEach((value, text) => next.set(text, value)); return next; });
-      setFailed(previous => {
-        if (![...found.keys()].some(text => previous.has(text))) return previous;
-        const next = new Set(previous); found.forEach((_, text) => next.delete(text)); return next;
+      if (!mounted.current || activeKey.current !== key || generation.current !== requestGeneration) return;
+      found.forEach((value, text) => {
+        publication.current.found.set(text, value);
+        publication.current.failures.delete(text);
       });
+      schedule();
     };
-    const markMissing = () => setFailed(previous => {
-      const missing = fresh.filter(text => !arrived.has(text));
-      if (!missing.length) return previous;
-      const next = new Set(previous); missing.forEach(text => next.add(text)); return next;
-    });
+    const markMissing = () => {
+      if (!mounted.current || activeKey.current !== key || generation.current !== requestGeneration) return;
+      fresh.filter(text => !arrived.has(text)).forEach(text => publication.current.failures.add(text));
+      schedule();
+    };
     tools.translate(bookId, fresh, { onPartial: show, leading }).then(found => { show(found); markMissing(); }, markMissing);
-  }, [tools, bookId]);
+  }, [tools, bookId, key, schedule]);
 
   // What is on screen goes first, then the lines below (where reading goes next), then the ones above.
   const flush = useCallback(() => {
@@ -99,7 +143,10 @@ export function useBilingual({ enabled, wantCount, bookId, content, lineTexts, a
     const groups: number[][] = [[], [], []];
     for (const index of [...visible.current].sort((a, b) => a - b)) {
       const box = view && article?.querySelector(`[data-line="${index}"]`)?.getBoundingClientRect();
-      groups[!box || !view || (box.bottom > view.top && box.top < view.bottom) ? 0 : box.top >= view.bottom ? 1 : 2].push(index);
+      const vertical = article?.dataset.writingMode === 'vertical';
+      const inView = box && view && (vertical ? box.right > view.left && box.left < view.right : box.bottom > view.top && box.top < view.bottom);
+      const ahead = box && view && (vertical ? box.right <= view.left : box.top >= view.bottom);
+      groups[!box || !view || inView ? 0 : ahead ? 1 : 2].push(index);
     }
     const texts: string[] = [];
     let onScreen = 0;
@@ -116,6 +163,7 @@ export function useBilingual({ enabled, wantCount, bookId, content, lineTexts, a
   useEffect(() => {
     const article = articleRef.current;
     if (!enabled || !article || typeof IntersectionObserver === 'undefined') return;
+    visible.current.clear();
     const observer = new IntersectionObserver(entries => {
       for (const entry of entries) {
         const index = Number((entry.target as HTMLElement).dataset.line);
@@ -125,8 +173,24 @@ export function useBilingual({ enabled, wantCount, bookId, content, lineTexts, a
       if (timer.current === null) timer.current = window.setTimeout(flush, requested.current.size ? 250 : 0);
       // The reader scrolls inside its own box: with the page as root, the margin never reached past that box.
     }, { root: scrollParent(article), rootMargin: '800px' });
-    article.querySelectorAll('[data-line]').forEach(node => observer.observe(node));
+    const observed = new Set<Element>();
+    const observeLines = () => {
+      const current = new Set(article.querySelectorAll('[data-line]'));
+      for (const node of observed) if (!current.has(node)) {
+        observer.unobserve(node);
+        visible.current.delete(Number((node as HTMLElement).dataset.line));
+        observed.delete(node);
+      }
+      for (const node of current) if (!observed.has(node)) {
+        observer.observe(node); observed.add(node);
+      }
+    };
+    observeLines();
+    // Chapter changes replace paragraphs without changing the book's lineTexts length.
+    const mutations = new MutationObserver(observeLines);
+    mutations.observe(article, { childList: true, subtree: true });
     return () => {
+      mutations.disconnect();
       observer.disconnect();
       if (timer.current !== null) window.clearTimeout(timer.current);
       timer.current = null;
@@ -135,9 +199,11 @@ export function useBilingual({ enabled, wantCount, bookId, content, lineTexts, a
 
   const retry = useCallback((text: string) => {
     requested.current.delete(text);
-    setFailed(previous => { const next = new Set(previous); next.delete(text); return next; });
+    publication.current.failures.delete(text);
+    publication.current.cleared.add(text);
+    schedule();
     request([text]);
-  }, [request]);
+  }, [request, schedule]);
 
   // How much of the book is already translated, for the Aa row.
   useEffect(() => {

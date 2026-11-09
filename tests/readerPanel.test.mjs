@@ -91,6 +91,23 @@ test('阅读器：说话人标签与正文开头去重', () => {
   assert.ok(line.includes('text.startsWith(speaker)'));
 });
 
+test('阅读器翻译按钮：仅首次显示一条可关闭的拖动提示', () => {
+  const button = read('../app/components/FloatingTranslationButton.tsx');
+  const css = read('../app/components/FloatingTranslationButton.css');
+  const i18n = loadTypescript('../app/utils/i18n.ts').translations;
+  for (const locale of ['zh-CN', 'en']) {
+    assert.ok(i18n[locale].readerTranslationGuide.length > 0, `${locale} needs the guide copy`);
+    assert.ok(i18n[locale].readerTranslationGuideDismiss.length > 0, `${locale} needs the dismiss label`);
+  }
+  assert.ok(source.includes('<FloatingTranslationButton') && source.includes('          t={t}'), 'reader passes its translations');
+  for (const part of ['reader-translation-guide', 'TRANSLATION_GUIDE_KEY', 'translationGuideSeen', 'guideShownThisSession', 'GUIDE_VISIBLE_MS', 'translationGuidePosition']) {
+    assert.ok(button.includes(part), `guide needs ${part}`);
+  }
+  assert.ok(button.includes('localStorage.setItem(TRANSLATION_GUIDE_KEY'), 'guide writes its once-only marker');
+  assert.ok(button.includes('onDismiss={guide.complete}'), 'guide can be dismissed');
+  assert.ok(css.includes('.ft-guide[data-side=') && css.includes('prefers-reduced-motion'), 'guide has both pointers and reduced-motion styling');
+});
+
 test('阅读器：注音失败时显示台本库原文，而不是空白页', () => {
   assert.ok(source.includes('plainScriptLines'), 'ReaderPanel falls back to the stored text');
   // Only on failure: a fallback while annotating keeps the line count from dropping to 0, and
