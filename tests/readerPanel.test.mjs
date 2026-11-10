@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { loadTypescript } from './loadTypescript.mjs';
 
 const { plainScriptLines } = loadTypescript('../app/utils/plainScript.ts');
+const { sameAnnotationDocument } = loadTypescript('../app/utils/annotationSnapshot.ts');
 const {
   DEFAULT_READER_PREFS,
   READER_FONT_SIZE_MAX,
@@ -133,6 +134,17 @@ test('工作台：样稿工具条 + 导出选格式（含存入台本库）+ 右
   for (const removed of ['setPreviewWritingMode', 'rubyColor', 'setLineSpacing', 'editor-pixiv-toggle', 't.clearButton', "'split'", 'handleOpenInReader']) {
     assert.equal(editor.includes(removed), false, `EditorWorkspace must not contain ${removed}`);
   }
+});
+
+test('工作台：同一台本编辑原文时保留完成的预览快照，切换台本不保留', () => {
+  const input = (text, documentId) => ({ text, documentId, rubyType: 'hiragana', glossary: [], sourceOverrides: [], overrides: [] });
+  assert.equal(sameAnnotationDocument(input('号哭', 'script:1'), input('号哭が', 'script:1')), true);
+  assert.equal(sameAnnotationDocument(input('号哭', 'script:1'), input('号哭が', 'script:2')), false);
+  assert.equal(sameAnnotationDocument(input('号哭', ''), input('号哭が', '')), false, 'initial scratch document still uses the text identity');
+  assert.equal(sameAnnotationDocument(input('号哭', ''), input('号哭', 'script:1')), false, 'a newly resolved document does not inherit scratch results');
+  const hook = read('../app/hooks/useFuriganaWorker.ts');
+  assert.ok(hook.includes('sameAnnotationDocument'), 'worker keeps the stable snapshot by document identity');
+  assert.ok(editor.includes('key={documentId}'), 'switching documents still remounts the preview');
 });
 
 test('改读音面板：候选、自定义、仅此处/全文同词/记住、取消/应用', () => {

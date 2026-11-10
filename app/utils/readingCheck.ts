@@ -5,7 +5,7 @@
 
 import { brotliSibling, fetchCompressedBytes } from './compressedAsset';
 import { readDictionaryAsset } from './dictionaryAssetCache';
-import { katakanaToHiragana, type ScriptLine } from './furigana';
+import { katakanaToHiragana, parseCompoundToTokens, type ScriptLine } from './furigana';
 
 /** `term → readings`, commonest first. Built by tools/build-reading-table.mjs. */
 export type ReadingTable = Map<string, string[]>;
@@ -61,6 +61,48 @@ interface Verdict {
   alternatives?: string[];
 }
 
+export interface DictionaryCompound {
+  start: number;
+  end: number;
+  surface: string;
+  reading: string;
+}
+
+const KANJI = /[\u4E00-\u9FFF\u3400-\u4DBF]/;
+const MAX_COMPOUND_LENGTH = 6;
+
+/**
+ * Kuromoji can split a word the reading table knows (号|哭 → 号哭). Recover the longest
+ * unambiguous compound starting at an unread automatic token. User overlays are applied after
+ * this canonical pass, so manual/glossary/source readings keep their precedence.
+ */
+export function findDictionaryCompound(line: ScriptLine, index: number, table: ReadingTable): DictionaryCompound | null {
+  const first = line.tokens[index];
+  if (!first || (first.readingSource && first.readingSource !== 'automatic') || first.annotationSuppressed) return null;
+  const offsets: number[] = [];
+  let offset = 0;
+  for (const token of line.tokens) {
+    offsets.push(offset);
+    offset += token.surface.length;
+  }
+  const start = offsets[index];
+  const text = line.tokens.map(token => token.surface).join('');
+  for (let end = Math.min(text.length, start + MAX_COMPOUND_LENGTH); end > start + 1; end--) {
+    const surface = text.slice(start, end);
+    const readings = table.get(surface);
+    if (!KANJI.test(surface) || readings?.length !== 1) continue;
+    // The compound must cover whole tokens, otherwise a replacement would lose text.
+    const parts = line.tokens.filter((_, partIndex) =>
+      offsets[partIndex] >= start && offsets[partIndex] + line.tokens[partIndex].surface.length <= end);
+    if (parts.length < 2 || parts.reduce((length, token) => length + token.surface.length, 0) !== surface.length) continue;
+    const range = line.tokens.slice(index, index + parts.length);
+    if (range.some(token => token.readingSource && token.readingSource !== 'automatic')) continue;
+    if (!range.some(token => token.hasKanji && !token.ruby)) continue;
+    return { start: index, end: index + parts.length, surface, reading: readings[0] };
+  }
+  return null;
+}
+
 /**
  * Compares one reading with the table; null when the dictionary says nothing about the word.
  * At this stage the reading is canonical hiragana (the annotator annotates with 'hiragana').
@@ -80,29 +122,37 @@ function verify(surface: string, reading: string, table: ReadingTable): Verdict 
  * Returns a new line; the input (and its tokens) is never mutated.
  */
 export function checkLine(line: ScriptLine, table: ReadingTable): ScriptLine {
+  const checked = { ...line, tokens: [...line.tokens] };
+  for (let index = 0; index < checked.tokens.length; index++) {
+    const compound = findDictionaryCompound(checked, index, table);
+    if (!compound) continue;
+    checked.tokens.splice(compound.start, compound.end - compound.start,
+      ...parseCompoundToTokens(compound.surface, compound.reading, 'hiragana'));
+    index = compound.start;
+  }
   const offsets: number[] = [];
   let offset = 0;
-  for (const token of line.tokens) {
+  for (const token of checked.tokens) {
     offsets.push(offset);
     offset += token.surface.length;
   }
   // One verdict per word. A word split into 食 + べる carries mora slices rather than readings,
   // so only the word's own reading can be compared with the dictionary.
   const words = new Map<number, number[]>();
-  line.tokens.forEach((token, index) => {
+  checked.tokens.forEach((token, index) => {
     const start = offsets[index] - (token.word?.offset ?? 0);
     const indices = words.get(start);
     if (indices) indices.push(index);
     else words.set(start, [index]);
   });
 
-  const tokens = [...line.tokens];
+  const tokens = [...checked.tokens];
   for (const indices of words.values()) {
     // Okurigana carry no reading of their own; the verdict is about the kanji tokens.
-    const kanji = indices.filter(index => line.tokens[index].hasKanji);
-    const anchor = kanji.length ? line.tokens[kanji[0]] : undefined;
+    const kanji = indices.filter(index => checked.tokens[index].hasKanji);
+    const anchor = kanji.length ? checked.tokens[kanji[0]] : undefined;
     if (!anchor || !anchor.ruby || anchor.readingSource !== 'automatic') continue;
-    if (kanji.some(index => line.tokens[index].annotationSuppressed)) continue;
+    if (kanji.some(index => checked.tokens[index].annotationSuppressed)) continue;
     const verdict = verify(anchor.word?.surface ?? anchor.surface, anchor.word?.reading ?? anchor.ruby, table);
     if (!verdict) continue;
     for (const index of kanji) {

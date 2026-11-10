@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { gzipSync } from 'node:zlib';
 import { before, test } from 'node:test';
 import { loadTypescript } from './loadTypescript.mjs';
-const { checkLine, loadReadingTable } = loadTypescript('../app/utils/readingCheck.ts');
+const { checkLine, findDictionaryCompound, loadReadingTable } = loadTypescript('../app/utils/readingCheck.ts');
 const { annotateLine, parseCompoundToTokens } = loadTypescript('../app/utils/furigana.ts');
 const { initKuromoji } = loadTypescript('../app/utils/kuromojiEngine.ts');
 const { createAnnotator } = loadTypescript('../app/utils/annotationTask.ts');
@@ -69,6 +69,22 @@ test('checkLine returns a new line and never mutates its input', () => {
   assert.equal(JSON.stringify(original), snapshot);
   assert.notEqual(checked, original);
   assert.equal(school(checked).needsReview, true);
+});
+
+test('a split dictionary compound is recovered only for automatic, complete token ranges', () => {
+  const table = new Map([['号哭', ['ごうこく']], ['号泣', ['ごうきゅう']], ['號哭', ['ごうこく']]]);
+  const line = annotateLine('悠に咲き乱れるこの号哭が、');
+  const compound = findDictionaryCompound(line, line.tokens.findIndex(token => token.surface === '号'), table);
+  assert.deepEqual(compound, { start: 7, end: 9, surface: '号哭', reading: 'ごうこく' });
+  const recovered = checkLine(line, table);
+  assert.equal(recovered.tokens.map(token => token.surface).join(''), line.cleanText);
+  assert.equal(recovered.tokens.map(token => token.ruby || token.surface).join(''), 'ゆうにさきみだれるこのごうこくが、');
+  // A user overlay has higher precedence than the canonical dictionary pass.
+  const manual = { ...line, tokens: line.tokens.map(token => token.surface === '号'
+    ? { ...token, readingSource: 'manual', ruby: 'ばんごう' } : token) };
+  assert.equal(findDictionaryCompound(manual, 7, table), null);
+  // Multiple dictionary readings are not guessed as one compound.
+  assert.equal(findDictionaryCompound(line, 7, new Map([['号哭', ['ごうこく', 'ごうきゅう']]])), null);
 });
 
 test('a split word is compared through its whole reading, not its mora slice', () => {
