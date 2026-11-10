@@ -6,13 +6,16 @@ import { sanitizeText } from './textSanitize';
 
 // TXT/SRT export writes readings on the kanji only, `辛(つら)い` (inlineRubyText in srt.ts). Read back
 // verbatim, those readings become script text and the next annotation doubles them:
-// 山田(やまだ)(やまだ). Only this exact shape is taken as an app-exported reading: half-width
-// parentheses, pure kana content, directly after a kanji. Full-width （） is always script text
-// (stage directions such as 鈴木（くしゃみ）), and so is anything after kana or punctuation.
+// 山田(やまだ)(やまだ). An app-exported reading is pure kana directly after a kanji. A full-width
+// parenthetical may be a legacy exported reading only when it spells out a whole kanji word;
+// stage directions such as 鈴木（くしゃみ） remain script text.
 
 const KANJI = /^[㐀-䶿一-鿿豈-﫿\u{20000}-\u{3FFFF}々〆〇ヶヵ]$/u;
 const HIRAGANA = /^[ぁ-ゖ]$/u;
 const INLINE_READING = /\(([ぁ-ゖゝゞァ-ヺー-ヾ]+)\)/gu;
+const FULL_WIDTH_INLINE_READING = /（([ぁ-ゖゝゞァ-ヺー-ヾ]+)）/gu;
+/** Common action/direction endings are never a kanji reading, even when the whole parenthetical is kana. */
+const FULL_WIDTH_STAGE_DIRECTION = /(?:くしゃみ|ため息|泣き|笑い|小声|大声|独白|つぶやき|ふきだし|感嘆|驚き|叫び|囁き|ささやき|沈黙|間|そう|わめき|咳|せき|あくび|苦笑|照れ|怒り|焦り|安堵|動揺)$/u;
 
 export interface InlineRuby {
   start: number;
@@ -58,15 +61,23 @@ function alignsWithReading(surface: string, reading: string): boolean {
 
 /** Remove app-exported inline readings from one line and report where each one was attached. */
 export function stripInlineRuby(line: string): { text: string; rubies: InlineRuby[] } {
-  if (!line.includes('(')) return { text: line, rubies: [] };
+  if (!line.includes('(') && !line.includes('（')) return { text: line, rubies: [] };
   const rubies: InlineRuby[] = [];
   let text = '';
   let cursor = 0;
-  for (const match of line.matchAll(INLINE_READING)) {
+  const matches = [...line.matchAll(INLINE_READING), ...line.matchAll(FULL_WIDTH_INLINE_READING)]
+    .sort((left, right) => (left.index ?? 0) - (right.index ?? 0));
+  for (const match of matches) {
     const open = match.index ?? 0;
+    if (open < cursor) continue;
+    // Full-width parentheses normally mean a stage direction. Only a whole, kanji-only word
+    // whose reading spells it out is treated as a legacy bracketed reading; くしゃみ stays prose.
+    if (line[open] === '（' && !/^[\p{Script=Han}々〆〇ヶヵ]+$/u.test(line.slice(cursor, open))) continue;
     const runStart = scanBack(line, open, cursor, KANJI);
     if (runStart === open) continue;
     const reading = katakanaToHiragana(match[1]);
+    if (line[open] === '（' && (!alignsWithReading(line.slice(runStart, open), reading) ||
+        FULL_WIDTH_STAGE_DIRECTION.test(reading))) continue;
     // A corrected word is exported as one token and may hold okurigana: 読み方(よみかた) belongs to
     // 読み方, not to 方. Extend over kana + kanji groups only while the reading spells them out.
     let start = runStart;
@@ -93,7 +104,7 @@ export function stripInlineRuby(line: string): { text: string; rubies: InlineRub
  */
 export function extractInlineRuby(source: string): InlineRubyImport {
   const clean = sanitizeText(source);
-  if (!clean.includes('(')) return { text: clean, overrides: [] };
+  if (!clean.includes('(') && !clean.includes('（')) return { text: clean, overrides: [] };
   const overrides: RubyOverride[] = [];
   const byLine = new Map<string, RubyOverride[]>();
   const text = clean.split('\n').map(row => {

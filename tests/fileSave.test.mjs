@@ -1,18 +1,51 @@
 import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 import { loadTypescript } from './loadTypescript.mjs';
-const { saveBlob, isMobileSharePreferred, pickBatchDirectory, saveBlobToDirectory, buildBatchZipBlob } = loadTypescript('../app/utils/fileSave.ts');
+const {
+  saveBlob, isMobileSharePreferred, pickBatchDirectory, saveBlobToDirectory, buildBatchZipBlob, buildBatchSaveOutput,
+} = loadTypescript('../app/utils/fileSave.ts');
 import JSZip from 'jszip';
 const originalWindow = globalThis.window;
+const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
 const originalReader = globalThis.FileReader;
 const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+const originalCreateObjectURL = globalThis.URL?.createObjectURL;
+const originalRevokeObjectURL = globalThis.URL?.revokeObjectURL;
+const originalSetTimeout = globalThis.setTimeout;
+let revokeDelays = [];
+let activeTimers = new Set();
 afterEach(() => {
   if (originalWindow === undefined) delete globalThis.window;
   else globalThis.window = originalWindow;
+  if (originalDocument) Object.defineProperty(globalThis, 'document', originalDocument);
+  else delete globalThis.document;
   if (originalReader === undefined) delete globalThis.FileReader;
   else globalThis.FileReader = originalReader;
   if (originalNavigator) Object.defineProperty(globalThis, 'navigator', originalNavigator);
+  if (originalCreateObjectURL) globalThis.URL.createObjectURL = originalCreateObjectURL;
+  if (originalRevokeObjectURL) globalThis.URL.revokeObjectURL = originalRevokeObjectURL;
+  globalThis.setTimeout = originalSetTimeout;
+  for (const timer of activeTimers) timer.unref?.();
+  activeTimers = new Set();
+  revokeDelays = [];
 });
+
+function installDirectDownload() {
+  let anchorClicked = false;
+  const element = { href: '', download: '', style: {}, click: () => { anchorClicked = true; }, remove: () => {} };
+  globalThis.document = { createElement: () => element, body: { appendChild: () => {} } };
+  globalThis.URL.createObjectURL = () => 'blob:direct';
+  globalThis.URL.revokeObjectURL = () => {};
+  globalThis.setTimeout = (fn, delay) => {
+    revokeDelays.push(delay);
+    // Do not keep Node's test runner alive for a real browser-scale revoke delay.
+    const timer = originalSetTimeout(fn, delay);
+    timer.unref?.();
+    activeTimers.add(timer);
+    return timer;
+  };
+  return { element, wasClicked: () => anchorClicked };
+}
 
 function nativeSave(result) {
   globalThis.FileReader = class {
@@ -86,9 +119,27 @@ test('mobile share sheet cancellation remains cancellation', async () => {
   assert.deepEqual(await saveBlob(new Blob(['あ']), '台本.txt'), { success: false });
 });
 
-test('mobile share failures are not silently swallowed', async () => {
+test('mobile share failures fall back to a direct download', async () => {
+  const download = installDirectDownload();
   globalThis.window = mobileShareWindow(async () => { throw new Error('Not allowed to share'); });
-  await assert.rejects(saveBlob(new Blob(['あ']), '台本.txt'), /Not allowed to share/);
+  const result = await saveBlob(new Blob(['あ']), '台本.epub');
+  assert.equal(download.wasClicked(), true);
+  assert.equal(download.element.download, '台本.epub');
+  assert.deepEqual(result, { success: true, path: '台本.epub', downloadStarted: true });
+  assert.deepEqual(revokeDelays, [60_000]);
+});
+
+test('share cancellation stays cancellation and skipShare bypasses the share sheet', async () => {
+  globalThis.window = mobileShareWindow(async () => { throw new DOMException('cancel', 'AbortError'); });
+  assert.deepEqual(await saveBlob(new Blob(['あ']), '台本.txt'), { success: false });
+
+  const download = installDirectDownload();
+  let shared = false;
+  globalThis.window = mobileShareWindow(async () => { shared = true; });
+  assert.deepEqual(await saveBlob(new Blob(['あ']), '台本.epub', { skipShare: true }),
+    { success: true, path: '台本.epub', downloadStarted: true });
+  assert.equal(shared, false);
+  assert.equal(download.element.download, '台本.epub');
 });
 
 test('desktop without a picker prefers direct download over the share sheet', async () => {
@@ -119,18 +170,13 @@ test('coarse pointer devices lean toward the share sheet even without a mobile U
 });
 
 test('skipFilePicker bypasses showSaveFilePicker and uses a direct download', async () => {
-  let anchorClicked = false;
-  const element = { href: '', download: '', style: {}, click: () => { anchorClicked = true; }, remove: () => {} };
+  const download = installDirectDownload();
   globalThis.window = {
     showSaveFilePicker: async () => { throw new Error('picker must be skipped'); },
   };
-  globalThis.document = { createElement: () => element, body: { appendChild: () => {} } };
-  globalThis.URL.createObjectURL = () => 'blob:direct';
-  globalThis.URL.revokeObjectURL = () => {};
   const result = await saveBlob(new Blob(['あ']), '台本.txt', { skipFilePicker: true });
-  delete globalThis.document;
-  assert.equal(anchorClicked, true);
-  assert.equal(element.download, '台本.txt');
+  assert.equal(download.wasClicked(), true);
+  assert.equal(download.element.download, '台本.txt');
   assert.deepEqual(result, { success: true, path: '台本.txt', downloadStarted: true });
 });
 
@@ -185,4 +231,19 @@ test('buildBatchZipBlob bundles files and disambiguates duplicate names', async 
   assert.equal(await zip.file('放課後.txt').async('string'), '一');
   assert.equal(await zip.file('放課後 (2).txt').async('string'), '二');
   assert.equal(await zip.file('放課後 (3).txt').async('string'), '四');
+});
+
+test('buildBatchSaveOutput saves one EPUB as itself and keeps multiple outputs in a ZIP', async () => {
+  const epub = new Blob(['epub'], { type: 'application/epub+zip' });
+  const single = await buildBatchSaveOutput([{ filename: '号哭.epub', blob: epub }]);
+  assert.equal(single.filename, '号哭.epub');
+  assert.equal(single.blob, epub);
+
+  const multiple = await buildBatchSaveOutput([
+    { filename: '号哭.epub', blob: epub },
+    { filename: '続き.epub', blob: new Blob(['second']) },
+  ]);
+  assert.equal(multiple.filename, '台本批量导出.zip');
+  const zip = await JSZip.loadAsync(await multiple.blob.arrayBuffer());
+  assert.deepEqual(Object.keys(zip.files).sort(), ['号哭.epub', '続き.epub'].sort());
 });

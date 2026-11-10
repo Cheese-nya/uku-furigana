@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
+import { useCallback, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import type { BatchFileItem, ExportFormat } from '../components/BatchProcessingPanel';
 import type { useFuriganaWorker } from './useFuriganaWorker';
 import type { ScriptLine } from '../utils/furigana';
@@ -15,7 +15,8 @@ import { buildEpubBlob } from '../utils/epubExporter';
 import { buildPdfBlob } from '../utils/pdfExporter';
 import { detectBookFormat, isImportableFile, parseBookFile, type ParsedBookFile } from '../utils/bookImport';
 import { withoutImageLines } from '../utils/bookAssets';
-import { buildBatchZipBlob, pickBatchDirectory, saveBlob, saveBlobToDirectory, type BatchSaveMode } from '../utils/fileSave';
+import { buildBatchSaveOutput, pickBatchDirectory, saveBlob, saveBlobToDirectory, type BatchSaveMode } from '../utils/fileSave';
+import type { BatchDoneResults } from '../components/BatchDoneModal';
 import type { Translations } from '../utils/i18n';
 
 type Setter<T> = Dispatch<SetStateAction<T>>;
@@ -52,7 +53,18 @@ export function useBatchProcessing({
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Completion summary modal
   const [isBatchDoneModalOpen, setIsBatchDoneModalOpen] = useState(false);
-  const [batchDoneResults, setBatchDoneResults] = useState<{ total: number; success: number; failed: number; cancelled: number; filenames: string[] }>({ total: 0, success: 0, failed: 0, cancelled: 0, filenames: [] });
+  const [batchDoneResults, setBatchDoneResults] = useState<BatchDoneResults>({ total: 0, success: 0, failed: 0, cancelled: 0, filenames: [] });
+  const pendingSaveOutputRef = useRef<{ filename: string; blob: Blob } | null>(null);
+  const saveBatchAgain = useCallback(() => {
+    const output = pendingSaveOutputRef.current;
+    if (!output) return;
+    void saveBlob(output.blob, output.filename, { skipFilePicker: true, skipShare: true })
+      .catch(error => console.error('[batch] save again failed', error));
+  }, []);
+  const setBatchDoneModalOpen = useCallback((open: boolean) => {
+    if (!open) pendingSaveOutputRef.current = null;
+    setIsBatchDoneModalOpen(open);
+  }, []);
 
   // File Upload Handlers for Batch Page
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -132,11 +144,13 @@ export function useBatchProcessing({
     }
 
     setIsBatchProcessing(true);
+    pendingSaveOutputRef.current = null;
     let successCount = 0;
     let failCount = 0;
     let cancelCount = 0;
     const exportedNames: string[] = [];
     const zipOutputs: Array<{ filename: string; blob: Blob }> = [];
+    let finalSaveOutput: { filename: string; blob: Blob } | null = null;
     let batchDatabase = database;
     let librarySnapshot = libraryDbRef.current;
     let libraryWritten = false;
@@ -254,8 +268,10 @@ export function useBatchProcessing({
           exportedNames.push(outName);
           successCount++;
         } else if (effectiveMode === 'direct') {
-          const saveRes = await saveBlob(outputBlob, outName, { skipFilePicker: true });
+          // The annotation job can outlive Safari's transient user activation: prefer a plain download.
+          const saveRes = await saveBlob(outputBlob, outName, { skipFilePicker: true, skipShare: true });
           if (saveRes.success) {
+            finalSaveOutput = { filename: outName, blob: outputBlob };
             setBatchFiles(prev =>
               prev.map(f => f.id === item.id ? { ...f, status: 'done', progress: 100, lineCount: parsedLines.length } : f)
             );
@@ -287,9 +303,11 @@ export function useBatchProcessing({
 
     if (effectiveMode === 'zip' && zipOutputs.length > 0) {
       try {
-        const zipBlob = await buildBatchZipBlob(zipOutputs);
-        const zipSave = await saveBlob(zipBlob, '台本批量导出.zip');
+        const saveOutput = await buildBatchSaveOutput(zipOutputs);
+        finalSaveOutput = saveOutput;
+        const zipSave = await saveBlob(saveOutput.blob, saveOutput.filename, { skipFilePicker: true, skipShare: true });
         if (!zipSave.success) {
+          finalSaveOutput = null;
           cancelCount += zipOutputs.length;
           successCount = Math.max(0, successCount - zipOutputs.length);
           const zipped = new Set(zipOutputs.map(file => file.filename));
@@ -298,6 +316,7 @@ export function useBatchProcessing({
           }
         }
       } catch (error) {
+        finalSaveOutput = null;
         failCount += zipOutputs.length;
         successCount = Math.max(0, successCount - zipOutputs.length);
         console.error('[batch] zip save failed', error);
@@ -305,6 +324,9 @@ export function useBatchProcessing({
     }
 
     setIsBatchProcessing(false);
+
+    // Safari sometimes needs the download to start from a fresh gesture after a long annotation job.
+    pendingSaveOutputRef.current = finalSaveOutput;
 
     // Show completion notification
     setBatchDoneResults({
@@ -320,6 +342,7 @@ export function useBatchProcessing({
   return {
     batchFiles, isBatchProcessing, batchTargetFormat, setBatchTargetFormat, batchSaveMode, setBatchSaveMode,
     alsoSaveToLibrary, setAlsoSaveToLibrary, fileInputRef, handleFileSelect, handleDrop, removeBatchFile,
-    clearBatchFiles, addBooksToQueue, processBatchQueue, isBatchDoneModalOpen, setIsBatchDoneModalOpen, batchDoneResults,
+    clearBatchFiles, addBooksToQueue, processBatchQueue, isBatchDoneModalOpen, setIsBatchDoneModalOpen: setBatchDoneModalOpen,
+    batchDoneResults, saveBatchAgain,
   };
 }

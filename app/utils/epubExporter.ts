@@ -133,10 +133,15 @@ p {
 }
 ruby {
   ruby-align: center;
+  ruby-position: over;
+  -webkit-ruby-position: before;
 }
 rt {
   font-size: ${rubyFontSize}px;
   color: #2563eb;
+  font-weight: 600;
+  ruby-align: center;
+  text-align: center;
 }
 `;
   zip.file('OEBPS/style.css', styleCss);

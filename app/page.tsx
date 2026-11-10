@@ -771,6 +771,7 @@ export default function DubbingStudioApp() {
   const {
     batchFiles, isBatchProcessing, fileInputRef, handleFileSelect, handleDrop, removeBatchFile,
     addBooksToQueue, processBatchQueue, isBatchDoneModalOpen, setIsBatchDoneModalOpen, batchDoneResults,
+    saveBatchAgain,
   } = useBatchProcessing({
     t, database, setDatabase, libraryDbRef, setLibraryDb, annotate, rubyType, glossaryEntries,
     fontSize, rubyFontSize, lineSpacing, generateTextContent, isKuromojiLoading, correctionsReady,
@@ -994,6 +995,7 @@ export default function DubbingStudioApp() {
         isOpen={isBatchDoneModalOpen}
         onClose={() => setIsBatchDoneModalOpen(false)}
         results={batchDoneResults}
+        onSaveAgain={isBatchDoneModalOpen ? saveBatchAgain : undefined}
         t={t}
       />
 

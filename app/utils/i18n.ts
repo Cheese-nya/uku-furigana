@@ -179,6 +179,7 @@ export interface Translations {
   cancelledSave: string;
   exportedFilesLabel: string;
   batchDoneNotice: string;
+  batchSaveAgain: string;
 
   // Ruby Correction Modal
   rubyModalTitle: string;
@@ -896,6 +897,7 @@ export const translations: Record<Locale, Translations> = {
     cancelledSave: '取消保存',
     exportedFilesLabel: '已导出文件：',
     batchDoneNotice: '已完成 {count} 个文件的保存或下载请求；浏览器下载请在下载列表中确认。',
+    batchSaveAgain: '重新保存',
 
     rubyModalTitle: '假名标注与多音字校对',
     currentCharLabel: '当前标注文字',
@@ -1599,6 +1601,7 @@ export const translations: Record<Locale, Translations> = {
     cancelledSave: 'Cancelled',
     exportedFilesLabel: 'Exported Files:',
     batchDoneNotice: 'Completed {count} file save or download requests. Please check browser downloads if prompted.',
+    batchSaveAgain: 'Save again',
 
     rubyModalTitle: 'Furigana & Reading Review',
     currentCharLabel: 'Selected Text',
