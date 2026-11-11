@@ -6,7 +6,7 @@ import { AI_PROVIDERS, listModels, probeModels, providerById, startOpenRouterLog
 import { getPlatform } from '../utils/appInfo';
 import { logEvent } from '../utils/appLog';
 import type { Translations } from '../utils/i18n';
-import type { LlmSettings, TranslationSettings } from '../utils/translation';
+import { llmNeedsApiKey, type LlmSettings, type TranslationSettings } from '../utils/translation';
 
 const fill = (template: string, values: Record<string, string | number>) =>
   template.replace(/\{(\w+)\}/g, (_, key: string) => String(values[key] ?? ''));
@@ -67,13 +67,14 @@ export function LlmFields({ settings, onSettingsChange, locale, t, loginNotice }
   // try the free ones — at most ten, two at a time — so the list shows which actually work with this key.
   // Paid models are never probed automatically: the check must not cost anything.
   const { provider: llmProvider, baseUrl, apiKey } = settings.llm;
+  const keyOptional = !llmNeedsApiKey(settings.llm);
   const target = settings.target;
   // The newest settings for callbacks that outlive a render (probe results arrive later).
   const latest = useRef({ settings, onSettingsChange });
   useEffect(() => { latest.current = { settings, onSettingsChange }; });
   useEffect(() => {
     probeAbort.current?.abort();
-    if (!baseUrl || (!apiKey && llmProvider !== 'openrouter')) return;
+    if (!baseUrl || (!apiKey && !keyOptional && llmProvider !== 'openrouter')) return;
     const controller = new AbortController();
     probeAbort.current = controller;
     const timer = window.setTimeout(() => {
@@ -81,19 +82,22 @@ export function LlmFields({ settings, onSettingsChange, locale, t, loginNotice }
       listModels({ provider: llmProvider, baseUrl, apiKey, model: '' }).then(list => {
         if (controller.signal.aborted) return;
         setModels(list);
-        if (!apiKey) { setProbes({}); return; }
+        // Probing may spend quota on hosted accounts; a local endpoint without a key is safe to check.
+        if (!apiKey && !keyOptional) { setProbes({}); return; }
         const candidates = list.filter(model => model.price === 'free' || model.price === 'quota').slice(0, 10).map(model => model.id);
-        setProbes(Object.fromEntries(candidates.map(id => [id, 'running' as const])));
-        // A saved model the platform no longer offers (Groq retires models) moves to the first one that works.
-        let replace = !list.some(model => model.id === latest.current.settings.llm.model);
-        void probeModels({ provider: llmProvider, baseUrl, apiKey, model: '' }, candidates, target, (id, result) => {
-          setProbes(previous => ({ ...previous, [id]: result }));
-          if (replace && result.state === 'ok') {
-            replace = false;
-            const { settings: now, onSettingsChange: change } = latest.current;
-            change({ ...now, llm: { ...now.llm, model: id } });
-          }
-        }, controller.signal);
+        if (candidates.length) {
+          setProbes(Object.fromEntries(candidates.map(id => [id, 'running' as const])));
+          // A saved model the platform no longer offers (Groq retires models) moves to the first one that works.
+          let replace = !list.some(model => model.id === latest.current.settings.llm.model);
+          void probeModels({ provider: llmProvider, baseUrl, apiKey, model: '' }, candidates, target, (id, result) => {
+            setProbes(previous => ({ ...previous, [id]: result }));
+            if (replace && result.state === 'ok') {
+              replace = false;
+              const { settings: now, onSettingsChange: change } = latest.current;
+              change({ ...now, llm: { ...now.llm, model: id } });
+            }
+          }, controller.signal);
+        }
       }, (error: unknown) => {
         if (controller.signal.aborted) return;
         setModels(null);
@@ -101,7 +105,7 @@ export function LlmFields({ settings, onSettingsChange, locale, t, loginNotice }
       });
     }, 700);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [llmProvider, baseUrl, apiKey, target, detectRound, t.toolsModelsFailed]);
+  }, [llmProvider, baseUrl, apiKey, keyOptional, target, detectRound, t.toolsModelsFailed]);
 
   const pickModels = () => setListOpen(open => !open);
   const counts = models && {
@@ -159,7 +163,7 @@ export function LlmFields({ settings, onSettingsChange, locale, t, loginNotice }
       )}
 
       <Field label={t.toolsLlmKey}>
-        <input className={inputClass} type="password" spellCheck={false} placeholder={t.toolsKeyPlaceholder} value={settings.llm.apiKey} onChange={event => setLlm({ apiKey: event.target.value })} />
+        <input className={inputClass} type="password" spellCheck={false} placeholder={keyOptional ? t.toolsKeyOptionalPlaceholder : t.toolsKeyPlaceholder} value={settings.llm.apiKey} onChange={event => setLlm({ apiKey: event.target.value })} />
         {provider.keyUrl && (
           <a href={provider.keyUrl} target="_blank" rel="noreferrer" className="shrink-0 whitespace-nowrap text-xs font-semibold text-[var(--label)] no-underline">{t.toolsGetKey}</a>
         )}
@@ -174,8 +178,8 @@ export function LlmFields({ settings, onSettingsChange, locale, t, loginNotice }
       {listOpen && models && counts && (
         <div className="-mt-1.5 mb-3 max-h-[220px] overflow-y-auto rounded-xl bg-[var(--fill-2)] p-1">
           <div className="flex items-center justify-between gap-2 px-2.5 pb-2 pt-1.5 text-xs text-[var(--label-2)]">
-            <span>{fill(apiKey ? t.toolsModelSummary : t.toolsModelSummaryNoKey, counts)}</span>
-            {apiKey && <button type="button" className="shrink-0 font-semibold text-[var(--label)]" onClick={() => setDetectRound(round => round + 1)}>{t.toolsRedetect}</button>}
+            <span>{fill(apiKey || keyOptional ? t.toolsModelSummary : t.toolsModelSummaryNoKey, counts)}</span>
+            {(apiKey || keyOptional) && <button type="button" className="shrink-0 font-semibold text-[var(--label)]" onClick={() => setDetectRound(round => round + 1)}>{t.toolsRedetect}</button>}
           </div>
           {/* Nothing works: the platform's own reason (balance, real-name verification…) says why. */}
           {counts.ok === 0 && failure && <p className="mx-2.5 mb-1.5 break-all text-[11px] leading-snug text-[var(--danger)]">{failure}{accountHint(failure)}</p>}
@@ -219,7 +223,7 @@ export function LlmFields({ settings, onSettingsChange, locale, t, loginNotice }
         <button type="button" className="btn shrink-0" disabled={status.state === 'running'} onClick={() => { void runTest(); }}>{t.toolsTest}</button>
         <span className={`min-w-0 ${status.state === 'ok' ? 'text-[var(--ok)]' : status.state === 'fail' ? 'text-[var(--danger)]' : 'text-[var(--label-2)]'}`}>{status.text}</span>
       </div>
-      <p className="mx-0.5 mb-1 text-xs leading-normal text-[var(--label-3)]">{t.toolsLlmNote}</p>
+      <p className="mx-0.5 mb-1 text-xs leading-normal text-[var(--label-3)]">{keyOptional ? t.toolsLlmLocalNote : t.toolsLlmNote}</p>
     </div>
   );
 }

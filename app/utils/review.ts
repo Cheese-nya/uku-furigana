@@ -66,7 +66,9 @@ export function selectReviewWord(line: ScriptLine, index: number): ReviewSelecti
 }
 
 export function needsReview(token: ScriptLine['tokens'][number]): boolean {
-  if (!token.hasKanji || token.annotationSuppressed || ['manual', 'source', 'glossary', 'learned'].includes(token.readingSource || '')) return false;
+  if (!token.hasKanji || token.annotationSuppressed || ['manual', 'source', 'learned'].includes(token.readingSource || '')) return false;
+  // An ambiguous imported name reading is a review item even when it came from a glossary.
+  if (token.readingSource === 'glossary' && !token.alternatives?.length) return false;
   if (!token.ruby) return true;
   const candidates = token.word?.alternatives || token.alternatives;
   if (candidates) return uniqueReadings(candidates).length > 1;

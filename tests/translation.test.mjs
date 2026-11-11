@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { loadTypescript } from './loadTypescript.mjs';
 const {
   DEFAULT_TRANSLATION_SETTINGS, Translator, TranslationError,
-  loadTranslationSettings, parseIncrementalArray, reasoningParams, saveTranslationSettings,
+  loadTranslationSettings, llmNeedsApiKey, parseIncrementalArray, reasoningParams, saveTranslationSettings,
   translateLlm, translationConcurrency, translateMicrosoft, validateTranslationSettings,
 } = loadTypescript('../app/utils/translation.ts');
 const { MemoryTranslationStore, TranslationStore, defaultTranslationStore } = loadTypescript('../app/utils/translationStore.ts');
@@ -260,11 +260,28 @@ test('a wrong count or an unreadable reply is recovered by splitting; a missing 
   assert.equal(bodies.length, 3, 'the pair, then each sentence on its own');
   const noKey = new Translator({
     store, fetchImpl: async () => llmReply('[]'),
-    settings: () => settings({ engine: 'llm', llm: { baseUrl: 'https://x/v1', model: 'm', apiKey: '' } }),
+    settings: () => settings({ engine: 'llm', llm: { baseUrl: 'https://x/v1', model: 'm', apiKey: '', provider: 'deepseek' } }),
   });
   await assert.rejects(noKey.translate('b1', ['文三。']), (error) => error instanceof TranslationError && !error.retryable && error.message === '请先在设置里填写 API Key');
   // A single sentence answered without the array is still the answer.
   assert.deepEqual(await translateLlm(['文一。'], 'zh-Hans', { baseUrl: 'https://x/v1', model: 'm', apiKey: 'k' }, async () => llmReply('第一句。')), ['第一句。']);
+});
+
+test('a custom local endpoint works without a key and sends no Authorization header', async () => {
+  const local = { provider: 'custom', baseUrl: 'http://192.168.1.10:8000/v1', model: 'local-model', apiKey: '' };
+  assert.equal(llmNeedsApiKey(local), false);
+  assert.equal(llmNeedsApiKey({ ...local, provider: 'deepseek' }), true);
+  const fetchImpl = recordingFetch(() => llmReply('["你好。"]'));
+  assert.deepEqual(await translateLlm(['こんにちは。'], 'zh-Hans', local, fetchImpl), ['你好。']);
+  assert.equal(fetchImpl.calls[0].url, 'http://192.168.1.10:8000/v1/chat/completions');
+  assert.equal('Authorization' in fetchImpl.calls[0].init.headers, false, 'no empty bearer token for a local server');
+  const withKey = recordingFetch(() => llmReply('["你好。"]'));
+  await translateLlm(['こんにちは。'], 'zh-Hans', { ...local, apiKey: 'optional' }, withKey);
+  assert.equal(withKey.calls[0].init.headers.Authorization, 'Bearer optional');
+  await assert.rejects(
+    translateLlm(['こんにちは。'], 'zh-Hans', { ...local, provider: 'deepseek' }, async () => llmReply('[]')),
+    error => error instanceof TranslationError && error.message === '请先在设置里填写 API Key',
+  );
 });
 
 test('reasoning models, broken JSON and plain-text fallback all end in translations', async () => {
@@ -392,6 +409,31 @@ test('translation models that answer one small array per line (Hunyuan-MT) are r
 test('a one-sentence answer with a header line keeps only the translation', () => {
   const { parseLlmTranslations } = loadTypescript('../app/utils/translation.ts');
   assert.deepEqual(parseLlmTranslations('需要翻译的句子（JSON数组）：\n["她平静地说她快要死了。""]', 1), ['她平静地说她快要死了。']);
+});
+
+test('a prompt-echoed truncated answer keeps only the translation and stale caches recover', async () => {
+  const { Translator } = loadTypescript('../app/utils/translation.ts');
+  const llm = { provider: 'custom', baseUrl: 'https://x/v1', model: 'm', apiKey: 'k' };
+  const echoed = '需要翻译的句子（JSON数组）：["你可以麻烦我一下。';
+  const barePrompt = '需要翻译的句子（JSON数组）：';
+  const reply = content => llmReply(content);
+  assert.deepEqual(
+    await translateLlm(['私には迷惑かけていいんだ。'], 'zh-Hans', llm, async () => reply(echoed)),
+    ['你可以麻烦我一下。'],
+  );
+
+  const store = new MemoryTranslationStore();
+  await store.put('b1', 'zh-Hans|https://x/v1|m', 'llm', [['原文。', echoed], ['空提示。', barePrompt]]);
+  let calls = 0;
+  const translator = new Translator({
+    store, fetchImpl: async () => { calls += 1; return reply('重新翻译。'); },
+    settings: () => settings({ engine: 'llm', quickDraft: false, llm }),
+  });
+  const result = await translator.translate('b1', ['原文。', '空提示。']);
+  assert.equal(result.get('原文。'), '你可以麻烦我一下。', 'an existing cache row is repaired without showing the prompt');
+  assert.equal(result.get('空提示。'), '重新翻译。', 'a bare prompt cache row is fetched again');
+  assert.equal(calls, 1);
+  assert.equal((await store.get('b1', 'zh-Hans|https://x/v1|m', ['原文。']))?.get('原文。'), echoed, 'the cache repair is display-only');
 });
 
 test('lines arrive batch by batch: cache first, then each batch, and the first LLM batch is small', async () => {

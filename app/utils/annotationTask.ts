@@ -3,6 +3,7 @@ import { applyRubyOverrides, type RubyOverride } from './rubyOverrides';
 import { applyGlossary } from './glossary';
 import type { LearnedReading, ProperNounEntry } from './correctionDatabase';
 import { checkLine, type ReadingTable } from './readingCheck';
+import { applyFlexibleGlossary, applyImportedReadingCompounds, applyNameReadings, builtInNameReadingTable, mergeReadingTables, type NameReadingTable } from './nameReadings';
 import { learnedOverrides } from './review';
 import { sanitizeText } from './textSanitize';
 
@@ -48,8 +49,24 @@ function applyLearned(line: ScriptLine, entries: LearnedReading[] = [], type: Ru
 }
 
 /** Own one cache per execution environment; cache canonical readings, never overlays. */
-export function createAnnotator(getTable?: () => ReadingTable | null) {
-  const cache = new Map<string, { line: ScriptLine; checkedWithTable: boolean }>();
+export interface AnnotationEngineData {
+  table: ReadingTable | null;
+  nameTable: NameReadingTable | null;
+  importedTable: ReadingTable | null;
+}
+
+export function createAnnotator(
+  getTable?: (() => ReadingTable | null) | (() => AnnotationEngineData),
+  getNameTable?: () => NameReadingTable | null,
+) {
+  const cache = new Map<string, { line: ScriptLine; checkedWithTable: boolean; nameRevision: string }>();
+  const defaultNameTable = builtInNameReadingTable();
+  const readData = (): AnnotationEngineData => {
+    const value = getTable?.();
+    if (value && 'table' in value) return value;
+    return { table: (value as ReadingTable | null | undefined) ?? null,
+      nameTable: getNameTable?.() ?? null, importedTable: null };
+  };
   return {
     clear: () => cache.clear(),
     async run(input: AnnotationInput, cancelled: () => boolean, onChunk: (chunk: AnnotationChunk) => void): Promise<void> {
@@ -61,23 +78,30 @@ export function createAnnotator(getTable?: () => ReadingTable | null) {
         if (cancelled()) throw new DOMException('注音任务已取消', 'AbortError');
         // The reading table arrives in the background; lines annotated before it did are
         // re-annotated (and cached) once it is there.
-        const table = getTable?.() ?? null;
+        const { table, nameTable, importedTable } = readData();
+        const checkedTable = mergeReadingTables(table, importedTable);
+        const names = nameTable || defaultNameTable;
+        const nameRevision = `${names.revision}|${checkedTable.size}`;
         const lines = texts.slice(offset, offset + 50).map((text, index) => {
           const occurrence = seenLines.get(text) || 0;
           seenLines.set(text, occurrence + 1);
           const entry = cache.get(text);
-          let canonical = entry && entry.checkedWithTable === Boolean(table) ? entry.line : undefined;
+          let canonical = entry && entry.checkedWithTable === Boolean(table) &&
+            entry.nameRevision === nameRevision ? entry.line : undefined;
           if (!canonical) {
             canonical = annotateLine(text, 'hiragana');
-            if (table) canonical = checkLine(canonical, table);
-            cache.set(text, { line: canonical, checkedWithTable: Boolean(table) });
+            if (importedTable) canonical = applyImportedReadingCompounds(canonical, importedTable);
+            if (table) canonical = checkLine(canonical, checkedTable);
+            canonical = applyNameReadings(canonical, names);
+            cache.set(text, { line: canonical, checkedWithTable: Boolean(table), nameRevision });
             if (cache.size > 12000) cache.delete(cache.keys().next().value!);
           }
           const line: ScriptLine = { ...canonical, id: String(offset + index), tokens: canonical.tokens.map(token => ({ ...token,
             ...(token.ruby ? { ruby: formatRuby(token.ruby, input.rubyType) } : {}),
             ...(token.alternatives ? { alternatives: token.alternatives.map(value => formatRuby(value, input.rubyType)) } : {}),
           })) };
-          return applyRubyOverrides(applyRubyOverrides(applyLearned(applyGlossary(line, input.glossary, input.rubyType), input.learned, input.rubyType),
+          const glossed = applyFlexibleGlossary(applyGlossary(line, input.glossary, input.rubyType), input.glossary, input.rubyType);
+          return applyRubyOverrides(applyRubyOverrides(applyLearned(glossed, input.learned, input.rubyType),
             source.get(line.cleanText) || [], input.rubyType, 'source', occurrence), overrides.get(line.cleanText) || [], input.rubyType, 'manual', occurrence);
         });
         onChunk({ offset, lines, total: texts.length });

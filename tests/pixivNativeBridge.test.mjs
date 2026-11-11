@@ -91,3 +91,15 @@ test('injected Pixiv shim installs once so a re-injected script keeps pending pr
   void window.furiganaPixiv.novel('2');
   assert.equal(posted.length, 1);
 });
+
+test('iOS account shim passes actions and only returns the native account status', async () => {
+  const { window, posted } = installBridge();
+  for (const action of ['status', 'login', 'logout']) {
+    const pending = window.furiganaPixiv.account(action);
+    const request = posted.at(-1);
+    assert.equal(request.kind, 'account');
+    assert.equal(request.param, action);
+    window.__furiganaPixivResolve({ requestId: request.requestId, ok: true, data: { supported: true, loggedIn: action !== 'logout' } });
+    assert.deepEqual(await pending, { supported: true, loggedIn: action !== 'logout' });
+  }
+});

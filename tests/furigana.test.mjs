@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { before, test } from 'node:test';
 import { loadTypescript } from './loadTypescript.mjs';
 const { annotateLine, parseCompoundToTokens, kanaToRomaji } = loadTypescript('../app/utils/furigana.ts');
+const { checkLine } = loadTypescript('../app/utils/readingCheck.ts');
 const { initKuromoji } = loadTypescript('../app/utils/kuromojiEngine.ts');
 const { collectReviewGroups } = loadTypescript('../app/utils/review.ts');
 const { createAnnotator } = loadTypescript('../app/utils/annotationTask.ts');
@@ -61,6 +62,19 @@ test('createAnnotator：含 NUL 字符的行仍能命中 sourceOverrides 与手�
   const bySurface = Object.fromEntries(chunks[0].tokens.map(token => [token.surface, [token.ruby, token.readingSource]]));
   assert.deepEqual(bySurface['山田'], ['やまだ', 'source']);
   assert.deepEqual(bySurface['未来'], ['あす', 'manual']);
+});
+
+test('号哭 is one dictionary compound: ごうこく, not ごう + an unread 哭', () => {
+  const table = new Map([['号哭', ['ごうこく']], ['号', ['ごう']], ['哭', ['ね']]]);
+  const text = '悠に咲き乱れるこの号哭が、';
+  const before = annotateLine(text);
+  assert.equal(before.tokens.map(token => token.ruby || token.surface).join(''), 'ゆうにさきみだれるこのごう哭が、');
+  const line = checkLine(before, table);
+  assert.equal(line.tokens.map(token => token.surface).join(''), text);
+  assert.equal(line.tokens.map(token => token.ruby || token.surface).join(''), 'ゆうにさきみだれるこのごうこくが、');
+  const compound = line.tokens.find(token => token.surface === '号哭');
+  assert.deepEqual([compound?.ruby, compound?.needsReview, compound?.word?.surface], ['ごうこく', false, '号哭']);
+  assert.equal(before.tokens.map(token => token.ruby || token.surface).join(''), 'ゆうにさきみだれるこのごう哭が、', 'checkLine does not mutate its input');
 });
 
 for (const [text, reading] of [

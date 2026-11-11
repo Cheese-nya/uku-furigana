@@ -14,14 +14,16 @@ import {
   type ReaderPrefs,
 } from '../utils/readerPreferences';
 import { TypographyPopover } from './TypographyPopover';
+import { FloatingTranslationButton, useFloatingTranslation } from './FloatingTranslationButton';
 import { GlassButton } from './glass/GlassButton';
 import { useGlass } from './glass/hooks';
-import { IconChevronLeft, IconList, IconRead, IconRuby, IconTextFormat, IconTranslate } from './glass/icons';
+import { IconChevronLeft, IconList, IconRead, IconRuby, IconTextFormat } from './glass/icons';
 import { TocCard } from './TocCard';
 import { logEvent } from '../utils/appLog';
 import { LookupCard, type LookupState } from './LookupCard';
 import { ReaderLine, bilingualSignature } from './ReaderLine';
 import { useBilingual } from '../hooks/useBilingual';
+import { useReaderTranslationAnchor } from '../hooks/useReaderTranslationAnchor';
 import { plainScriptLines } from '../utils/plainScript';
 import type { ReaderTools } from '../utils/readingTools';
 
@@ -63,6 +65,7 @@ const fill = (template: string, values: Record<string, string | number>) =>
 export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, onRubyTypeChange, onUpdateProgress, onGoToLibrary, tools, dictTitles, locale, error }: ReaderPanelProps) {
   const [prefs, setPrefs] = useState<ReaderPrefs>(loadReaderPrefs);
   const [hudVisible, setHudVisible] = useState(true);
+  const [translationDragging, setTranslationDragging] = useState(false);
   const [scrollPercent, setScrollPercent] = useState(0);
   const [aaAnchor, setAaAnchor] = useState<HTMLButtonElement | null>(null);
   const [aaOpen, setAaOpen] = useState(false);
@@ -88,6 +91,7 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
   const [capsuleNode, setCapsuleNode] = useState<HTMLDivElement | null>(null);
   const capsuleRef = useGlass<HTMLDivElement>();
   const setCapsule = useCallback((node: HTMLDivElement | null) => { capsuleRef(node); setCapsuleNode(node); }, [capsuleRef]);
+  const floatingTranslation = useFloatingTranslation();
   const isVertical = prefs.writingMode === 'vertical';
   const [lookup, setLookup] = useState<{ state: LookupState; line: number; start: number; end: number; anchor: HTMLElement | null } | null>(null);
   const lookupSeq = useRef(0);
@@ -125,11 +129,20 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
   const range = chaptered && chapters[chapter]
     ? { start: chapters[chapter].startLine, end: chapters[chapter].endLine }
     : { start: 0, end: lines.length - 1 };
+  const translationAnchor = useReaderTranslationAnchor({
+    articleRef, scrollerRef, isVertical, resetKey: `${book?.bookId ?? ''}:${chapter}`,
+  });
   const bilingual = useBilingual({
-    enabled: prefs.bilingual, wantCount: aaOpen, bookId: book?.bookId ?? null, content: book?.content ?? '', lineTexts, articleRef, tools,
+    enabled: prefs.bilingual, wantCount: aaOpen, bookId: book?.bookId ?? null, content: book?.content ?? '', lineTexts, articleRef, tools, translationAnchor,
   });
 
   const updatePrefs = (patch: Partial<ReaderPrefs>) => {
+    if (patch.bilingual !== undefined && patch.bilingual !== prefs.bilingual) {
+      // A translation reflow supersedes the old book-open line restore.
+      settleTimersRef.current.forEach(clearTimeout);
+      placedLineRef.current = null;
+      translationAnchor.prepareChange();
+    }
     setPrefs(previous => {
       const next = {
         ...previous,
@@ -155,6 +168,10 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
   const processScroll = useCallback(() => {
     const article = articleRef.current;
     const scroller = scrollerRef.current;
+    if (translationAnchor.isAdjusting.current) {
+      lastYRef.current = isVertical && article ? Math.abs(article.scrollLeft) : scroller?.scrollTop ?? 0;
+      return;
+    }
     let y: number;
     let max: number;
     if (isVertical && article) {
@@ -206,15 +223,19 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
       setCurrentLine(index);
       onUpdateProgress(chapterOf(index), index, lines.length);
     }
-  }, [isVertical, onUpdateProgress, chapterOf, lines.length]);
+  }, [isVertical, onUpdateProgress, chapterOf, lines.length, translationAnchor.isAdjusting]);
 
   const handleScroll = useCallback(() => {
+    if (translationAnchor.isAdjusting.current) {
+      lastYRef.current = isVertical ? Math.abs(articleRef.current?.scrollLeft ?? 0) : scrollerRef.current?.scrollTop ?? 0;
+      return;
+    }
     if (frameRef.current !== null) return;
     frameRef.current = window.requestAnimationFrame(() => {
       frameRef.current = null;
       processScroll();
     });
-  }, [processScroll]);
+  }, [processScroll, isVertical, translationAnchor.isAdjusting]);
 
   useEffect(() => {
     lastYRef.current = 0;
@@ -488,11 +509,12 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
       <div
         ref={setCapsule}
         className={`reader-capsule glass glass-solid fixed bottom-[max(22px,env(safe-area-inset-bottom))] left-1/2 z-40 flex h-[52px] w-[min(470px,calc(100%-32px))] -translate-x-1/2 items-center gap-0.5 rounded-full px-2 ${
-          hudVisible || aaOpen || tocOpen
+          hudVisible || translationDragging || aaOpen || tocOpen
             ? 'transition-[translate,opacity] duration-[620ms,220ms] [transition-timing-function:var(--spring-bouncy),ease]'
             : 'pointer-events-none translate-y-[calc(100%+40px)] opacity-0 transition-[translate,opacity] duration-[340ms,260ms] [transition-timing-function:cubic-bezier(.4,0,.7,.2),ease]'
         }`}
       >
+        <div className="reader-tools-left" style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
         <GlassButton icon aria-label={t.readerBackToLibrary} onClick={onGoToLibrary}>
           <IconChevronLeft />
         </GlassButton>
@@ -501,8 +523,9 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
             <IconList />
           </GlassButton>
         )}
+        </div>
         {chaptered ? (
-          <button type="button" aria-label={t.readerToc} onClick={() => setTocOpen(open => !open)} className="min-w-0 flex-1 rounded-[14px] px-1.5 py-1 text-center transition-colors hover:bg-[var(--item-hover)]">
+          <button type="button" aria-label={t.readerToc} onClick={() => setTocOpen(open => !open)} className="reader-capsule-title rounded-[14px] px-1.5 py-1 text-center transition-colors hover:bg-[var(--item-hover)]">
             <b className="block truncate text-[13px]">{book.title} · {chapters[chapter]?.title}</b>
             <span className="text-[11px] tabular-nums text-[var(--label-2)]">
               {fill(t.readerChapterPercent, { current: chapter + 1, total: chapters.length, percent: scrollPercent })}
@@ -510,7 +533,7 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
             </span>
           </button>
         ) : (
-          <div className="min-w-0 flex-1 text-center">
+          <div className="reader-capsule-title text-center">
             <b className="block truncate text-[13px]">{book.title}</b>
             <span className="text-[11px] tabular-nums text-[var(--label-2)]">
               {fill(t.libraryBookProgress, { percent: scrollPercent })}
@@ -518,21 +541,23 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
             </span>
           </div>
         )}
+        <div className="reader-tools-right" style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginLeft: 'auto', gap: 2, flexShrink: 0 }}>
         <GlassButton icon aria-label={t.showRubyLabel} aria-pressed={prefs.showRuby} onClick={() => updatePrefs({ showRuby: !prefs.showRuby })}>
           <IconRuby />
         </GlassButton>
-        <GlassButton
-          icon
-          aria-label={t.bilingualLabel}
-          aria-pressed={prefs.bilingual}
-          className={prefs.bilingual ? 'gbtn-on' : ''}
-          onClick={() => updatePrefs({ bilingual: !prefs.bilingual })}
-        >
-          <IconTranslate />
-        </GlassButton>
+        <FloatingTranslationButton
+          t={t}
+          hudVisible={hudVisible}
+          onDragActiveChange={setTranslationDragging}
+          enabled={prefs.bilingual}
+          onToggle={() => updatePrefs({ bilingual: !prefs.bilingual })}
+          locale={locale}
+          hidden={aaOpen || tocOpen || lookup !== null}
+        />
         <GlassButton ref={setAaAnchor} icon aria-label={t.typographyShort} aria-expanded={aaOpen} onClick={() => setAaOpen(open => !open)}>
           <IconTextFormat />
         </GlassButton>
+        </div>
       </div>
 
       {/* 2px progress line while the capsule is away */}
@@ -570,6 +595,7 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
           onStart: bilingual.startPretranslate,
           onPause: bilingual.pausePretranslate,
         } : undefined}
+        floatingTranslation={{ floating: floatingTranslation.floating, onFloat: floatingTranslation.float, onDock: floatingTranslation.dock }}
         t={t}
       />
 

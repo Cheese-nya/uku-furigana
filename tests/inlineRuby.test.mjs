@@ -24,10 +24,10 @@ test('half-width kana readings after a kanji run are stripped and anchored to th
   assert.deepEqual(spans('三ヶ月(さんかげつ)'), [[0, '三ヶ月', 'さんかげつ']]);
 });
 
-test('only half-width, pure-kana parentheses directly after kanji count as app-exported ruby', () => {
+test('only pure-kana parentheses directly after kanji count as app-exported ruby', () => {
   for (const line of [
     '鈴木（くしゃみ）：はっくしょん！', // full-width is always a stage direction
-    '鈴木（すずき）',
+    '鈴木（笑い）：はっはっ！',
     '鈴木(笑)：ふふ', // kanji content
     '漢字(kanji)', // romaji content
     'ねえ(ささやき)', // after kana
@@ -41,6 +41,17 @@ test('only half-width, pure-kana parentheses directly after kanji count as app-e
   }
   // Mixed: the stage direction stays, the exported reading goes.
   assert.equal(stripInlineRuby('鈴木(すずき)（くしゃみ）：はっくしょん！').text, '鈴木（くしゃみ）：はっくしょん！');
+});
+
+test('legacy bracketed readings are recovered without consuming full-width stage directions', () => {
+  assert.deepEqual(spans('号哭（ごうこく）'), [[0, '号哭', 'ごうこく']]);
+  assert.equal(stripInlineRuby('号哭（ごうこく）').text, '号哭');
+  assert.equal(stripInlineRuby('山田（やまだ）先生（せんせい）').text, '山田先生');
+  assert.equal(stripInlineRuby('号哭（(ごうこく)）').text, '号哭（(ごうこく)）');
+  assert.equal(stripInlineRuby('号哭((ごうこく))').text, '号哭((ごうこく))');
+  assert.equal(stripInlineRuby('鈴木（すずき）').text, '鈴木');
+  assert.equal(stripInlineRuby('鈴木（くしゃみ）').text, '鈴木（くしゃみ）');
+  assert.equal(stripInlineRuby('鈴木（くしゃみ）（すずき）').text, '鈴木（くしゃみ）（すずき）');
 });
 
 test('a corrected word with okurigana inside keeps its whole surface when the reading spells it out', () => {

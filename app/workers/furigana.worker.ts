@@ -1,6 +1,8 @@
 import type { WorkerRequest, WorkerResponse } from './protocol';
 import type { createAnnotator } from '../utils/annotationTask';
 import type { ReadingTable } from '../utils/readingCheck';
+import type { ImportedReadingData, NameReadingTable } from '../utils/nameReadings';
+import { getNameReadingStore } from '../utils/nameReadingStore';
 
 // doublearray's browser UMD branch writes window.doublearray. Workers have no
 // window, so provide only its global alias before evaluating Kuromoji imports.
@@ -10,6 +12,8 @@ const jobs = new Map<number, { cancelled: boolean }>();
 let initialization: Promise<void> | undefined;
 // Cross-check table for automatic readings; null until (or unless) it loads.
 let readings: ReadingTable | null = null;
+let imported: ImportedReadingData | null = null;
+let nameTable: NameReadingTable | null = null;
 const send = (message: WorkerResponse) => postMessage(message);
 
 onmessage = async (event: MessageEvent<WorkerRequest>) => {
@@ -19,7 +23,12 @@ onmessage = async (event: MessageEvent<WorkerRequest>) => {
       const [{ initKuromoji, resolveDictionaryPath }, { createAnnotator }, { loadReadingTable }] = await Promise.all([
         import('../utils/kuromojiEngine'), import('../utils/annotationTask'), import('../utils/readingCheck'),
       ]);
-      annotator = createAnnotator(() => readings);
+      annotator = createAnnotator(() => ({ table: readings, nameTable, importedTable: imported?.readingTable ?? null }));
+      const importedReadings = getNameReadingStore().load().then(data => {
+        imported = data;
+        nameTable = data.nameTable;
+        annotator?.clear();
+      }, error => console.warn('本地姓名读音词典加载失败：', error));
       // The table lives next to the kuromoji dictionary and loads alongside it: annotation
       // starts without it and picks it up as soon as it is ready.
       void loadReadingTable(resolveDictionaryPath(request.dictionaryPath)).then(
@@ -28,7 +37,7 @@ onmessage = async (event: MessageEvent<WorkerRequest>) => {
         error => console.warn('读音对照表加载失败，跳过词典校对：', error),
       );
       try {
-        await initKuromoji(request.dictionaryPath);
+        await Promise.all([importedReadings, initKuromoji(request.dictionaryPath)]);
         send({ type: 'READY', status: 'ready' });
       } catch (error) {
         send({ type: 'READY', status: 'degraded', error: String(error) });

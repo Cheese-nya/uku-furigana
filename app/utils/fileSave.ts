@@ -9,6 +9,8 @@ export interface SaveResult {
 export interface SaveFileOptions {
   /** Batch downloads skip the per-file save picker and use a direct download (or native save). */
   skipFilePicker?: boolean;
+  /** Long-running exports keep the final save on a plain download instead of the disappearing share sheet. */
+  skipShare?: boolean;
 }
 
 export type BatchSaveMode = 'zip' | 'folder' | 'direct';
@@ -59,7 +61,7 @@ export function isMobileSharePreferred(target: SaveWindow): boolean {
   return false;
 }
 
-/** Only fall back when a save API is unavailable, never after a failed write. */
+/** Only fall back when a save API is unavailable or the share sheet rejects the file, never after a failed write. */
 export async function saveBlob(blob: Blob, filename: string, options?: SaveFileOptions): Promise<SaveResult> {
   const target = window as SaveWindow;
   const api = target.pywebview?.api;
@@ -116,17 +118,22 @@ export async function saveBlob(blob: Blob, filename: string, options?: SaveFileO
     return { success: true, path: handle.name };
   }
 
-  if (isMobileSharePreferred(target)) {
+  if (!options?.skipShare && isMobileSharePreferred(target)) {
     const nav = (target.navigator ?? (typeof navigator !== 'undefined' ? navigator : undefined)) as ShareNavigator;
     const file = new File([blob], filename, { type: blob.type || 'text/plain' });
-    if (nav.canShare?.({ files: [file] })) {
-      try {
-        await nav.share?.({ files: [file], title: filename });
-        return { success: true, path: filename };
-      } catch (error) {
-        if (error instanceof Error && error.name === 'AbortError') return { success: false };
-        throw error;
+    try {
+      if (nav.canShare?.({ files: [file] })) {
+        try {
+          await nav.share?.({ files: [file], title: filename });
+          return { success: true, path: filename };
+        } catch (error) {
+          if (error instanceof Error && error.name === 'AbortError') return { success: false };
+          // Safari can reject a generated EPUB or lose activation after a long annotation job.
+          // A plain download is still usable; cancellation is the only share result that stays cancelled.
+        }
       }
+    } catch {
+      // canShare can throw on an unsupported MIME type; fall through to the ordinary download.
     }
   }
 
@@ -141,7 +148,9 @@ export async function saveBlob(blob: Blob, filename: string, options?: SaveFileO
     return { success: true, path: filename, downloadStarted: true };
   } finally {
     anchor.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    // Safari may consume a generated blob after the click has returned; keep its URL alive long enough.
+    const timer = setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    timer.unref?.();
   }
 }
 
@@ -195,4 +204,10 @@ export async function buildBatchZipBlob(files: BatchOutputFile[]): Promise<Blob>
     zip.file(uniqueZipName(file.filename, used), file.blob);
   }
   return zip.generateAsync({ type: 'blob' });
+}
+
+/** A single generated output is saved as itself; a real batch remains one ZIP. */
+export async function buildBatchSaveOutput(files: BatchOutputFile[]): Promise<BatchOutputFile> {
+  if (files.length === 1) return files[0];
+  return { filename: '台本批量导出.zip', blob: await buildBatchZipBlob(files) };
 }

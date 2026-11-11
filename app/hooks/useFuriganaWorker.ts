@@ -3,10 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { reviewReadings } from '../utils/aiReadingReview';
 import { AnnotationClient, type EngineState } from '../utils/annotationClient';
+import { sameAnnotationDocument } from '../utils/annotationSnapshot';
 import type { AnnotationInput } from '../utils/annotationTask';
 import { logEvent } from '../utils/appLog';
 import { formatRuby, type ScriptLine } from '../utils/furigana';
-import { loadTranslationSettings } from '../utils/translation';
+import { llmNeedsApiKey, loadTranslationSettings } from '../utils/translation';
 
 export function useFuriganaWorker(input: AnnotationInput) {
   const [engine, setEngine] = useState<EngineState>({ status: 'loading', mode: 'worker' });
@@ -47,7 +48,7 @@ export function useFuriganaWorker(input: AnnotationInput) {
         setStableSnapshot({ input, lines });
         setSnapshot({ input, revision, lines, done: true, error: '' });
         const settings = loadTranslationSettings();
-        if (settings.engine === 'llm' && settings.aiReadingReview && settings.llm.apiKey.trim()) {
+        if (settings.engine === 'llm' && settings.aiReadingReview && (settings.llm.apiKey.trim() || !llmNeedsApiKey(settings.llm))) {
           void reviewReadings(lines, settings.llm, controller.signal)
             .then(results => {
               if (controller.signal.aborted || results.length === 0) return;
@@ -91,9 +92,7 @@ export function useFuriganaWorker(input: AnnotationInput) {
   }, []);
 
   const current = snapshot.input === input && snapshot.revision === revision;
-  const sameDocument = (left: AnnotationInput, right: AnnotationInput) =>
-    left.text === right.text && (left.documentId || '') === (right.documentId || '');
-  const retained = stableSnapshot && sameDocument(stableSnapshot.input, input) ? stableSnapshot.lines : [];
+  const retained = stableSnapshot && sameAnnotationDocument(stableSnapshot.input, input) ? stableSnapshot.lines : [];
   // Once a same-document snapshot exists, keep showing all of it while the replacement streams
   // in. Exposing the new run's first 50-line chunk would shrink the page list and throw the
   // reader back to the first page until the rest arrived.

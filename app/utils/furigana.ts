@@ -294,7 +294,7 @@ export function parseCompoundToTokens(
  * (parseCompoundToTokens puts the selected reading first). Entries without
  * alternatives are certain jukujikun and stay out of review.
  */
-const HETERONYM_READINGS: Record<string, { reading: string; alternatives?: string[] }> = {
+export const HETERONYM_READINGS: Record<string, { reading: string; alternatives?: string[] }> = {
   // 一人/二人 are already resolved as person compounds; kept here so the default
   // also holds when the word reaches disambiguation without the pair check.
   '一人': { reading: 'ひとり' },

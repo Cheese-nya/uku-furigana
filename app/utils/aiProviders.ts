@@ -94,7 +94,7 @@ const PRICE_ORDER: Record<ModelPrice, number> = { free: 0, quota: 1, unknown: 2,
 /** Chat models the platform offers (`GET /models`), free ones first. */
 export async function listModels(llm: LlmSettings, fetchImpl: typeof fetch = fetch): Promise<ModelInfo[]> {
   const response = await fetchImpl(`${trimSlash(llm.baseUrl)}/models`, {
-    headers: llm.apiKey ? { Authorization: `Bearer ${llm.apiKey}` } : {},
+    headers: llm.apiKey.trim() ? { Authorization: `Bearer ${llm.apiKey.trim()}` } : {},
   });
   if (!response.ok) {
     logEvent('warn', 'models', `${llm.provider ?? 'custom'}: model list failed, HTTP ${response.status}`);
@@ -119,6 +119,7 @@ export async function listModels(llm: LlmSettings, fetchImpl: typeof fetch = fet
 
 /** Translate one short sentence with these settings; resolves to the translation, rejects with the reason. */
 export async function testConnection(llm: LlmSettings, target: TranslationTarget, fetchImpl: typeof fetch = fetch, signal?: AbortSignal): Promise<string> {
+  // translateLlm reports the missing preset key in the app's own error type.
   const [translation] = await translateLlm(['こんにちは。'], target, llm, fetchImpl, signal);
   return translation;
 }

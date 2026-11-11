@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { loadTypescript } from './loadTypescript.mjs';
 
 const { plainScriptLines } = loadTypescript('../app/utils/plainScript.ts');
+const { sameAnnotationDocument } = loadTypescript('../app/utils/annotationSnapshot.ts');
 const {
   DEFAULT_READER_PREFS,
   READER_FONT_SIZE_MAX,
@@ -91,6 +92,23 @@ test('阅读器：说话人标签与正文开头去重', () => {
   assert.ok(line.includes('text.startsWith(speaker)'));
 });
 
+test('阅读器翻译按钮：仅首次显示一条可关闭的拖动提示', () => {
+  const button = read('../app/components/FloatingTranslationButton.tsx');
+  const css = read('../app/components/FloatingTranslationButton.css');
+  const i18n = loadTypescript('../app/utils/i18n.ts').translations;
+  for (const locale of ['zh-CN', 'en']) {
+    assert.ok(i18n[locale].readerTranslationGuide.length > 0, `${locale} needs the guide copy`);
+    assert.ok(i18n[locale].readerTranslationGuideDismiss.length > 0, `${locale} needs the dismiss label`);
+  }
+  assert.ok(source.includes('<FloatingTranslationButton') && source.includes('          t={t}'), 'reader passes its translations');
+  for (const part of ['reader-translation-guide', 'TRANSLATION_GUIDE_KEY', 'translationGuideSeen', 'guideShownThisSession', 'GUIDE_VISIBLE_MS', 'translationGuidePosition']) {
+    assert.ok(button.includes(part), `guide needs ${part}`);
+  }
+  assert.ok(button.includes('localStorage.setItem(TRANSLATION_GUIDE_KEY'), 'guide writes its once-only marker');
+  assert.ok(button.includes('onDismiss={guide.complete}'), 'guide can be dismissed');
+  assert.ok(css.includes('.ft-guide[data-side=') && css.includes('prefers-reduced-motion'), 'guide has both pointers and reduced-motion styling');
+});
+
 test('阅读器：注音失败时显示台本库原文，而不是空白页', () => {
   assert.ok(source.includes('plainScriptLines'), 'ReaderPanel falls back to the stored text');
   // Only on failure: a fallback while annotating keeps the line count from dropping to 0, and
@@ -116,6 +134,17 @@ test('工作台：样稿工具条 + 导出选格式（含存入台本库）+ 右
   for (const removed of ['setPreviewWritingMode', 'rubyColor', 'setLineSpacing', 'editor-pixiv-toggle', 't.clearButton', "'split'", 'handleOpenInReader']) {
     assert.equal(editor.includes(removed), false, `EditorWorkspace must not contain ${removed}`);
   }
+});
+
+test('工作台：同一台本编辑原文时保留完成的预览快照，切换台本不保留', () => {
+  const input = (text, documentId) => ({ text, documentId, rubyType: 'hiragana', glossary: [], sourceOverrides: [], overrides: [] });
+  assert.equal(sameAnnotationDocument(input('号哭', 'script:1'), input('号哭が', 'script:1')), true);
+  assert.equal(sameAnnotationDocument(input('号哭', 'script:1'), input('号哭が', 'script:2')), false);
+  assert.equal(sameAnnotationDocument(input('号哭', ''), input('号哭が', '')), false, 'initial scratch document still uses the text identity');
+  assert.equal(sameAnnotationDocument(input('号哭', ''), input('号哭', 'script:1')), false, 'a newly resolved document does not inherit scratch results');
+  const hook = read('../app/hooks/useFuriganaWorker.ts');
+  assert.ok(hook.includes('sameAnnotationDocument'), 'worker keeps the stable snapshot by document identity');
+  assert.ok(editor.includes('key={documentId}'), 'switching documents still remounts the preview');
 });
 
 test('改读音面板：候选、自定义、仅此处/全文同词/记住、取消/应用', () => {
