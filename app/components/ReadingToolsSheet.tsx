@@ -25,6 +25,12 @@ export interface ReadingToolsSheetProps {
   /** 0–1 while a dictionary zip is being imported. */
   importProgress: number | null;
   importError: string;
+  onImportNameDictionary: (file: File) => void;
+  onRemoveNameDictionary: (id: string) => void;
+  nameDictionaries: Array<{ id: string; title: string }>;
+  nameImportProgress: number | null;
+  nameImportError: string;
+  nameImportMessage: string;
   /** Result of an OpenRouter sign-in that just came back, shown under the fields. */
   loginNotice?: { ok: boolean; text: string };
 }
@@ -46,8 +52,10 @@ function Section({ children }: { children: React.ReactNode }) {
 export function ReadingToolsSheet({
   open, onClose, t, locale, settings, onSettingsChange, dictionaries, onToggleDictionary, onReorderDictionaries,
   onRemoveDictionary, onImportDictionary, importProgress, importError, loginNotice,
+  onImportNameDictionary, onRemoveNameDictionary, nameDictionaries, nameImportProgress, nameImportError, nameImportMessage,
 }: ReadingToolsSheetProps) {
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const nameFileRef = useRef<HTMLInputElement | null>(null);
   const [order, setOrder] = useState<DictionaryInfo[]>(dictionaries);
   const drag = useRef<{ id: string; y: number } | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -188,6 +196,36 @@ export function ReadingToolsSheet({
       </div>
       {importError && <p role="alert" className="text-center text-xs text-[var(--danger)]">{importError}</p>}
       {order.length > 1 && <p className="text-center text-xs text-[var(--label-3)]">{t.toolsDictOrderNote}</p>}
+
+      <Section>{t.toolsNameDicts}</Section>
+      <p className="mx-0.5 mb-2 text-xs leading-normal text-[var(--label-3)]">{t.toolsNameDictHint}</p>
+      {nameDictionaries.length > 0 && (
+        <div className="mb-2 rounded-[14px] bg-[var(--fill-2)]">
+          {nameDictionaries.map((item, index) => (
+            <div key={item.id} className={`flex min-h-[44px] items-center gap-2.5 px-3 py-2 ${index ? 'border-t border-[var(--sep)]' : ''}`}>
+              <span className="min-w-0 flex-1 truncate text-xs font-medium text-[var(--label)]">{item.title}</span>
+              <button type="button" aria-label={`${t.toolsDeleteDict} ${item.title}`} className="shrink-0 p-1 text-[var(--label-3)]" onClick={() => onRemoveNameDictionary(item.id)}>
+                <IconTrash size={17} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <input
+        ref={nameFileRef}
+        type="file"
+        accept=".zip,application/zip"
+        className="hidden"
+        onChange={event => { const file = event.target.files?.[0]; if (file) onImportNameDictionary(file); event.target.value = ''; }}
+      />
+      <div className="mb-1 mt-3 flex justify-center">
+        <button type="button" className="btn" disabled={nameImportProgress !== null} onClick={() => nameFileRef.current?.click()}>
+          <IconImport size={17} />
+          {nameImportProgress !== null ? fill(t.toolsNameDictImporting, { percent: Math.round(nameImportProgress * 100) }) : t.toolsNameDictImport}
+        </button>
+      </div>
+      {nameImportError && <p role="alert" className="text-center text-xs text-[var(--danger)]">{nameImportError}</p>}
+      {nameImportMessage && <p role="status" className="text-center text-xs text-[var(--ok)]">{nameImportMessage}</p>}
       <div className="mt-4 flex">
         <button type="button" className="btn btn-ink h-11 flex-1 justify-center" onClick={onClose}>{t.toolsDone}</button>
       </div>

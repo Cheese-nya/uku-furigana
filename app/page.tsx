@@ -199,7 +199,7 @@ export default function DubbingStudioApp() {
   const { lines: annotatedLines, busy: isAnnotating, engine, error: annotationError,
     annotate, analyze, retry: retryEngine } = useFuriganaWorker(annotationInput);
   const dictionaryStatus = engine.status;
-  const readingTools = useReadingTools({ analyze, t, engineReady: engine.status !== 'loading', readerOpen: activeTab === 'reader' });
+  const readingTools = useReadingTools({ analyze, t, engineReady: engine.status !== 'loading', readerOpen: activeTab === 'reader', onNameDictionaryImported: retryEngine });
   const isKuromojiLoading = dictionaryStatus === 'loading';
 
   const reviewTargets = annotatedLines.flatMap(line => {
@@ -845,6 +845,12 @@ export default function DubbingStudioApp() {
         onImportDictionary={file => { void readingTools.importDictionary(file); }}
         importProgress={readingTools.importProgress}
         importError={readingTools.importError}
+        onImportNameDictionary={file => { void readingTools.importNameDictionary(file); }}
+        onRemoveNameDictionary={id => { void readingTools.removeNameDictionary(id); }}
+        nameDictionaries={readingTools.nameDictionaries}
+        nameImportProgress={readingTools.nameImportProgress}
+        nameImportError={readingTools.nameImportError}
+        nameImportMessage={readingTools.nameImportMessage}
         loginNotice={readingTools.loginNotice}
       />
       <GlassToast

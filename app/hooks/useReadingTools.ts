@@ -7,20 +7,51 @@ import { createReaderTools, ensureBuiltinDictionary, getDictionaryStore, type Di
 import { loadTranslationSettings, saveTranslationSettings, type TranslationSettings } from '../utils/translation';
 import { completeOpenRouterLogin, providerById } from '../utils/aiProviders';
 import { logEvent } from '../utils/appLog';
+import {
+  NameDictionaryImportError,
+  readNameDictionaryZip,
+  type NameDictionaryImportErrorCode,
+} from '../utils/nameDictionaryImport';
+import { getNameReadingStore, NameReadingStoreError, type NameReadingStoreErrorCode } from '../utils/nameReadingStore';
 
 /** Translation settings, the dictionaries list and the reader's lookup/translation tools. */
-export function useReadingTools({ analyze, t, engineReady, readerOpen }: {
+export function useReadingTools({ analyze, t, engineReady, readerOpen, onNameDictionaryImported }: {
   analyze: (text: string) => Promise<AnalyzedToken[]>;
   t: Translations;
   engineReady: boolean;
   /** The reader is on screen: the time to install the bundled dictionary, so the first lookup is quick. */
   readerOpen: boolean;
+  /** Recreate the annotation client so its worker and fallback load the new local table. */
+  onNameDictionaryImported?: () => void;
 }) {
   const [settings, setSettings] = useState<TranslationSettings>(loadTranslationSettings);
   const [dictionaries, setDictionaries] = useState<DictionaryInfo[]>([]);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [importProgress, setImportProgress] = useState<number | null>(null);
   const [importError, setImportError] = useState('');
+  const [nameDictionaries, setNameDictionaries] = useState<Array<{ id: string; title: string }>>([]);
+  const [nameImportProgress, setNameImportProgress] = useState<number | null>(null);
+  const [nameImportError, setNameImportError] = useState('');
+  const [nameImportMessage, setNameImportMessage] = useState('');
+
+  const importErrors: Record<NameDictionaryImportErrorCode, string> = {
+    nameDictInvalidZip: t.nameDictErrorInvalidZip,
+    nameDictUnsupportedFormat: t.nameDictErrorUnsupportedFormat,
+    nameDictNoBanks: t.nameDictErrorNoBanks,
+    nameDictNoReadings: t.nameDictErrorNoReadings,
+  };
+  const storageErrors: Record<NameReadingStoreErrorCode, string> = {
+    storageUnavailable: t.nameDictErrorStorageUnavailable,
+    storageFailed: t.nameDictErrorStorageFailed,
+  };
+  const nameImportErrorMessage = (error: unknown): string => {
+    if (error instanceof NameDictionaryImportError) return importErrors[error.code];
+    if (error instanceof NameReadingStoreError) return storageErrors[error.code];
+    if (error && typeof error === 'object' && 'name' in error && error.name === 'QuotaExceededError') {
+      return t.nameDictErrorStorageFull;
+    }
+    return error instanceof Error ? error.message : String(error);
+  };
 
   const refresh = useCallback(() => getDictionaryStore().list().then(
     list => setDictionaries([...list].sort((a, b) => a.order - b.order)),
@@ -28,6 +59,9 @@ export function useReadingTools({ analyze, t, engineReady, readerOpen }: {
   ), []);
 
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    void getNameReadingStore().list().then(list => setNameDictionaries(list.map(item => ({ id: item.id, title: item.title }))), () => setNameDictionaries([]));
+  }, []);
 
   // The bundled dictionary installs itself in the background the first time the reader opens (and after an upgrade).
   // The settings sheet lists it too, so opening the sheet installs it as well.
@@ -98,8 +132,40 @@ export function useReadingTools({ analyze, t, engineReady, readerOpen }: {
     }
   };
 
+  const importNameDictionary = async (file: File) => {
+    setNameImportError('');
+    setNameImportMessage('');
+    setNameImportProgress(0);
+    try {
+      const parsed = await readNameDictionaryZip(await file.arrayBuffer(), setNameImportProgress);
+      await getNameReadingStore().save(parsed);
+      const list = await getNameReadingStore().list();
+      setNameDictionaries(list.map(item => ({ id: item.id, title: item.title })));
+      setNameImportMessage(t.toolsNameDictImported.replace('{count}', String(parsed.rows)));
+      onNameDictionaryImported?.();
+    } catch (error) {
+      logEvent('error', 'dictionary', `name reading import failed: ${error instanceof Error ? error.message : String(error)}`);
+      setNameImportError(nameImportErrorMessage(error));
+    } finally { setNameImportProgress(null); }
+  };
+
+  const removeNameDictionary = async (id: string) => {
+    setNameImportError('');
+    setNameImportMessage('');
+    try {
+      await getNameReadingStore().remove(id);
+      const list = await getNameReadingStore().list();
+      setNameDictionaries(list.map(item => ({ id: item.id, title: item.title })));
+      onNameDictionaryImported?.();
+    } catch (error) {
+      logEvent('error', 'dictionary', `name reading dictionary removal failed: ${error instanceof Error ? error.message : String(error)}`);
+      setNameImportError(nameImportErrorMessage(error));
+    }
+  };
+
   return {
     tools, settings, changeSettings, loginNotice, dictionaries, dictTitles, engineLabel, sheetOpen, setSheetOpen,
     toggleDictionary, reorderDictionaries, removeDictionary, importDictionary, importProgress, importError,
+    importNameDictionary, removeNameDictionary, nameDictionaries, nameImportProgress, nameImportError, nameImportMessage,
   };
 }

@@ -633,6 +633,18 @@ export interface Translations {
   toolsLlmLocalNote: string;
   toolsTarget: string;
   toolsDicts: string;
+  toolsNameDicts: string;
+  toolsNameDictHint: string;
+  toolsNameDictImport: string;
+  toolsNameDictImporting: string;
+  toolsNameDictImported: string;
+  nameDictErrorInvalidZip: string;
+  nameDictErrorUnsupportedFormat: string;
+  nameDictErrorNoBanks: string;
+  nameDictErrorNoReadings: string;
+  nameDictErrorStorageUnavailable: string;
+  nameDictErrorStorageFailed: string;
+  nameDictErrorStorageFull: string;
   toolsDictBuiltin: string;
   toolsDictImported: string;
   toolsDictCount: string;
@@ -1341,6 +1353,18 @@ export const translations: Record<Locale, Translations> = {
     toolsLlmLocalNote: 'Key 只保存在本机；本地或局域网接口不要求鉴权时可以留空。地址请填完整，例如 http://192.168.1.10:8000/v1，并确认电脑上的服务允许局域网访问及跨域请求。',
     toolsTarget: '译文语言',
     toolsDicts: '查词词典',
+    toolsNameDicts: '姓名与专名读音',
+    toolsNameDictHint: '可导入 JMnedict、Pixiv、明镜等 Yomitan 词典 ZIP。文件只在本机读取，用于补全姓名、专名与词条读音；带空格的名称也能分开标注，不会上传文本或词典。',
+    toolsNameDictImport: '导入 Yomitan 读音词典（.zip）',
+    toolsNameDictImporting: '正在导入读音词典 {percent}%',
+    toolsNameDictImported: '已在本机读取 {count} 条词条，正在重新注音',
+    nameDictErrorInvalidZip: '不是 Yomitan 词典，或词典 ZIP 已损坏',
+    nameDictErrorUnsupportedFormat: '暂不支持这种词典格式',
+    nameDictErrorNoBanks: '词典没有词条文件',
+    nameDictErrorNoReadings: '没有找到可用于注音的汉字词条读音',
+    nameDictErrorStorageUnavailable: '当前环境不支持本机词典存储',
+    nameDictErrorStorageFailed: '无法打开本机读音词典数据库',
+    nameDictErrorStorageFull: '本机存储空间不足，无法保存这部词典；请删除其他词典或换用较小的 ZIP',
     toolsDictBuiltin: '内置 · {count} · {license}',
     toolsDictImported: '已导入 · {count}',
     toolsDictCount: '{count} 万条',
@@ -2045,6 +2069,18 @@ export const translations: Record<Locale, Translations> = {
     toolsLlmLocalNote: 'The key stays on this device. Leave it empty for a local or LAN endpoint that needs no authentication. Enter the full endpoint, such as http://192.168.1.10:8000/v1, and allow LAN access and cross-origin requests on the host.',
     toolsTarget: 'Translate into',
     toolsDicts: 'Dictionaries',
+    toolsNameDicts: 'Name & proper-noun readings',
+    toolsNameDictHint: 'Import JMnedict, Pixiv, Meikyou or another Yomitan ZIP. The file is read only on this device to improve name, proper-noun and word readings. Names containing spaces keep their separate ruby. Nothing is uploaded.',
+    toolsNameDictImport: 'Import a Yomitan reading dictionary (.zip)',
+    toolsNameDictImporting: 'Importing reading dictionary {percent}%',
+    toolsNameDictImported: 'Read {count} entries on this device; re-annotating',
+    nameDictErrorInvalidZip: 'Not a Yomitan dictionary, or the ZIP is damaged',
+    nameDictErrorUnsupportedFormat: 'This dictionary format is not supported',
+    nameDictErrorNoBanks: 'The dictionary has no term-bank files',
+    nameDictErrorNoReadings: 'No usable kanji readings were found',
+    nameDictErrorStorageUnavailable: 'Local dictionary storage is unavailable in this environment',
+    nameDictErrorStorageFailed: 'Could not open the local reading dictionary database',
+    nameDictErrorStorageFull: 'Not enough local storage to save this dictionary; remove another dictionary or use a smaller ZIP',
     toolsDictBuiltin: 'Built-in · {count} · {license}',
     toolsDictImported: 'Imported · {count}',
     toolsDictCount: '{count}k entries',

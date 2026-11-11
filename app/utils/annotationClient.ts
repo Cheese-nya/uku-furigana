@@ -2,6 +2,8 @@ import type { AnalyzedToken } from './analyze';
 import type { ScriptLine } from './furigana';
 import type { AnnotationChunk, AnnotationInput, createAnnotator } from './annotationTask';
 import type { ReadingTable } from './readingCheck';
+import type { ImportedReadingData, NameReadingTable } from './nameReadings';
+import { getNameReadingStore } from './nameReadingStore';
 import type { WorkerRequest, WorkerResponse } from '../workers/protocol';
 
 export interface EngineState {
@@ -88,13 +90,22 @@ export class AnnotationClient {
       // The reading table loads alongside, never instead of, annotation; without it the
       // cross-check is simply skipped.
       let readings: ReadingTable | null = null;
-      void loadReadingTable(resolveDictionaryPath(this.dictionaryPath)).then(
-        table => { readings = table; },
+      let imported: ImportedReadingData | null = null;
+      let nameTable: NameReadingTable | null = null;
+      const tableLoading = loadReadingTable(resolveDictionaryPath(this.dictionaryPath)).then(
+        table => { readings = table; this.fallback?.clear(); },
         cause => console.warn('读音对照表加载失败，跳过词典校对：', cause),
       );
+      const namesLoading = getNameReadingStore().load().then(data => {
+        imported = data;
+        nameTable = data.nameTable;
+        this.fallback?.clear();
+      }, cause => console.warn('本地姓名读音词典加载失败：', cause));
       try { await initKuromoji(this.dictionaryPath); } catch (cause) { error = String(cause); }
+      // READY waits for local reading data, so the first annotation is never a stale run.
+      await Promise.all([tableLoading, namesLoading]);
       if (this.disposed) return;
-      this.fallback = createAnnotator(() => readings);
+      this.fallback = createAnnotator(() => ({ table: readings, nameTable, importedTable: imported?.readingTable ?? null }));
       this.onState({ status: error ? 'degraded' : 'ready', mode: 'fallback', error: error || reason });
       this.resolveReady();
       for (const [id, job] of this.jobs) void this.runFallback(id, job);

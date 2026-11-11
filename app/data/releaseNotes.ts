@@ -13,23 +13,29 @@ export interface ReleaseNote {
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
     version: '1.8.4',
-    date: '2026-11-09',
+    date: '2026-11-11',
     items: {
       'zh-CN': [
         '新增 Pixiv 账号登录与退出，登录限制错误可直达设置；网页版可安装浏览器助手，使用本机登录态导入，Cookie 不经过服务器。',
+        '读音工具可在本机导入 Yomitan 词典 ZIP，补全人名、专名和普通词读音；词典不上传、不随软件分发，歧义读音进入待复核。',
+        '内置「峰岸美丘 → みねぎし　みおか」等姓名读音；名字或词条中含半角、全角、连续空格时，保留空格并分别标注各段读音。',
         '开关对照翻译与译文陆续出现时保持上方原文位置；滑动期间等停稳再显示新译文，减少阅读跳动。',
         '长按翻译按钮可拖出圆形悬浮开关，仅以图标明暗表示状态；自由放置并记住横竖屏位置，靠近工具栏原位置时随距离渐进让位，松手或通过排版设置可收回，无凹槽占位。',
         '限制移动端整页手势缩放，减少误触导致的界面放大；阅读字号仍可在阅读设置中调整。',
         '自定义大模型接口可留空 API Key，以便连接无需鉴权的本地或局域网模型服务。',
         '修复个别模型回显翻译提示并截断结果时，提示语被误当作译文显示和缓存。',
+        '修复保存 Safari 生成的 EPUB 时无法直接写入目标文件，以及部分被拆分词条的读音恢复问题。',
       ],
       en: [
         'Sign in to Pixiv under Settings and recover from login-required imports. The web browser helper imports with your local session without sending cookies to a server.',
+        'Reading Tools can import a Yomitan ZIP on this device to improve name, proper-noun and ordinary word readings. Dictionaries are never uploaded or redistributed, and ambiguous readings go to review.',
+        'Built-in readings such as 峰岸美丘 → みねぎし　みおか are authoritative. Half-width, full-width or repeated spaces inside a name or term are preserved, with separate ruby for each visible part.',
         'Keep the visible source passage in place when toggling bilingual reading or receiving translations; new translations appear after scrolling settles.',
         'Hold and drag out a circular translation toggle with brightness-only state. Place it freely, remember separate portrait and landscape positions, and return it near its original toolbar position with distance-driven reflow and blending, or through typography settings.',
         'Limit whole-page gesture zoom on mobile to reduce accidental enlargement; reader text size remains adjustable in reading settings.',
         'Custom LLM endpoints can now leave the API key empty for local or LAN model servers that require no authentication.',
         'Stop showing or caching a model’s echoed translation prompt when its answer is truncated; recover or refetch affected cached rows.',
+        'Save EPUBs generated in Safari directly to the chosen file and restore readings for words that the tokenizer split into several parts.',
       ],
     },
   },

@@ -70,11 +70,13 @@ The "To review" counter at the top right lists words the engine is unsure about.
 
 ### Proper-noun glossary
 
-Add names, places, and work-specific readings once and reuse them in every script. Exact match, longest word first, with import and export.
+Add names, places, and work-specific readings once and reuse them in every script. Longest literal match first; names containing half-width, full-width or repeated spaces also receive separate ruby for each part. Import and export are supported.
 
 <p align="center">
   <img src="docs/images/glossary.png" alt="Glossary: 小日向 こひなた, 月見里 やまなし, 五十嵐 いがらし" width="850" />
 </p>
+
+Reading Tools can also import your own Yomitan ZIP (JMnedict, Pixiv, Meikyou and similar). Only term-to-kana readings are extracted, entirely on this device, to improve names, proper nouns and ordinary words. The dictionary is never uploaded or redistributed with the app. Ambiguous readings go to review; manual corrections, source ruby and learned context always take precedence.
 
 ### Library and reader
 
