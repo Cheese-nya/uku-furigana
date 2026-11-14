@@ -12,6 +12,22 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '1.8.5',
+    date: '2026-11-14',
+    items: {
+      'zh-CN': [
+        '点击侧边翻页改为默认关闭，需要在阅读设置中手动开启。',
+        '开启后只在正文最外侧的窄边触发，不再占用文字区域；中间区域仍可正常点词查词。',
+        '横排、竖排方向与音量键翻页行为保持不变，已保存的明确开关选择继续保留。',
+      ],
+      en: [
+        'Side-tap page turning is now off by default and must be enabled in reader settings.',
+        'When enabled, only a narrow strip at the outer edge of the text viewport turns pages, leaving the text area available for word lookup.',
+        'Horizontal and vertical directions and volume-key paging remain unchanged; an explicitly saved preference is preserved.',
+      ],
+    },
+  },
+  {
     version: '1.8.4',
     date: '2026-11-14',
     items: {

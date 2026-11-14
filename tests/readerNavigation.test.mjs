@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { loadTypescript } from './loadTypescript.mjs';
-const { pageDestination, sidePageDirection, ReaderTapGesture } = loadTypescript('../app/utils/readerNavigation.ts');
+const { pageDestination, sidePageDirection, ReaderTapGesture, SIDE_PAGE_TURN_EDGE_PX } = loadTypescript('../app/utils/readerNavigation.ts');
 const { parseReaderPrefs, DEFAULT_READER_PREFS } = loadTypescript('../app/utils/readerPreferences.ts');
 
 test('page movement retains 10% context, clamps at ends and crosses only from a boundary', () => {
@@ -15,11 +15,16 @@ test('page movement retains 10% context, clamps at ends and crosses only from a 
   assert.equal(pageDestination(Math.abs(-200), 2000, 400, 1).position, 560);
 });
 
-test('side regions follow writing direction and leave the middle available to word lookup', () => {
-  assert.equal(sidePageDirection(15, 10, 100, false), -1);
-  assert.equal(sidePageDirection(105, 10, 100, false), 1);
-  assert.equal(sidePageDirection(15, 10, 100, true), 1);
-  assert.equal(sidePageDirection(105, 10, 100, true), -1);
+test('outer-edge regions follow writing direction and never reach the text area', () => {
+  assert.equal(SIDE_PAGE_TURN_EDGE_PX, 20);
+  assert.equal(sidePageDirection(10, 10, 100, false), -1);
+  assert.equal(sidePageDirection(29, 10, 100, false), -1);
+  assert.equal(sidePageDirection(30, 10, 100, false), null);
+  assert.equal(sidePageDirection(89, 10, 100, false), null);
+  assert.equal(sidePageDirection(90, 10, 100, false), 1);
+  assert.equal(sidePageDirection(109, 10, 100, false), 1);
+  assert.equal(sidePageDirection(10, 10, 100, true), 1);
+  assert.equal(sidePageDirection(109, 10, 100, true), -1);
   assert.equal(sidePageDirection(60, 10, 100, true), null);
   assert.equal(sidePageDirection(0, 10, 100, false), null);
 });
@@ -38,6 +43,9 @@ test('only clean short taps turn pages; dragging back, long press and cancellati
 test('old reader preferences migrate locally and invalid new settings are bounded', () => {
   assert.deepEqual(parseReaderPrefs('{}'), DEFAULT_READER_PREFS);
   assert.deepEqual(parseReaderPrefs('null'), DEFAULT_READER_PREFS);
+  assert.equal(DEFAULT_READER_PREFS.sidePageTurn, false);
+  assert.equal(parseReaderPrefs('{"fontSize":22}').sidePageTurn, false);
+  assert.equal(parseReaderPrefs('{"sidePageTurn":true}').sidePageTurn, true);
   const prefs = parseReaderPrefs(JSON.stringify({fontSize: 22, autoMode:'page', autoSpeed:1000, autoInterval:-2, sidePageTurn:false, volumePageTurn:true}));
   assert.equal(prefs.fontSize, 22);
   assert.equal(prefs.autoMode, 'page');
