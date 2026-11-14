@@ -1,4 +1,6 @@
 export type PageDirection = -1 | 1;
+export const SIDE_PAGE_TURN_EDGE_PX = 20;
+
 export function pageDestination(position: number, maximum: number, viewport: number, direction: PageDirection) {
   const max = Math.max(0, maximum);
   const current = Math.min(max, Math.max(0, position));
@@ -10,8 +12,9 @@ export function pageDestination(position: number, maximum: number, viewport: num
 
 export function sidePageDirection(x: number, left: number, width: number, vertical: boolean): PageDirection | null {
   if (width <= 0 || x < left || x > left + width) return null;
-  const fraction = (x - left) / width;
-  const direction = fraction < 0.2 ? -1 : fraction > 0.8 ? 1 : null;
+  const edge = Math.min(SIDE_PAGE_TURN_EDGE_PX, width / 2);
+  const offset = x - left;
+  const direction = offset < edge ? -1 : offset >= width - edge ? 1 : null;
   return direction === null ? null : vertical ? (direction * -1) as PageDirection : direction;
 }
 
