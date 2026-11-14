@@ -26,6 +26,8 @@ import { useBilingual } from '../hooks/useBilingual';
 import { useReaderTranslationAnchor } from '../hooks/useReaderTranslationAnchor';
 import { plainScriptLines } from '../utils/plainScript';
 import type { ReaderTools } from '../utils/readingTools';
+import { useReaderNavigation } from '../hooks/useReaderNavigation';
+import { ReaderTapGesture, sidePageDirection } from '../utils/readerNavigation';
 
 type RubyMode = 'hiragana' | 'katakana' | 'romaji';
 export type { ReaderFontFamily, ReaderWritingMode } from '../utils/readerPreferences';
@@ -344,27 +346,51 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
     placeLine(line);
   }, [isProcessing, placeLine]);
 
-  const goToChapter = (index: number) => {
+  const pendingChapterEdge = useRef<'start' | 'end' | null>(null);
+  const prepareMotion = useCallback(() => {
+    userMovedRef.current = true;
+    placedLineRef.current = null;
+    resumeLineRef.current = null;
+    settleTimersRef.current.forEach(clearTimeout);
+    settleTimersRef.current = [];
+  }, []);
+  const goToChapter = useCallback((index: number, edge: 'start' | 'end' = 'start') => {
     const target = chapters[index];
     if (!target) return;
+    prepareMotion();
+    pendingChapterEdge.current = edge;
     setTocOpen(false);
     setChapter(index);
-    // Keep the original-page HUD in step with the chapter jump; waiting for a scroll event would
-    // leave it showing the page of the chapter the reader came from.
-    setCurrentLine(target.startLine);
+    const line = edge === 'end' ? target.endLine : target.startLine;
+    setCurrentLine(line);
     setLookup(null);
-    resumeLineRef.current = null;
-    placedLineRef.current = null;
-    lastLineRef.current = target.startLine;
-    setScrollPercent(0);
-    onUpdateProgress(index, target.startLine, lines.length);
-    // The new chapter renders on the next frame; start it from the top.
-    requestAnimationFrame(() => {
-      if (articleRef.current) articleRef.current.scrollLeft = 0;
-      if (scrollerRef.current) scrollerRef.current.scrollTop = 0;
-      setHudVisible(true);
-    });
-  };
+    lastLineRef.current = line;
+    setScrollPercent(edge === 'end' ? 100 : 0);
+    onUpdateProgress(index, line, lines.length);
+    setHudVisible(true);
+  }, [chapters, lines.length, onUpdateProgress, prepareMotion]);
+  useLayoutEffect(() => {
+    const edge = pendingChapterEdge.current;
+    if (!edge) return;
+    pendingChapterEdge.current = null;
+    const article = articleRef.current;
+    const scroller = scrollerRef.current;
+    if (article) article.scrollLeft = edge === 'end' && isVertical ? -(article.scrollWidth - article.clientWidth) : 0;
+    if (scroller) scroller.scrollTop = edge === 'end' && !isVertical ? scroller.scrollHeight - scroller.clientHeight : 0;
+    lastYRef.current = edge === 'end' ? isVertical ? Math.abs(article?.scrollLeft ?? 0) : scroller?.scrollTop ?? 0 : 0;
+    travelRef.current = 0;
+    translationAnchor.prepareChange();
+  });
+  const navigation = useReaderNavigation({
+    bookId, chapter, chapterCount: chaptered ? chapters.length : 1,
+    ready: Boolean(bookId) && !isProcessing && lines.length > 0,
+    suspended: aaOpen || tocOpen || lookup !== null || translationDragging,
+    prefs, scrollerRef, articleRef,
+    isAdjusting: () => translationAnchor.isAdjusting.current || fontAnchorRef.current !== null || pendingChapterEdge.current !== null || resumeLineRef.current !== null,
+    prepareMotion, goToChapter, reveal: () => setHudVisible(true),
+  });
+  const tapGesture = useRef(new ReaderTapGesture());
+  const validTap = useRef(false);
 
   const closeLookup = useCallback(() => {
     lookupSeq.current += 1;
@@ -394,7 +420,18 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
   const handleCanvasClick = (event: React.MouseEvent) => {
     if (String(window.getSelection() || '')) return;
     const target = event.target as HTMLElement;
-    if (target.closest('button, a, input')) return;
+    if (target.closest('button, a, input, select, textarea, [role="dialog"]')) return;
+    if (aaOpen || tocOpen || translationDragging) return;
+    // Keyboard clicks retain the existing word-accessibility behavior; physical clicks require a clean tap.
+    if (event.detail !== 0 && !validTap.current) return;
+    validTap.current = false;
+    if (lookup || Date.now() - lookupClosedAt.current < 350) { if (lookup) closeLookup(); return; }
+    if (navigation.blocked) return;
+    if (prefs.sidePageTurn && event.detail !== 0) {
+      const rect = event.currentTarget.getBoundingClientRect();
+      const direction = sidePageDirection(event.clientX, rect.left, rect.width, isVertical);
+      if (direction !== null) { void navigation.turnPage(direction); return; }
+    }
     const piece = target.closest<HTMLElement>('[data-o]');
     const lineNode = piece?.closest<HTMLElement>('[data-line]');
     if (piece && lineNode && tools && !target.closest('rt')) {
@@ -440,10 +477,20 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
   const lineCount = lines.length;
 
   return (
-    <section className="relative flex h-full min-h-0 flex-1 flex-col">
+    <section data-auto-reading={navigation.state} className="relative flex h-full min-h-0 flex-1 flex-col">
       <div className="scroll-edge fixed inset-x-0 top-0 z-10 h-[76px]" aria-hidden />
 
-      <div ref={scrollerRef} onScroll={isVertical ? undefined : handleScroll} onClick={handleCanvasClick} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      <div ref={scrollerRef} onPointerDown={event => {
+          navigation.pause();
+          validTap.current = false;
+          if (event.isPrimary && event.button === 0) tapGesture.current.begin(event.clientX, event.clientY, event.timeStamp);
+          else tapGesture.current.cancel();
+        }}
+        onPointerMove={event => tapGesture.current.move(event.clientX, event.clientY)}
+        onPointerUp={event => { validTap.current = tapGesture.current.finish(event.timeStamp); }}
+        onPointerCancel={() => { tapGesture.current.cancel(); validTap.current = false; }}
+        onContextMenu={() => { tapGesture.current.cancel(); validTap.current = false; }}
+        onWheel={navigation.pause} onKeyDown={navigation.pause} onScroll={isVertical ? undefined : handleScroll} onClick={handleCanvasClick} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <article
           ref={articleRef}
           lang="ja"
@@ -494,9 +541,9 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
 
           {chaptered && (
             <nav className="reader-chapnav">
-              <button type="button" className="btn" disabled={chapter === 0} onClick={() => goToChapter(chapter - 1)}>{t.readerPrevChapter}</button>
+              <button type="button" className="btn" disabled={chapter === 0} onClick={() => { navigation.pause(); goToChapter(chapter - 1); }}>{t.readerPrevChapter}</button>
               {chapter + 1 < chapters.length && (
-                <button type="button" className="btn btn-ink" onClick={() => goToChapter(chapter + 1)}>
+                <button type="button" className="btn btn-ink" onClick={() => { navigation.pause(); goToChapter(chapter + 1); }}>
                   {t.readerNextChapter}<small>{chapters[chapter + 1].title}</small>
                 </button>
               )}
@@ -509,7 +556,7 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
       <div
         ref={setCapsule}
         className={`reader-capsule glass glass-solid fixed bottom-[max(22px,env(safe-area-inset-bottom))] left-1/2 z-40 flex h-[52px] w-[min(470px,calc(100%-32px))] -translate-x-1/2 items-center gap-0.5 rounded-full px-2 ${
-          hudVisible || translationDragging || aaOpen || tocOpen
+          hudVisible || navigation.running || translationDragging || aaOpen || tocOpen
             ? 'transition-[translate,opacity] duration-[620ms,220ms] [transition-timing-function:var(--spring-bouncy),ease]'
             : 'pointer-events-none translate-y-[calc(100%+40px)] opacity-0 transition-[translate,opacity] duration-[340ms,260ms] [transition-timing-function:cubic-bezier(.4,0,.7,.2),ease]'
         }`}
@@ -517,6 +564,12 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
         <div className="reader-tools-left" style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
         <GlassButton icon aria-label={t.readerBackToLibrary} onClick={onGoToLibrary}>
           <IconChevronLeft />
+        </GlassButton>
+        <GlassButton icon aria-label={navigation.running ? t.readerAutoPause : t.readerAutoStart} title={navigation.running ? t.readerAutoPause : t.readerAutoStart}
+          aria-pressed={navigation.running} disabled={isProcessing || !lines.length}
+          onClick={navigation.toggle}>
+          {navigation.running ? <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><rect x="5" y="4" width="3" height="12" rx="1" /><rect x="12" y="4" width="3" height="12" rx="1" /></svg>
+            : <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M6 3.5a1 1 0 0 1 1.5-.86l9 6.5a1 1 0 0 1 0 1.72l-9 6.5A1 1 0 0 1 6 16.5z" /></svg>}
         </GlassButton>
         {chaptered && (
           <GlassButton icon aria-label={t.readerToc} aria-expanded={tocOpen} onClick={() => setTocOpen(open => !open)}>
@@ -527,7 +580,7 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
         {chaptered ? (
           <button type="button" aria-label={t.readerToc} onClick={() => setTocOpen(open => !open)} className="reader-capsule-title rounded-[14px] px-1.5 py-1 text-center transition-colors hover:bg-[var(--item-hover)]">
             <b className="block truncate text-[13px]">{book.title} · {chapters[chapter]?.title}</b>
-            <span className="text-[11px] tabular-nums text-[var(--label-2)]">
+            <span className="whitespace-nowrap text-[11px] tabular-nums text-[var(--label-2)]">
               {fill(t.readerChapterPercent, { current: chapter + 1, total: chapters.length, percent: scrollPercent })}
               {sourcePage ? ` · ${fill(t.readerSourcePage, { page: sourcePage })}` : ''}
             </span>
@@ -535,7 +588,7 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
         ) : (
           <div className="reader-capsule-title text-center">
             <b className="block truncate text-[13px]">{book.title}</b>
-            <span className="text-[11px] tabular-nums text-[var(--label-2)]">
+            <span className="whitespace-nowrap text-[11px] tabular-nums text-[var(--label-2)]">
               {fill(t.libraryBookProgress, { percent: scrollPercent })}
               {sourcePage ? ` · ${fill(t.readerSourcePage, { page: sourcePage })}` : ''}
             </span>
@@ -547,7 +600,7 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
         </GlassButton>
         <FloatingTranslationButton
           t={t}
-          hudVisible={hudVisible}
+          hudVisible={hudVisible || navigation.running}
           onDragActiveChange={setTranslationDragging}
           enabled={prefs.bilingual}
           onToggle={() => updatePrefs({ bilingual: !prefs.bilingual })}
@@ -564,13 +617,18 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
       <div
         aria-hidden
         className={`pointer-events-none fixed bottom-1 left-[22px] right-[22px] z-30 h-[2px] overflow-hidden rounded-[1px] bg-[var(--fill-2)] transition-opacity duration-300 ${
-          hudVisible || aaOpen ? 'opacity-0' : 'opacity-100 delay-[120ms]'
+          hudVisible || navigation.running || aaOpen ? 'opacity-0' : 'opacity-100 delay-[120ms]'
         }`}
       >
         <i className="block h-full rounded-[1px] bg-[var(--label)] opacity-[0.38]" style={{ width: `${scrollPercent}%` }} />
       </div>
 
       <TypographyPopover
+        autoReading={{
+          mode: prefs.autoMode, speed: prefs.autoSpeed, interval: prefs.autoInterval,
+          onChange: updatePrefs, sidePageTurn: prefs.sidePageTurn,
+          volumePageTurn: prefs.volumePageTurn, nativeAvailable: navigation.nativeAvailable,
+        }}
         open={aaOpen}
         onClose={() => setAaOpen(false)}
         anchor={aaAnchor}
@@ -608,7 +666,7 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
           chapters={chapters}
           current={chapter}
           percent={scrollPercent}
-          onSelect={goToChapter}
+          onSelect={index => { navigation.pause(); goToChapter(index); }}
           t={t}
         />
       )}

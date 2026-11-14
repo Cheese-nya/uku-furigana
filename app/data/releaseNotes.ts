@@ -13,9 +13,13 @@ export interface ReleaseNote {
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
     version: '1.8.4',
-    date: '2026-11-11',
+    date: '2026-11-14',
     items: {
       'zh-CN': [
+        "修复工作台预览翻页后停留在页底的问题，跨页搜索仍准确定位。",
+        "阅读器支持点击左右侧边翻一屏，横排和竖排自动对应阅读方向，并支持跨章节。",
+        "新增连续滚动和定时翻页两种自动阅读模式，可调速度与间隔；手动操作暂停，后台停止。",
+        "Android 可在阅读设置开启音量键翻页，默认关闭；阅读偏好在本机保存。",
         '新增 Pixiv 账号登录与退出，登录限制错误可直达设置；网页版可安装浏览器助手，使用本机登录态导入，Cookie 不经过服务器。',
         '读音工具可在本机导入 Yomitan 词典 ZIP，补全人名、专名和普通词读音；词典不上传、不随软件分发，歧义读音进入待复核。',
         '内置「峰岸美丘 → みねぎし　みおか」等姓名读音；名字或词条中含半角、全角、连续空格时，保留空格并分别标注各段读音。',
@@ -27,6 +31,10 @@ export const RELEASE_NOTES: ReleaseNote[] = [
         '修复保存 Safari 生成的 EPUB 时无法直接写入目标文件，以及部分被拆分词条的读音恢复问题。',
       ],
       en: [
+        "Workbench preview returns to the top after paging while cross-page search keeps its target visible.",
+        "Tap the sides to move one screen in either writing direction, including chapter boundaries.",
+        "Choose adjustable continuous scrolling or timed page turns; manual interaction pauses and backgrounding stops auto-reading.",
+        "Android volume-key page turning is available in reader settings and off by default; reading preferences stay local.",
         'Sign in to Pixiv under Settings and recover from login-required imports. The web browser helper imports with your local session without sending cookies to a server.',
         'Reading Tools can import a Yomitan ZIP on this device to improve name, proper-noun and ordinary word readings. Dictionaries are never uploaded or redistributed, and ambiguous readings go to review.',
         'Built-in readings such as 峰岸美丘 → みねぎし　みおか are authoritative. Half-width, full-width or repeated spaces inside a name or term are preserved, with separate ruby for each visible part.',

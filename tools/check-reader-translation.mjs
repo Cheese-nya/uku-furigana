@@ -17,6 +17,8 @@ const book = { bookId: 'book:translation-qa', title: '翻译位置测试', autho
 await context.addInitScript(book => {
   if (localStorage.getItem('reader-qa-seeded')) return;
   localStorage.clear();
+  // This regression uses edge taps to reveal chrome; side navigation is covered separately.
+  localStorage.setItem('furigana_reader_prefs_v3', JSON.stringify({ sidePageTurn: false }));
   localStorage.setItem('furigana-library-v1', JSON.stringify({ version: 2, books: { [book.bookId]: book }, folders: {} }));
   localStorage.setItem('furigana_active_tab', 'library');
   localStorage.setItem('reader-qa-seeded', '1');

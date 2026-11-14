@@ -21,6 +21,7 @@ import android.provider.MediaStore;
 import android.util.Base64;
 import android.util.Log;
 import android.view.ViewGroup;
+import android.view.KeyEvent;
 import android.view.Window;
 import android.view.WindowManager;
 import android.webkit.ConsoleMessage;
@@ -79,10 +80,22 @@ public class MainActivity extends Activity {
     private static final Object LOG_LOCK = new Object();
 
     private WebView webView;
+    private boolean readerVolumeKeysEnabled = false;
+    private int readerVolumeKeysHeld = 0;
     private PixivAccount pixivAccount;
     private ValueCallback<Uri[]> filePathCallback;
 
     public class AndroidNativeBridge {
+        @JavascriptInterface
+        public void setReaderVolumeKeysEnabled(boolean enabled) {
+            runOnUiThread(() -> {
+                String url = webView == null ? null : webView.getUrl();
+                readerVolumeKeysEnabled = enabled && hasWindowFocus() && url != null
+                        && "https".equals(Uri.parse(url).getScheme())
+                        && VIRTUAL_HOST.equals(Uri.parse(url).getHost());
+            });
+        }
+
         @JavascriptInterface
         public String getPixivAccountStatus() { return pixivAccount.statusJson(); }
 
@@ -328,6 +341,7 @@ public class MainActivity extends Activity {
 
             @Override
             public void onPageStarted(WebView view, String url, Bitmap favicon) {
+                readerVolumeKeysEnabled = false;
                 super.onPageStarted(view, url, favicon);
                 pushSystemTheme();
             }
@@ -635,7 +649,50 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        int code = event.getKeyCode();
+        int bit = code == KeyEvent.KEYCODE_VOLUME_UP ? 1 : code == KeyEvent.KEYCODE_VOLUME_DOWN ? 2 : 0;
+        if (bit == 0) return super.dispatchKeyEvent(event);
+        // A consumed DOWN always consumes its matching UP, even if a sheet or backgrounding disabled capture.
+        if (event.getAction() == KeyEvent.ACTION_UP && (readerVolumeKeysHeld & bit) != 0) {
+            readerVolumeKeysHeld &= ~bit;
+            return true;
+        }
+        if (event.getAction() == KeyEvent.ACTION_DOWN) {
+            if ((readerVolumeKeysHeld & bit) != 0 && event.getRepeatCount() > 0) return true;
+            // A new physical press clears a stale DOWN if its UP was delivered while unfocused.
+            readerVolumeKeysHeld &= ~bit;
+            if (readerVolumeKeysEnabled && hasWindowFocus() && webView != null && event.getRepeatCount() == 0) {
+                readerVolumeKeysHeld |= bit;
+                String direction = code == KeyEvent.KEYCODE_VOLUME_UP ? "previous" : "next";
+                webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('uku-reader-page-turn',{detail:{direction:'"
+                        + direction + "'}}));", null);
+                return true;
+            }
+        }
+        return super.dispatchKeyEvent(event);
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (!hasFocus) readerVolumeKeysEnabled = false;
+        if (webView != null) webView.evaluateJavascript(
+                "window.dispatchEvent(new CustomEvent('uku-reader-native-focus',{detail:{active:"
+                        + (hasFocus ? "true" : "false") + "}}));", null);
+    }
+
+    @Override
+    protected void onPause() {
+        readerVolumeKeysEnabled = false;
+        if (webView != null) webView.evaluateJavascript(
+                "window.dispatchEvent(new CustomEvent('uku-reader-native-focus',{detail:{active:false}}));", null);
+        super.onPause();
+    }
+
+    @Override
     protected void onDestroy() {
+        readerVolumeKeysEnabled = false;
         if (pixivAccount != null) pixivAccount.destroy();
         super.onDestroy();
     }

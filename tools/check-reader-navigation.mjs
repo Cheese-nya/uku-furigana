@@ -1,0 +1,148 @@
+// Run against a local production server. PLAYWRIGHT_MODULE may point to an external installation.
+import assert from 'node:assert/strict';
+import { loadTypescript } from '../tests/loadTypescript.mjs';
+const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const { emptyLibraryDatabase, upsertBook } = loadTypescript('../app/utils/libraryDatabase.ts');
+const { TRANSLATION_GUIDE_KEY } = loadTypescript('../app/utils/floatingTranslation.ts');
+const db = await upsertBook(emptyLibraryDatabase(), {
+  title: 'Reader navigation test', format: 'epub',
+  content: Array.from({length:410}, (_, i) => `これは自動読書のテストです。行番号${i}。`).join('\n'),
+  chapters: [{ title:'First',startLine:0 },{ title:'Short',startLine:205 },{ title:'Last',startLine:207 }],
+});
+const browser = await chromium.launch({ headless:true, ...(process.env.CHROMIUM_EXECUTABLE ? {executablePath:process.env.CHROMIUM_EXECUTABLE} : {}) });
+const context = await browser.newContext({viewport:{width:390,height:844},hasTouch:true,isMobile:true});
+const page = await context.newPage();
+const errors = [];
+page.on('pageerror', error => { errors.push(error.message); console.log('PAGE ERROR',error.message); });
+await page.addInitScript(({db,guideKey}) => {
+  localStorage.setItem('furigana-library-v1',JSON.stringify(db));
+  localStorage.setItem('furigana_active_tab','library');
+  localStorage.setItem('furigana_locale','en');
+  localStorage.setItem('uku.whatsNew.seen','2.0.4');
+  localStorage.setItem(guideKey,'seen');
+  window.readerVolumeEnabled = false;
+  window.AndroidBridge = {setReaderVolumeKeysEnabled: enabled => {window.readerVolumeEnabled = enabled;}};
+}, {db,guideKey:TRANSLATION_GUIDE_KEY});
+const canvas = page.getByTestId('reader-script-canvas');
+const scroller = () => canvas.evaluate(n => n.parentElement.scrollTop);
+const currentChapterStart = () => canvas.locator('[data-line]').first().getAttribute('data-line');
+const waitTurn = () => page.waitForTimeout(300);
+const side = async (x) => { const rect=await canvas.evaluate(n=>{const r=n.parentElement.getBoundingClientRect();return {left:r.left,width:r.width};}); await page.mouse.click(rect.left+rect.width*x/390,350); await waitTurn(); };
+const volume = async (direction) => {
+  await page.evaluate(direction => window.dispatchEvent(new CustomEvent('uku-reader-page-turn',{detail:{direction}})),direction);
+  await waitTurn();
+};
+const reveal = async () => {
+  await page.waitForTimeout(100);
+  if (await page.locator('.reader-capsule').evaluate(n=>n.classList.contains('pointer-events-none'))) {
+    await canvas.evaluate(n => n.parentElement.dispatchEvent(new MouseEvent('click',{bubbles:true})));
+  }
+  await page.waitForTimeout(650);
+};
+const openType = async () => {
+  const button = page.getByRole('button',{name:'Type',exact:true});
+  await page.waitForTimeout(300);
+  if (await page.locator('.reader-capsule').evaluate(n=>n.classList.contains('pointer-events-none'))) await reveal();
+  await button.click();
+};
+const closeType = async () => { await page.keyboard.press('Escape'); await page.waitForTimeout(650); };
+try {
+  await page.goto(process.env.FURIGANA_TEST_URL || 'http://localhost:3136');
+  await page.getByRole('button',{name:'Reader navigation test',exact:true}).click({button:'right'});
+  await page.getByText('Read',{exact:true}).click();
+  await page.waitForFunction(()=>document.querySelectorAll('[data-line]').length===205);
+  await page.waitForFunction(()=>!document.querySelector('button[aria-label="Auto-read"]')?.disabled);
+  await page.waitForTimeout(500);
+  assert.equal(await page.evaluate(()=>window.readerVolumeEnabled),false);
+  await side(375);
+  const viewport = await canvas.evaluate(n=>n.parentElement.clientHeight);
+  assert.ok(Math.abs(await scroller()-viewport*.9)<3,`right tap advances 90% of screen: actual=${await scroller()}, viewport=${viewport}, dialogs=${await page.locator('[role=dialog]').evaluateAll(ns=>ns.map(n=>n.getAttribute('aria-hidden')))}`);
+  await side(10); assert.ok(await scroller()<2,`left tap goes back: ${await scroller()}`);
+  const touchRect = await canvas.evaluate(n=>{const r=n.parentElement.getBoundingClientRect();return {left:r.left,width:r.width};});
+  await page.touchscreen.tap(touchRect.left+touchRect.width*.95,350); await waitTurn();
+  assert.ok(await scroller()>100,'native touch tap turns');
+  await page.touchscreen.tap(touchRect.left+touchRect.width*.05,350); await waitTurn();
+  assert.ok(await scroller()<2,'native touch previous');
+  await page.mouse.move(375,350); await page.mouse.down();
+  await page.mouse.move(350,350); await page.mouse.move(375,350); await page.mouse.up(); await waitTurn();
+  assert.ok(await scroller()<2,'drag returning to start is not a tap');
+  await page.mouse.move(375,350); await page.mouse.down(); await page.waitForTimeout(550); await page.mouse.up(); await waitTurn();
+  assert.ok(await scroller()<2,'long press does not turn');
+  await page.evaluate(()=>getSelection()?.removeAllRanges());
+  await openType();
+  await page.getByRole('switch',{name:'Volume keys turn pages'}).click();
+  assert.equal(await page.evaluate(()=>window.readerVolumeEnabled),false,'settings keep system volume');
+  await closeType();
+  await page.waitForFunction(()=>window.readerVolumeEnabled===true);
+  await volume('next'); assert.ok(await scroller()>100,'native next event turns');
+  await volume('previous'); assert.ok(await scroller()<2,'native previous event turns');
+  await canvas.evaluate(async n=>{for(let i=0;i<12;i++){n.parentElement.scrollTop=n.parentElement.scrollHeight;await new Promise(requestAnimationFrame);}});
+  await side(375); assert.equal(await currentChapterStart(),'205','next crosses to short chapter');
+  await side(10); assert.equal(await currentChapterStart(),'0','previous returns to previous chapter');
+  assert.ok(await canvas.evaluate(n=>n.parentElement.scrollTop>=n.parentElement.scrollHeight-n.parentElement.clientHeight-2),`previous chapter opens at end: ${JSON.stringify(await canvas.evaluate(n=>({top:n.parentElement.scrollTop,height:n.parentElement.scrollHeight,client:n.parentElement.clientHeight})))}`);
+  await side(375); await side(375); assert.equal(await currentChapterStart(),'207','short chapter advances once');
+  console.log('PASS manual/chapter phase');
+  await canvas.evaluate(n=>n.parentElement.scrollTop=0);
+  await openType();
+  await page.getByRole('radio',{name:'Timed pages',exact:true}).click();
+  await page.getByRole('slider',{name:'Seconds per screen'}).fill('3');
+  await closeType();
+  await page.getByRole('button',{name:'Auto-read',exact:true}).click();
+  await page.waitForTimeout(1200); assert.ok(await scroller()<2,'timed mode waits before first page');
+  await page.waitForTimeout(2400); assert.ok(await scroller()>100,'timed mode turns');
+  await side(375);
+  assert.equal(await page.locator('[data-auto-reading]').getAttribute('data-auto-reading'),'stopped','manual tap pauses automation');
+  console.log('PASS timed pages');
+  await canvas.evaluate(n=>n.parentElement.scrollTop=0);
+  await openType();
+  await page.getByRole('radio',{name:'Scroll',exact:true}).click();
+  await page.getByRole('slider',{name:'Auto-reading speed'}).fill('100');
+  await closeType();
+  await page.getByRole('button',{name:'Auto-read',exact:true}).click();
+  await page.waitForTimeout(600); assert.ok(await scroller()>35,'continuous scrolling');
+  await openType(); const held = await scroller();
+  await page.waitForTimeout(400); assert.ok(Math.abs(await scroller()-held)<2,'popover suspends automation');
+  assert.equal(await page.evaluate(()=>window.readerVolumeEnabled),false);
+  await page.getByTestId('font-size-slider').fill('26');
+  await page.waitForTimeout(700);
+  const fontPosition = await scroller();
+  await page.waitForTimeout(200);
+  assert.ok(Math.abs(await scroller()-fontPosition)<2,'font reflow settles while automation is suspended');
+  assert.equal(await page.locator('[data-auto-reading]').getAttribute('data-auto-reading'),'suspended');
+  await page.getByTestId('font-size-slider').fill('19');
+  await page.waitForTimeout(700);
+  await page.getByRole('radio',{name:'Vertical (縦書き)',exact:true}).click();
+  await closeType();
+  await page.waitForTimeout(500);
+  assert.ok(await canvas.evaluate(n=>n.scrollLeft)<-10,'vertical auto scroll');
+  console.log('PASS scrolling and writing mode');
+  await side(10);
+  const verticalPosition=await canvas.evaluate(n=>Math.abs(n.scrollLeft));
+  await side(375);
+  assert.ok(await canvas.evaluate(n=>Math.abs(n.scrollLeft))<verticalPosition,'vertical right goes back');
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await canvas.evaluate(n=>n.scrollLeft=-n.scrollWidth);
+  await volume('next'); assert.equal(await currentChapterStart(),'207','last chapter does not wrap');
+  await reveal();
+  await page.getByRole('button',{name:'Auto-read',exact:true}).click();
+  await page.waitForTimeout(1800);
+  assert.equal(await page.locator('[data-auto-reading]').getAttribute('data-auto-reading'),'stopped','book end stops');
+  await page.screenshot({path:process.env.READER_SCREENSHOT || '/tmp/reader-navigation-mobile.png'});
+  await page.getByRole('button',{name:'Back to Script Library'}).click();
+  assert.equal(await page.evaluate(()=>window.readerVolumeEnabled),false,'leaving reader restores volume');
+  await page.getByRole('button',{name:'Reader navigation test',exact:true}).click({button:'right'});
+  await page.getByText('Read',{exact:true}).click();
+  await page.waitForTimeout(600);
+  assert.equal(await page.locator('[data-auto-reading]').getAttribute('data-auto-reading'),'stopped','reopening never auto-starts');
+  await openType();
+  assert.equal(await page.getByRole('slider',{name:'Auto-reading speed'}).inputValue(),'100','speed persists');
+  assert.equal(await page.getByRole('switch',{name:'Volume keys turn pages'}).getAttribute('aria-checked'),'true');
+  await closeType();
+  await page.getByRole('button',{name:'Auto-read',exact:true}).click();
+  await page.evaluate(()=>window.dispatchEvent(new CustomEvent('uku-reader-native-focus',{detail:{active:false}})));
+  await page.waitForTimeout(100);
+  assert.equal(await page.locator('[data-auto-reading]').getAttribute('data-auto-reading'),'stopped','background stops automation');
+  assert.equal(await page.evaluate(()=>window.readerVolumeEnabled),false);
+  assert.deepEqual(errors,[]);
+  console.log('PASS sides, clean gestures, volume bridge, chapter boundaries, both auto modes, pause/suspend, preferences, background, mobile layout');
+} catch (error) { await page.screenshot({path:'/tmp/reader-navigation-failure.png'}); throw error; } finally { await browser.close(); }

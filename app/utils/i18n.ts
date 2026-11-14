@@ -345,6 +345,16 @@ export interface Translations {
   readerAddBookmark: string;
   readerRemoveBookmark: string;
   readerNoBookmarks: string;
+  readerAutoMode: string;
+  readerAutoScroll: string;
+  readerAutoPage: string;
+  readerAutoInterval: string;
+  readerSidePageTurn: string;
+  readerVolumePageTurn: string;
+  readerAutoStart: string;
+  readerAutoPause: string;
+  readerAutoSpeed: string;
+  readerAutoHint: string;
   readerPrevChapter: string;
   readerNextChapter: string;
   readerChapterProgress: string;
@@ -1067,6 +1077,16 @@ export const translations: Record<Locale, Translations> = {
     readerAddBookmark: '加书签',
     readerRemoveBookmark: '取消书签',
     readerNoBookmarks: '还没有书签。在任一行右侧点星标即可收藏。',
+    readerAutoMode: '自动阅读模式',
+    readerAutoScroll: '连续滚动',
+    readerAutoPage: '定时翻页',
+    readerAutoInterval: '每屏停留时间',
+    readerSidePageTurn: '点击侧边翻页',
+    readerVolumePageTurn: '音量键翻页',
+    readerAutoStart: '自动阅读',
+    readerAutoPause: '暂停自动阅读',
+    readerAutoSpeed: '自动阅读速度',
+    readerAutoHint: '自动滚动并继续下一章；触碰正文暂停。',
     readerPrevChapter: '上一章',
     readerNextChapter: '下一章',
     readerChapterProgress: '第 {current} / {total} 章',
@@ -1783,6 +1803,16 @@ export const translations: Record<Locale, Translations> = {
     readerAddBookmark: 'Add bookmark',
     readerRemoveBookmark: 'Remove bookmark',
     readerNoBookmarks: 'No bookmarks yet. Star any line to save it.',
+    readerAutoMode: 'Auto-reading mode',
+    readerAutoScroll: 'Scroll',
+    readerAutoPage: 'Timed pages',
+    readerAutoInterval: 'Seconds per screen',
+    readerSidePageTurn: 'Tap sides to turn pages',
+    readerVolumePageTurn: 'Volume keys turn pages',
+    readerAutoStart: 'Auto-read',
+    readerAutoPause: 'Pause auto-reading',
+    readerAutoSpeed: 'Auto-reading speed',
+    readerAutoHint: 'Scrolls automatically and continues to the next chapter. Touch the text to pause.',
     readerPrevChapter: 'Previous chapter',
     readerNextChapter: 'Next chapter',
     readerChapterProgress: 'Chapter {current} / {total}',

@@ -2,7 +2,21 @@
 
 > **版本标签 (Tag)**: `v1.8.4`
 > **发布标题 (Title)**: `浮く Uku Furigana V1.8.4 — Pixiv 登录、姓名读音与阅读体验改进`
-> **发布日期 (Date)**: 2026-11-11
+> **发布日期 (Date)**: 2026-11-14
+
+## 本次阅读与工作台更新
+
+- 修复工作台预览翻页后停留在页底的问题，跨页搜索仍准确定位。
+- 阅读器支持点击左右侧边翻一屏，横排和竖排自动对应阅读方向，并支持跨章节。
+- 新增连续滚动和定时翻页两种自动阅读模式，可调速度与间隔；手动操作暂停，后台停止。
+- Android 可在阅读设置开启音量键翻页，默认关闭；阅读偏好在本机保存。
+
+## Reader and workbench updates
+
+- Workbench preview returns to the top after paging while cross-page search keeps its target visible.
+- Tap the sides to move one screen in either writing direction, including chapter boundaries.
+- Choose adjustable continuous scrolling or timed page turns; manual interaction pauses and backgrounding stops auto-reading.
+- Android volume-key page turning is available in reader settings and off by default; reading preferences stay local.
 
 ## ✨ 新功能 (Features)
 - 新增 Pixiv 本机账号登录、退出与登录限制引导，修复空正文误入库及导入等待；网页版提供 Chrome / Edge 浏览器助手，登录态不上传服务器。
