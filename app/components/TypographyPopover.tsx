@@ -6,6 +6,7 @@ import { LiquidSelector } from './glass/LiquidSelector';
 import type { Translations } from '../utils/i18n';
 import type { PretranslateState } from '../hooks/useBilingual';
 import { IconCheck } from './glass/icons';
+import type { ReaderPrefs } from '../utils/readerPreferences';
 
 type RubyMode = 'hiragana' | 'katakana' | 'romaji';
 
@@ -40,6 +41,11 @@ export interface TypographyPopoverProps {
   };
   /** Local-only placement of the reader's quick translation switch. */
   floatingTranslation?: { floating: boolean; onFloat: () => void; onDock: () => void };
+  autoReading?: {
+    mode: 'scroll' | 'page'; speed: number; interval: number;
+    sidePageTurn: boolean; volumePageTurn: boolean; nativeAvailable: boolean;
+    onChange: (patch: Partial<ReaderPrefs>) => void;
+  };
   t: Translations;
 }
 
@@ -98,11 +104,11 @@ function Group({ label, value, children }: { label: string; value?: string; chil
 /** Mockup "排版" popover: ruby mode (phones), font, size, show-ruby switch. */
 export function TypographyPopover({
   open, onClose, anchor, placement, fontFamily, onFontFamilyChange, fontSize, onFontSizeChange, minFontSize = 14, maxFontSize = 26,
-  showRuby, onShowRubyChange, rubyType, onRubyTypeChange, writingMode, onWritingModeChange, bilingual, floatingTranslation, t,
+  showRuby, onShowRubyChange, rubyType, onRubyTypeChange, writingMode, onWritingModeChange, bilingual, floatingTranslation, autoReading, t,
 }: TypographyPopoverProps) {
   const size = Math.min(maxFontSize, Math.max(minFontSize, fontSize));
   return (
-    <GlassPopover open={open} onClose={onClose} anchor={anchor} placement={placement} ariaLabel={t.typographySettings} className="w-[280px]">
+    <GlassPopover open={open} onClose={onClose} anchor={anchor} placement={placement} ariaLabel={t.typographySettings} className="max-h-[calc(100vh-20px)] w-[280px] overflow-y-auto overscroll-contain">
       {rubyType && onRubyTypeChange && (
         <Group label={t.rubyLabel}>
           <LiquidSelector
@@ -171,6 +177,37 @@ export function TypographyPopover({
           <i />
         </button>
       </div>
+      {autoReading && (
+        <>
+          <Group label={t.readerAutoMode}>
+            <LiquidSelector variant="solid" className={SEG} role="radiogroup" ariaLabel={t.readerAutoMode}
+              value={autoReading.mode} onChange={autoMode => autoReading.onChange({ autoMode })}
+              options={[{ value: 'scroll', label: t.readerAutoScroll }, { value: 'page', label: t.readerAutoPage }]} />
+          </Group>
+          <Group label={autoReading.mode === 'scroll' ? t.readerAutoSpeed : t.readerAutoInterval}
+            value={autoReading.mode === 'scroll' ? `${autoReading.speed} px/s` : `${autoReading.interval} s`}>
+            <input type="range" min={autoReading.mode === 'scroll' ? 10 : 3} max={autoReading.mode === 'scroll' ? 100 : 60}
+              step={1} value={autoReading.mode === 'scroll' ? autoReading.speed : autoReading.interval}
+              aria-label={autoReading.mode === 'scroll' ? t.readerAutoSpeed : t.readerAutoInterval}
+              aria-valuetext={autoReading.mode === 'scroll' ? `${autoReading.speed} px/s` : `${autoReading.interval} s`}
+              onChange={event => autoReading.onChange(autoReading.mode === 'scroll' ? { autoSpeed: Number(event.target.value) } : { autoInterval: Number(event.target.value) })}
+              className="w-full accent-[var(--label)]" />
+            <p className="mt-1 text-xs leading-relaxed text-[var(--label-2)]">{t.readerAutoHint}</p>
+          </Group>
+          <div className="flex items-center justify-between px-3 py-2 font-medium">
+            {t.readerSidePageTurn}
+            <button type="button" role="switch" aria-checked={autoReading.sidePageTurn} aria-label={t.readerSidePageTurn}
+              className="switch" onClick={() => autoReading.onChange({ sidePageTurn: !autoReading.sidePageTurn })}><i /></button>
+          </div>
+          {autoReading.nativeAvailable && (
+            <div className="flex items-center justify-between px-3 py-2 font-medium">
+              {t.readerVolumePageTurn}
+              <button type="button" role="switch" aria-checked={autoReading.volumePageTurn} aria-label={t.readerVolumePageTurn}
+                className="switch" onClick={() => autoReading.onChange({ volumePageTurn: !autoReading.volumePageTurn })}><i /></button>
+            </div>
+          )}
+        </>
+      )}
       {bilingual && (
         <>
           <hr className="mx-2.5 my-1 h-px border-0 bg-[var(--sep)]" />

@@ -1,7 +1,7 @@
 'use client';
 import { ImportErrorNotice } from './ImportErrorNotice';
 
-import React, { type Dispatch, type RefObject, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
+import React, { type Dispatch, type RefObject, type SetStateAction, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { TypographyPopover } from './TypographyPopover';
 import type { EditingTokenState } from './RubyCorrectionModal';
 import { GlassButton, GlassCapsule } from './glass/GlassButton';
@@ -411,6 +411,12 @@ function PreviewCard({
   const activeHit = searchHits.find(hit => hit.id === activeSearchId) || searchHits[0];
   const activeIndex = activeHit ? searchHits.findIndex(hit => hit.id === activeHit.id) : -1;
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const previewScrollerRef = useRef<HTMLDivElement>(null);
+
+  // Reset before paint; the explicit search/review positioning effect below then takes precedence.
+  useLayoutEffect(() => {
+    if (previewScrollerRef.current) previewScrollerRef.current.scrollTop = 0;
+  }, [previewStart]);
 
   useEffect(() => {
     if (searchOpen) searchInputRef.current?.focus();
@@ -592,7 +598,7 @@ function PreviewCard({
         </div>
       )}
 
-      <div lang="ja" className="min-h-0 flex-1 overflow-auto overscroll-contain px-5 pb-5 pt-1" style={{ fontFamily: PREVIEW_FONT_STACK[previewFontFamily] }}>
+      <div ref={previewScrollerRef} data-testid="workbench-preview-scroller" lang="ja" className="min-h-0 flex-1 overflow-auto overscroll-contain px-5 pb-5 pt-1" style={{ fontFamily: PREVIEW_FONT_STACK[previewFontFamily] }}>
         {loading && annotatedLines.length === 0 ? (
           <div aria-label={t.annotatingProgress}>
             {[92, 70, 84, 58].map(width => (
