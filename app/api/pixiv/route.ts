@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { requirePixivContent } from '../../utils/pixivErrors';
+import { PIXIV_AGE_RESTRICTED, PIXIV_AGE_RESTRICTED_CODE, requirePixivContent } from '../../utils/pixivErrors';
 import {
   cleanPixivContent,
   cleanPixivDescription,
@@ -43,6 +43,7 @@ export async function GET(request: Request) {
         content?: string;
         coverUrl?: string;
         isLoginOnly?: boolean;
+        xRestrict?: number;
       };
     };
 
@@ -54,6 +55,10 @@ export async function GET(request: Request) {
     }
 
     const body = json.body;
+    if (typeof body.xRestrict === 'number' && body.xRestrict > 0) {
+      return NextResponse.json({ error: PIXIV_AGE_RESTRICTED, code: PIXIV_AGE_RESTRICTED_CODE }, { status: 403 });
+    }
+
     const title = (body.title || `Pixiv #${novelId}`).trim();
     const author = (body.userName || '').trim();
     const description = cleanPixivDescription(body.description || '');

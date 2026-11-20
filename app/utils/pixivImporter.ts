@@ -1,6 +1,6 @@
 import { logEvent } from './appLog';
 import { RELAY_BASE } from './updateTypes';
-import { PIXIV_EMPTY_CONTENT, PIXIV_LOGIN_REQUIRED, requirePixivContent } from './pixivErrors';
+import { PIXIV_AGE_RESTRICTED, PIXIV_AGE_RESTRICTED_CODE, PIXIV_EMPTY_CONTENT, PIXIV_LOGIN_REQUIRED, requirePixivContent } from './pixivErrors';
 import { getPixivAccountStatus } from './pixivAccount';
 import { hasPixivWebHelper, requestPixivWeb, type PixivWebNovel } from './pixivWebBridge';
 import {
@@ -184,6 +184,7 @@ export async function fetchPixivNovel(urlOrId: string): Promise<PixivNovelResult
   }
 
   let apiErrorMessage: string | null = null;
+  let apiAgeRestricted = false;
   try {
     const { res: apiRes, data: apiData } = await fetchPixivJson(`/api/pixiv?id=${encodeURIComponent(id)}`, remaining());
     if (apiRes.ok) {
@@ -193,17 +194,20 @@ export async function fetchPixivNovel(urlOrId: string): Promise<PixivNovelResult
         return data;
       }
     } else {
-      try {
-        const errJson = (apiData) as { error?: string };
-        if (errJson?.error) apiErrorMessage = errJson.error;
-      } catch {
-        // Ignore non-JSON error body
-      }
+      const error = apiData as { error?: unknown; code?: unknown } | null;
+      if (typeof error?.error === 'string') apiErrorMessage = error.error;
+      apiAgeRestricted = apiRes.status === 403 && error?.code === PIXIV_AGE_RESTRICTED_CODE;
       attempts.push(`/api/pixiv: HTTP ${apiRes.status}`);
     }
   } catch (error) {
     // Ignore local route network errors and try direct fallback
     attempts.push(`/api/pixiv: ${describe(error)}`);
+  }
+
+  // This restriction comes from Pixiv metadata. Other anonymous requests cannot resolve it.
+  // A signed-in native reader can still try using its own session.
+  if (apiAgeRestricted && !hasLocalSession && !nativeErrorMessage) {
+    throw new Error(PIXIV_AGE_RESTRICTED);
   }
 
   const ajaxEndpoints = [

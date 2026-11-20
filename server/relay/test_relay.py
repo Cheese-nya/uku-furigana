@@ -714,6 +714,18 @@ def _novel_json(**body):
 
 
 class PixivClientTest(unittest.TestCase):
+    def test_age_restricted_work_is_rejected_before_downloading_cover(self):
+        for rating, content in [(1, ""), (2, "should not be relayed")]:
+            with self.subTest(rating=rating):
+                opener = FakeOpener({NOVEL_URL: FakeResponse(_novel_json(
+                    content=content, isLoginOnly=False, xRestrict=rating))})
+                with self.assertRaises(relay.PixivError) as caught:
+                    relay.PixivClient(opener=opener).fetch_novel("22148644")
+                self.assertEqual(caught.exception.status_code, 403)
+                self.assertEqual(caught.exception.code, "PIXIV_AGE_RESTRICTED")
+                self.assertIn("年龄限制", str(caught.exception))
+                self.assertEqual(opener.urls, [NOVEL_URL])
+
     def test_login_only_metadata_is_a_403_not_a_successful_blank_book(self):
         opener = FakeOpener({NOVEL_URL: FakeResponse(_novel_json(
             content="", isLoginOnly=True, characterCount=18089,
@@ -840,6 +852,12 @@ class PixivEndpointTest(unittest.TestCase):
         self.assertEqual(self._get("?id=12345"), (404, {"error": "作品は削除されました"}))
         self.pixiv.error = RuntimeError("boom")
         self.assertEqual(self._get("?id=12346"), (502, {"error": "获取 Pixiv 小说失败"}))
+
+    def test_relay_preserves_the_restriction_code(self):
+        self.pixiv.error = relay.PixivError("年龄限制", 403, code="PIXIV_AGE_RESTRICTED")
+        self.assertEqual(self._get("?id=12345"), (403, {
+            "error": "年龄限制", "code": "PIXIV_AGE_RESTRICTED",
+        }))
 
     def test_rate_limited(self):
         self._get("?id=11111")
