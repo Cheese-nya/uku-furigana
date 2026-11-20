@@ -7,7 +7,8 @@ const { GET } = loadTypescript('../app/api/pixiv/route.ts');
 test('Pixiv route rejects login-only and blank metadata before downloading a cover', async () => {
   const original = globalThis.fetch;
   try {
-    for (const [body, status, message] of [
+    for (const [body, status, message, code] of [
+      [{ content: '', isLoginOnly: false, xRestrict: 1 }, 403, /年龄限制/, 'PIXIV_AGE_RESTRICTED'],
       [{ content: '', isLoginOnly: true }, 403, /需要登录/],
       [{ content: ' \n' }, 502, /正文为空/],
       [{ content: '[uploadedimage:1]' }, 502, /正文为空/],
@@ -19,7 +20,9 @@ test('Pixiv route rejects login-only and blank metadata before downloading a cov
       };
       const res = await GET(new Request('http://localhost/api/pixiv?id=14910277'));
       assert.equal(res.status, status);
-      assert.match((await res.json()).error, message);
+      const data = await res.json();
+      assert.match(data.error, message);
+      assert.equal(data.code, code);
       assert.equal(calls, 1);
     }
   } finally { globalThis.fetch = original; }

@@ -1,5 +1,8 @@
 export const PIXIV_LOGIN_REQUIRED = '这篇 Pixiv 小说需要登录后才能阅读。请前往「设置 → Pixiv 账号」登录自己的账号后重试。';
 export const PIXIV_EMPTY_CONTENT = 'Pixiv 返回的正文为空，未导入空白书籍。作品可能需要登录或受到访问限制，请在 Pixiv 页面确认正文是否可见。';
+export const PIXIV_AGE_RESTRICTED_CODE = 'PIXIV_AGE_RESTRICTED';
+export const PIXIV_AGE_RESTRICTED = '这篇作品在 Pixiv 上有年龄限制，无法通过链接匿名导入。'
+  + '如果你的 Pixiv 账号有权阅读，可以在 Pixiv 查看原文，再将正文作为文本导入。';
 
 export function isPixivLoginRequired(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);

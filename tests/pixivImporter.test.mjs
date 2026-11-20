@@ -627,6 +627,17 @@ test('Issue #58: login-only metadata never becomes a blank book', async () => {
   } finally { stub.restore(); }
 });
 
+test('an explicit age restriction stops anonymous fallback requests', async () => {
+  const stub = stubFetch(() => jsonResponse(
+    { code: 'PIXIV_AGE_RESTRICTED' },
+    { ok: false, status: 403 },
+  ));
+  try {
+    await assert.rejects(() => fetchPixivNovel('123456'), /年龄限制.*作为文本导入/);
+    assert.deepEqual(stub.calls, ['/api/pixiv?id=123456']);
+  } finally { stub.restore(); }
+});
+
 test('empty API/AJAX content is retried through the relay; an old empty relay is rejected too', async () => {
   const novel = { id: '123456', title: 'T', content: '本文', rubyOverrides: {} };
   let relayContent = '本文';

@@ -58,6 +58,10 @@ PIXIV_USER_AGENT = (
 )
 MAX_PIXIV_JSON_BYTES = 8 * 1024 * 1024
 MAX_PIXIV_COVER_BYTES = 2 * 1024 * 1024
+PIXIV_AGE_RESTRICTED_MESSAGE = (
+    "这篇作品在 Pixiv 上有年龄限制，无法通过链接匿名导入。"
+    "如果你的 Pixiv 账号有权阅读，可以在 Pixiv 查看原文，再将正文作为文本导入。"
+)
 PIXIV_CACHE_TTL_SECONDS = 10 * 60
 PIXIV_CACHE_MAX_ENTRIES = 16
 
@@ -733,9 +737,10 @@ def to_pixiv_mirror_cover_url(cover_url: str) -> str:
 class PixivError(Exception):
     """A failure whose message is shown to the user as is (same wording as the Next.js route)."""
 
-    def __init__(self, message: str, status_code: int = 502) -> None:
+    def __init__(self, message: str, status_code: int = 502, *, code: Optional[str] = None) -> None:
         super().__init__(message)
         self.status_code = status_code
+        self.code = code
 
 
 class PixivClient:
@@ -807,6 +812,10 @@ class PixivClient:
         if not isinstance(data, dict) or data.get("error") is not False or not isinstance(body, dict):
             message = data.get("message") if isinstance(data, dict) else None
             raise PixivError(str(message or "未找到该 Pixiv 小说"), 404)
+
+        age_restriction = body.get("xRestrict")
+        if type(age_restriction) is int and age_restriction > 0:
+            raise PixivError(PIXIV_AGE_RESTRICTED_MESSAGE, 403, code="PIXIV_AGE_RESTRICTED")
 
         def text(key: str) -> str:
             value = body.get(key)
@@ -1179,7 +1188,10 @@ def make_handler(service: RelayService) -> type[BaseHTTPRequestHandler]:
             try:
                 novel = service.get_pixiv_novel(novel_id)
             except PixivError as exc:
-                self._send_json(exc.status_code, {"error": str(exc)})
+                payload = {"error": str(exc)}
+                if exc.code:
+                    payload["code"] = exc.code
+                self._send_json(exc.status_code, payload)
                 return
             except Exception as exc:
                 log_stdout(f"ERROR pixiv fetch failed: {type(exc).__name__}")
