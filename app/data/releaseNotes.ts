@@ -12,6 +12,24 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '1.8.6',
+    date: '2026-11-26',
+    items: {
+      'zh-CN': [
+        '假名标注：补全 ヶ月 系列量词并减少常见读音误报，修复 AI 读音复核对拆分送假名与多汉字词的处理，优化长文流式注音与批量取消。',
+        '翻译对照：切换章节或横竖排后自动重新跟踪屏幕段落，新增超时重试与取消中止，并发显示快速草稿且不覆盖精译，提升大书缓存稳定性。',
+        '导入导出：修复竖排 PDF 长假名重叠与特殊字符异常，完善 EPUB/DOCX 清理与保存命名过滤，加强 EPUB/PDF/SRT/Pixiv 解析与年龄限制提示。',
+        '界面体验：查词浮层与菜单支持动态重定位和视口内滚动，优化中窄屏工具栏、键盘导航与阅读器边缘细节，并加固旧版 WebView 样式兼容。',
+      ],
+      en: [
+        'Furigana: Added ヶ月 counter variants, reduced false review alerts, fixed AI reading review on split okurigana/multi-kanji words, and improved streaming and batch cancellation.',
+        'Translation: Re-tracks visible lines across chapter/writing-mode switches, adds timeouts/retries/abort propagation, runs quick drafts concurrently without clobbering LLM output, and chunks large caches.',
+        'Import & Export: Fixed vertical PDF long-ruby collisions, hardened EPUB/DOCX XML sanitization and save filename filtering, and improved EPUB/PDF/SRT/Pixiv parsing and age-restriction reporting.',
+        'UI & Polish: Popovers dynamically reposition and scroll within the viewport, narrow toolbars adapt cleanly, reader HUD/edge interactions and keyboard navigation are refined, and Chrome 92+ compatibility is hardened.',
+      ],
+    },
+  },
+  {
     version: '1.8.5',
     date: '2026-11-14',
     items: {

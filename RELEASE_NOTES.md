@@ -1,3 +1,23 @@
+# 🎏 浮く Uku Furigana V1.8.6 发布说明 (Release Notes)
+
+> **版本标签 (Tag)**: `v1.8.6`
+> **发布标题 (Title)**: `浮く Uku Furigana V1.8.6 — 假名标注、翻译、导入导出与界面体验优化`
+> **发布日期 (Date)**: 2026-11-26
+
+## ✨ 改进与修复 (Improvements & Fixes)
+- **假名标注**：优化 `ヶ月` 系列量词与「数字＋人」等读音规则，减少无关待复核提示；修复 AI 读音复核在拆分送假名与多汉字词上的跳过或不同步问题，并优化长文流式注音与批量取消处理。
+- **翻译与双语对照**：支持章节切换和写法切换时自动重新跟踪可视行，新增请求/流式超时自动重试与切换中止控制；修复微软快速草稿并发与覆盖问题，并增强 IndexedDB 大书缓存分批读取与降级恢复。
+- **导入与导出**：修复竖排 PDF 长假名碰撞与控制字符导致的导出异常，完善 EPUB/DOCX 特殊字符清理与空行保留，补全文件保存格式筛选与非法文件名过滤；加固 EPUB/PDF/SRT/Pixiv 解析、超时与队列取消（并包含匿名导入时对 Pixiv 年龄限制的明确提示）。
+- **界面与兼容**：浮层卡片随内容动态重定位并限制高度可滚动，修复词典复制状态残留、反馈弹窗嵌套玻璃与阅读器目录/竖排边缘细节；优化窄屏工具栏适配、键盘焦点导航及 Chrome 92 WebView 样式兼容。
+
+## English
+- **Furigana**: Added `ヶ月` duration counter variants and reduced false-positive reviews on `数+人` and unambiguous usages; fixed AI reading review for split okurigana words and multi-kanji spans, and improved streaming annotation and batch cancellation.
+- **Translation & Bilingual**: Re-observes reader lines dynamically across chapter/writing-mode changes, adds request/SSE stall timeouts, retries and abort propagation, runs Microsoft quick drafts concurrently without overwriting LLM results, and chunks/hardens IndexedDB caching.
+- **Import & Export**: Fixed vertical PDF long-ruby collisions and HarfBuzz WASM cleanup, hardened EPUB/DOCX XML sanitization, save-picker filters and filename sanitization, and improved EPUB/PDF/SRT/Pixiv parsing, timeouts, queue cancellation, and Pixiv age-restriction reporting.
+- **UI & Compatibility**: Popovers dynamically reposition and scroll within short viewports, toolbars adapt cleanly on narrow screens, reader edge blur/progress-line/HUD interactions and keyboard accessibility are refined, and Chrome >= 92 WebView compatibility is hardened.
+
+---
+
 # 🎏 浮く Uku Furigana V1.8.5 发布说明 (Release Notes)
 
 > **版本标签 (Tag)**: `v1.8.5`
