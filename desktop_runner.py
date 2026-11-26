@@ -214,7 +214,12 @@ LIBRARY_VERSIONS = (1, 2)
 
 
 def default_data_dir(base=None):
-    base = Path(base) if base else Path(os.environ.get('LOCALAPPDATA') or Path.home() / '.local' / 'share')
+    if base:
+        base = Path(base)
+    elif sys.platform == 'darwin':
+        base = Path.home() / 'Library' / 'Application Support'
+    else:
+        base = Path(os.environ.get('LOCALAPPDATA') or Path.home() / '.local' / 'share')
     root = base / 'UkuFurigana'
     # Carry over data saved before the app was renamed from Furigana Dubbing Studio.
     legacy = base / 'FuriganaDubbingStudio'
@@ -761,6 +766,8 @@ class Api:
 
     def update_apply(self):
         try:
+            if sys.platform == 'darwin':
+                return {'success': False, 'error': 'unsupported-platform'}
             if not getattr(sys, 'frozen', False):
                 return {'success': False, 'error': 'not-frozen'}
             if self._downloader.state().get('phase') != 'ready':
@@ -839,6 +846,22 @@ class Api:
             return {'success': False, 'error': str(e)}
 
 
+def _write_startup_error(data_dir, message):
+    candidates = [
+        Path(os.path.dirname(sys.executable if getattr(sys, 'frozen', False) else __file__)) / 'error.log',
+        Path(data_dir) / 'error.log',
+    ]
+    if sys.platform == 'darwin':
+        candidates.reverse()
+    for path in candidates:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(message, encoding='utf-8')
+            return
+        except OSError:
+            continue
+
+
 def main():
     data_dir = default_data_dir()
     setup_logging(data_dir)
@@ -854,10 +877,7 @@ def main():
 
     if not os.path.exists(web_dir) or not os.path.isfile(os.path.join(web_dir, 'index.html')):
         logger.error('Static web build not found at: %s', web_dir)
-        # Write error to a log file next to the EXE for debugging
-        log_path = os.path.join(os.path.dirname(sys.executable if getattr(sys, 'frozen', False) else __file__), 'error.log')
-        with open(log_path, 'w', encoding='utf-8') as f:
-            f.write(f"Error: Static web build not found at: {web_dir}\n")
+        _write_startup_error(data_dir, f"Error: Static web build not found at: {web_dir}\n")
         sys.exit(1)
 
     # Pick a free port and start the embedded server
@@ -874,9 +894,7 @@ def main():
     # Wait for the server to actually respond to HTTP requests
     if not wait_for_server(port, timeout=10):
         logger.error('HTTP server failed to start on port %s', port)
-        log_path = os.path.join(os.path.dirname(sys.executable if getattr(sys, 'frozen', False) else __file__), 'error.log')
-        with open(log_path, 'w', encoding='utf-8') as f:
-            f.write(f"Error: HTTP server failed to start on port {port}\n")
+        _write_startup_error(data_dir, f"Error: HTTP server failed to start on port {port}\n")
         sys.exit(1)
 
     url = f"http://127.0.0.1:{port}/?desktop=1"

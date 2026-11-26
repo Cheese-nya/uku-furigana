@@ -33,11 +33,13 @@
 | 平台 | 文件 | 说明 |
 | :--- | :--- | :--- |
 | **Windows** | `Uku-Furigana-vX.Y.Z-windows.exe` | 免安装的单文件桌面版 |
+| **macOS (Apple Silicon)** | `Uku-Furigana-vX.Y.Z-macos-arm64.dmg` | M1 / M2 / M3 / M4 芯片桌面版 |
+| **macOS (Intel)** | `Uku-Furigana-vX.Y.Z-macos-x86_64.dmg` | Intel x86_64 芯片桌面版 |
 | **Android** | `Uku-Furigana-vX.Y.Z.apk` | 需要 Android 7.0 及以上 |
 | **网页** | `Uku-Furigana-web-vX.Y.Z.zip` | 静态网页包，可部署到自己的服务器 |
 | **iOS** | — | 原生外壳已完成，上架准备中 |
 
-每个版本都附有 `SHA256SUMS.txt` 校验值。Windows 版暂未做代码签名，首次运行时系统可能出现 SmartScreen 提示。
+每个版本都附有 `SHA256SUMS.txt` 校验值。Windows 与 macOS 版暂未做代码签名，首次运行时系统可能出现 SmartScreen 或 Gatekeeper 提示（macOS 可右键点击「打开」，或执行 `xattr -cr /Applications/UkuFurigana.app`）。
 
 ---
 

@@ -26,3 +26,20 @@ test('desktop build dependencies are pinned', () => {
   assert.deepEqual(requirements.map(line => line.split('==')[0]).sort(), ['pyinstaller', 'pywebview']);
   for (const line of requirements) assert.match(line, /^[a-z]+==\d+\.\d+\.\d+$/, line);
 });
+
+test('the macOS build packages arm64 and x86_64 DMGs from the static export', () => {
+  assert.equal(scripts['package:macos'], 'bash scripts/build-macos.sh');
+  const script = read('scripts/build-macos.sh');
+  assert.match(script, /node scripts\/build-web\.mjs/);
+  assert.match(script, /--onedir/);
+  assert.match(script, /--windowed/);
+  assert.match(script, /--add-data "out:out"/);
+  assert.match(script, /codesign --force --deep --sign -/);
+  assert.match(script, /hdiutil create/);
+
+  const workflow = read('.github/workflows/release.yml');
+  assert.match(workflow, /arch:\s*arm64/);
+  assert.match(workflow, /arch:\s*x86_64/);
+  assert.match(workflow, /Uku-Furigana-v\$\{VERSION\}-macos-arm64\.dmg/);
+  assert.match(workflow, /Uku-Furigana-v\$\{VERSION\}-macos-x86_64\.dmg/);
+});

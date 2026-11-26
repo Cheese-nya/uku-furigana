@@ -21,7 +21,10 @@ trap 'rm -rf "$work"' EXIT
 
 echo "download $TAG from GitHub"
 gh release download "$TAG" --repo "$REPO" --dir "$work" \
-  --pattern "Uku-Furigana-$TAG-windows.exe" --pattern "Uku-Furigana-$TAG.apk" \
+  --pattern "Uku-Furigana-$TAG-windows.exe" \
+  --pattern "Uku-Furigana-$TAG-macos-arm64.dmg" \
+  --pattern "Uku-Furigana-$TAG-macos-x86_64.dmg" \
+  --pattern "Uku-Furigana-$TAG.apk" \
   --pattern "Uku-Furigana-web-$TAG.zip" --pattern SHA256SUMS.txt
 
 echo "verify locally"

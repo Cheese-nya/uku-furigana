@@ -23,7 +23,14 @@ tag=$1 repo=$2 dest=$3
 incoming="$dest/.incoming-$tag"
 mkdir -p "$dest" "$incoming"
 base="https://github.com/$repo/releases/download/$tag"
-files=("Uku-Furigana-$tag-windows.exe" "Uku-Furigana-$tag.apk" "Uku-Furigana-web-$tag.zip" "SHA256SUMS.txt")
+files=(
+  "Uku-Furigana-$tag-windows.exe"
+  "Uku-Furigana-$tag-macos-arm64.dmg"
+  "Uku-Furigana-$tag-macos-x86_64.dmg"
+  "Uku-Furigana-$tag.apk"
+  "Uku-Furigana-web-$tag.zip"
+  "SHA256SUMS.txt"
+)
 
 for f in "${files[@]}"; do
   echo "fetch $f"

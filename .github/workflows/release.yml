@@ -5,6 +5,7 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -38,8 +39,47 @@ jobs:
           path: UkuFurigana.exe
           if-no-files-found: error
 
+  macos-dmg:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            os: macos-15
+          - arch: x86_64
+            os: macos-15-intel
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: npm ci
+
+      - run: pip install -r requirements-desktop.txt
+
+      - name: Build macOS DMG (${{ matrix.arch }})
+        env:
+          MACOS_ARCH: ${{ matrix.arch }}
+        run: npm run package:macos
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UkuFurigana-macos-${{ matrix.arch }}
+          path: Uku-Furigana-v*-macos-${{ matrix.arch }}.dmg
+          if-no-files-found: error
+
   release:
-    needs: windows-exe
+    if: github.event_name == 'push'
+    needs: [windows-exe, macos-dmg]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # Signing secrets live in this environment, which requires a manual approval and
@@ -104,6 +144,21 @@ jobs:
 
       - name: Add Windows exe
         run: cp windows/UkuFurigana.exe "dist/Uku-Furigana-v${VERSION}-windows.exe"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: UkuFurigana-macos-arm64
+          path: macos-arm64
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: UkuFurigana-macos-x86_64
+          path: macos-x86_64
+
+      - name: Add macOS DMGs
+        run: |
+          cp macos-arm64/Uku-Furigana-v${VERSION}-macos-arm64.dmg "dist/Uku-Furigana-v${VERSION}-macos-arm64.dmg"
+          cp macos-x86_64/Uku-Furigana-v${VERSION}-macos-x86_64.dmg "dist/Uku-Furigana-v${VERSION}-macos-x86_64.dmg"
 
       - name: Checksums
         run: (cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)

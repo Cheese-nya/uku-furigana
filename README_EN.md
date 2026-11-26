@@ -33,11 +33,13 @@ Pick your platform on the [Releases](https://github.com/Cheese-nya/uku-furigana/
 | Platform | File | Notes |
 | :--- | :--- | :--- |
 | **Windows** | `Uku-Furigana-vX.Y.Z-windows.exe` | Portable single-file desktop app |
+| **macOS (Apple Silicon)** | `Uku-Furigana-vX.Y.Z-macos-arm64.dmg` | Desktop app for M1 / M2 / M3 / M4 Macs |
+| **macOS (Intel)** | `Uku-Furigana-vX.Y.Z-macos-x86_64.dmg` | Desktop app for Intel x86_64 Macs |
 | **Android** | `Uku-Furigana-vX.Y.Z.apk` | Android 7.0 or later |
 | **Web** | `Uku-Furigana-web-vX.Y.Z.zip` | Static web bundle you can host yourself |
 | **iOS** | — | Native shell is done; store release in preparation |
 
-Every release ships a `SHA256SUMS.txt`. The Windows build is not code-signed yet, so SmartScreen may show a warning on first launch.
+Every release ships a `SHA256SUMS.txt`. The Windows and macOS builds are not code-signed yet, so SmartScreen or Gatekeeper may show a warning on first launch (on macOS, right-click → Open or run `xattr -cr /Applications/UkuFurigana.app`).
 
 ---
 
