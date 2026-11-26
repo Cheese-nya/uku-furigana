@@ -5,6 +5,7 @@ import type { KuromojiToken } from './kuromojiEngine';
 // Index 0 is the multiple-of-ten form, 1-9 follow a digit. A partial row only
 // lists the digits the dictionary gets wrong; the others stay with the dictionary.
 type Endings = Readonly<Partial<Record<number, string>>>;
+const MONTHS_COUNT: Endings = ['じゅっかげつ', 'いっかげつ', 'にかげつ', 'さんかげつ', 'よんかげつ', 'ごかげつ', 'ろっかげつ', 'ななかげつ', 'はっかげつ', 'きゅうかげつ'];
 const COUNTERS: Record<string, Endings> = {
   '発': ['じゅっぱつ', 'いっぱつ', 'にはつ', 'さんぱつ', 'よんはつ', 'ごはつ', 'ろっぱつ', 'ななはつ', 'はっぱつ', 'きゅうはつ'],
   '本': ['じゅっぽん', 'いっぽん', 'にほん', 'さんぼん', 'よんほん', 'ごほん', 'ろっぽん', 'ななほん', 'はっぽん', 'きゅうほん'],
@@ -27,6 +28,12 @@ const COUNTERS: Record<string, Endings> = {
   '通': { 1: 'いっつう' },
   '頭': { 0: 'じゅっとう', 1: 'いっとう', 8: 'はっとう' },
   '足': { 3: 'さんぞく' },
+  'ヶ月': MONTHS_COUNT,
+  'か月': MONTHS_COUNT,
+  'カ月': MONTHS_COUNT,
+  'ケ月': MONTHS_COUNT,
+  'ヵ月': MONTHS_COUNT,
+  '箇月': MONTHS_COUNT,
 };
 // Whole counts whose reading is not built from the digits.
 const FIXED_READINGS: Record<string, Readonly<Record<number, string>>> = {
@@ -56,6 +63,7 @@ const FUSED_COUNTERS: Record<string, { counter: string; tail: string }> = {
 const THOUSAND_ENDINGS: Record<string, string> = {
   '発': 'ぱつ', '本': 'ぼん', '杯': 'ばい', '匹': 'びき', '回': 'かい',
   '個': 'こ', '冊': 'さつ', '階': 'がい', '分': 'ぷん',
+  'ヶ月': 'かげつ', 'か月': 'かげつ', 'カ月': 'かげつ', 'ケ月': 'かげつ', 'ヵ月': 'かげつ', '箇月': 'かげつ',
 };
 const DIGITS = ['ぜろ', 'いち', 'に', 'さん', 'よん', 'ご', 'ろく', 'なな', 'はち', 'きゅう'];
 const KANJI_DIGITS = '〇一二三四五六七八九';

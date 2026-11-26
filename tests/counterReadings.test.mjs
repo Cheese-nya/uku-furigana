@@ -94,5 +94,19 @@ test('何 follows the 三 form only where that form is known', () => {
   const suffix = surface_form => ({ surface_form, pos_detail_1: '接尾' });
   assert.deepEqual(findCounterCompound([nan, suffix('軒')], 0), { length: 2, surface: '何軒', reading: 'なんげん' });
   assert.deepEqual(findCounterCompound([nan, suffix('足')], 0), { length: 2, surface: '何足', reading: 'なんぞく' });
+  assert.deepEqual(findCounterCompound([nan, suffix('ヶ月')], 0), { length: 2, surface: '何ヶ月', reading: 'なんかげつ' });
   for (const counter of ['時', '歳', '日', '週間', '点']) assert.equal(findCounterCompound([nan, suffix(counter)], 0), null, counter);
+});
+
+test('months duration counter variants (ヶ月/か月/カ月/ケ月/ヵ月/箇月) geminate correctly', () => {
+  for (const unit of ['ヶ月', 'か月', 'カ月', 'ケ月', 'ヵ月', '箇月']) {
+    assert.equal(counterReading('一', unit), 'いっかげつ', unit);
+    assert.equal(counterReading('1', unit), 'いっかげつ', unit);
+    assert.equal(counterReading('三', unit), 'さんかげつ', unit);
+    assert.equal(counterReading('六', unit), 'ろっかげつ', unit);
+    assert.equal(counterReading('八', unit), 'はっかげつ', unit);
+    assert.equal(counterReading('十', unit), 'じゅっかげつ', unit);
+    assert.equal(counterReading('十二', unit), 'じゅうにかげつ', unit);
+    assert.equal(counterReading('100', unit), 'ひゃっかげつ', unit);
+  }
 });

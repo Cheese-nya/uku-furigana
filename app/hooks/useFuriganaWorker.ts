@@ -1,23 +1,35 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { reviewReadings } from '../utils/aiReadingReview';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { applyReadingReviewResults, reviewReadings } from '../utils/aiReadingReview';
 import { AnnotationClient, type EngineState } from '../utils/annotationClient';
 import { sameAnnotationDocument } from '../utils/annotationSnapshot';
 import type { AnnotationInput } from '../utils/annotationTask';
 import { logEvent } from '../utils/appLog';
-import { formatRuby, type ScriptLine } from '../utils/furigana';
+import type { ScriptLine } from '../utils/furigana';
 import { llmNeedsApiKey, loadTranslationSettings } from '../utils/translation';
 
 export function useFuriganaWorker(input: AnnotationInput) {
   const [engine, setEngine] = useState<EngineState>({ status: 'loading', mode: 'worker' });
   const clientRef = useRef<AnnotationClient | null>(null);
   const [revision, setRevision] = useState(0);
-  const [snapshot, setSnapshot] = useState<{ input: AnnotationInput | null; revision: number; lines: ScriptLine[]; done: boolean; error: string }>({ input: null, revision: -1, lines: [], done: false, error: '' });
+  const [snapshot, setSnapshot] = useState<{ input: AnnotationInput | null; revision: number; lines: ScriptLine[]; loadedCount: number; done: boolean; error: string }>({ input: null, revision: -1, lines: [], loadedCount: 0, done: false, error: '' });
   // Last finished result for the same document. A correction re-runs annotation, but the
   // workbench keeps showing this snapshot until the replacement is complete instead of
   // unmounting the page and snapping the reader back to the first line.
   const [stableSnapshot, setStableSnapshot] = useState<{ input: AnnotationInput; lines: ScriptLine[] } | null>(null);
+  const stableRef = useRef(stableSnapshot);
+  useEffect(() => {
+    stableRef.current = stableSnapshot;
+  }, [stableSnapshot]);
+
+  const totalLines = useMemo(() => {
+    let count = 1;
+    for (let i = 0; i < input.text.length; i++) {
+      if (input.text.charCodeAt(i) === 10) count++;
+    }
+    return count;
+  }, [input.text]);
 
   useEffect(() => {
     // Kuromoji joins paths with path.join; URL schemes would lose a slash.
@@ -34,19 +46,48 @@ export function useFuriganaWorker(input: AnnotationInput) {
     const client = clientRef.current;
     if (!client) return;
     const controller = new AbortController();
+    const accumulated: ScriptLine[] = [];
+    let loadedCount = 0;
+    let rafId: number | null = null;
+
+    const flushChunk = () => {
+      rafId = null;
+      if (controller.signal.aborted) return;
+      const hasRetained = Boolean(stableRef.current && sameAnnotationDocument(stableRef.current.input, input) && stableRef.current.lines.length > 0);
+      setSnapshot({
+        input,
+        revision,
+        lines: hasRetained ? [] : accumulated.slice(),
+        loadedCount,
+        done: false,
+        error: '',
+      });
+    };
+
     // Debounce typing; cancellation filters queued chunks before they reach React.
     const timer = setTimeout(() => {
       client.annotate(input, chunk => {
         if (controller.signal.aborted) return;
-        setSnapshot(previous => {
-          const lines = previous.input === input && previous.revision === revision ? [...previous.lines] : [];
-          lines.splice(chunk.offset, chunk.lines.length, ...chunk.lines);
-          return { input, revision, lines, done: false, error: '' };
-        });
+        for (let i = 0; i < chunk.lines.length; i++) {
+          accumulated[chunk.offset + i] = chunk.lines[i];
+        }
+        loadedCount = Math.max(loadedCount, chunk.offset + chunk.lines.length);
+        if (chunk.offset === 0) {
+          flushChunk();
+        } else if (rafId === null) {
+          rafId = typeof requestAnimationFrame === 'function'
+            ? requestAnimationFrame(flushChunk)
+            : (setTimeout(flushChunk, 16) as unknown as number);
+        }
       }, controller.signal).then(lines => {
+        if (rafId !== null) {
+          if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(rafId);
+          else clearTimeout(rafId);
+          rafId = null;
+        }
         if (controller.signal.aborted) return;
         setStableSnapshot({ input, lines });
-        setSnapshot({ input, revision, lines, done: true, error: '' });
+        setSnapshot({ input, revision, lines, loadedCount: lines.length, done: true, error: '' });
         const settings = loadTranslationSettings();
         if (settings.engine === 'llm' && settings.aiReadingReview && (settings.llm.apiKey.trim() || !llmNeedsApiKey(settings.llm))) {
           void reviewReadings(lines, settings.llm, controller.signal)
@@ -54,16 +95,8 @@ export function useFuriganaWorker(input: AnnotationInput) {
               if (controller.signal.aborted || results.length === 0) return;
               setSnapshot(previous => {
                 if (previous.input !== input || previous.revision !== revision) return previous;
-                const nextLines = previous.lines.map(line => ({
-                  ...line,
-                  tokens: line.tokens.map(token => ({ ...token })),
-                }));
-                for (const { lineIndex, tokenIndex, reading } of results) {
-                  const token = nextLines[lineIndex]?.tokens[tokenIndex];
-                  if (!token) continue;
-                  token.ruby = formatRuby(reading, input.rubyType);
-                  token.needsReview = false;
-                }
+                const nextLines = applyReadingReviewResults(previous.lines, results, input.rubyType);
+                setStableSnapshot(prevStable => (prevStable?.input === input ? { input, lines: nextLines } : prevStable));
                 return { ...previous, lines: nextLines };
               });
             })
@@ -73,10 +106,22 @@ export function useFuriganaWorker(input: AnnotationInput) {
             });
         }
       }).catch(error => {
-        if (!controller.signal.aborted) setSnapshot({ input, revision, lines: [], done: true, error: String(error) });
+        if (rafId !== null) {
+          if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(rafId);
+          else clearTimeout(rafId);
+          rafId = null;
+        }
+        if (!controller.signal.aborted) setSnapshot({ input, revision, lines: [], loadedCount: 0, done: true, error: String(error) });
       });
     }, 120);
-    return () => { clearTimeout(timer); controller.abort(); };
+    return () => {
+      clearTimeout(timer);
+      if (rafId !== null) {
+        if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(rafId);
+        else clearTimeout(rafId);
+      }
+      controller.abort();
+    };
   }, [revision, input]);
 
   const annotate = useCallback((task: AnnotationInput, signal?: AbortSignal) => {
@@ -101,7 +146,8 @@ export function useFuriganaWorker(input: AnnotationInput) {
   const showSnapshot = current && !snapshot.error && (snapshot.done || retained.length === 0);
   const lines = showSnapshot ? snapshot.lines : retained;
   const busy = !current || !snapshot.done;
+  const progressCount = current ? snapshot.loadedCount : 0;
   return { lines, busy, engine, error: current ? snapshot.error : '',
-    progress: busy ? Math.round(lines.length / Math.max(1, input.text.split('\n').length) * 100) : 100,
+    progress: busy ? Math.min(99, Math.round(progressCount / Math.max(1, totalLines) * 100)) : 100,
     annotate, analyze, retry: () => setRevision(value => value + 1) };
 }

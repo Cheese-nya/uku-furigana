@@ -49,7 +49,12 @@ async function inflate(url: string): Promise<ArrayBuffer> {
   if (response.headers.get('content-encoding') || blob.size < 18 || blob.type === 'application/json') {
     return blob.arrayBuffer();
   }
+  const magic = new Uint8Array(await blob.slice(0, 2).arrayBuffer());
+  if (magic[0] !== 0x1f || magic[1] !== 0x8b) {
+    return blob.arrayBuffer();
+  }
   const size = new DataView(await blob.slice(-4).arrayBuffer()).getUint32(0, true);
+  if (size > 256 * 1024 * 1024) throw new Error('gzip size exceeds limit');
   const out = new Uint8Array(size);
   const reader = blob.stream().pipeThrough(new DecompressionStream('gzip')).getReader();
   let offset = 0;
@@ -129,6 +134,19 @@ interface BuilderInternals {
  * 連続 disappears). The word-id guard also covers a trie entry without a word id, which is what
  * doublearray answers for the U+0000 terminator.
  */
+function codePointLength(text: string): number {
+  let count = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    count += 1;
+    const code = text.charCodeAt(i);
+    if (code >= 0xD800 && code <= 0xDBFF && i + 1 < text.length) {
+      const low = text.charCodeAt(i + 1);
+      if (low >= 0xDC00 && low <= 0xDFFF) i += 1;
+    }
+  }
+  return count;
+}
+
 function buildLattice(this: BuilderInternals, sentenceStr: string) {
   const lattice = new ViterbiLattice();
   const sentence = new SurrogateAwareString(sentenceStr);
@@ -139,7 +157,7 @@ function buildLattice(this: BuilderInternals, sentenceStr: string) {
     for (const entry of vocabulary) {
       const tokenInfoIds = entry.v === undefined ? undefined : this.token_info_dictionary.target_map[entry.v];
       if (!tokenInfoIds) continue;
-      const keyLength = new SurrogateAwareString(entry.k).length;
+      const keyLength = codePointLength(entry.k);
       for (const tokenInfoId of tokenInfoIds) {
         const id = parseInt(tokenInfoId);
         const leftId = this.token_info_dictionary.dictionary.getShort(id);
@@ -150,20 +168,18 @@ function buildLattice(this: BuilderInternals, sentenceStr: string) {
     }
 
     // Unknown word processing
-    const surrogateAwareTail = new SurrogateAwareString(tail);
-    const headChar = new SurrogateAwareString(surrogateAwareTail.charAt(0));
-    const headClass = this.unknown_dictionary.lookup(headChar.toString());
+    const headChar = sentence.charAt(pos);
+    const headClass = this.unknown_dictionary.lookup(headChar);
     if (!vocabulary || vocabulary.length === 0 || headClass.is_always_invoke === 1) {
-      let key = headChar.toString();
-      let keyLength = headChar.length;
-      if (headClass.is_grouping === 1 && surrogateAwareTail.length > 1) {
-        for (let k = 1; k < surrogateAwareTail.length; k += 1) {
-          const nextChar = surrogateAwareTail.charAt(k);
+      let key = headChar;
+      let keyLength = 1;
+      if (headClass.is_grouping === 1 && pos + 1 < sentence.length) {
+        for (let k = pos + 1; k < sentence.length; k += 1) {
+          const nextChar = sentence.charAt(k);
           const nextClass = this.unknown_dictionary.lookup(nextChar);
           if (headClass.class_name !== nextClass.class_name) break;
           key += nextChar;
-          // charAt returns a whole code point: two UTF-16 units only for a surrogate pair.
-          keyLength += nextChar.length === 2 ? 1 : nextChar.length;
+          keyLength += 1;
         }
       }
 

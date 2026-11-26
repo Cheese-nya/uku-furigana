@@ -61,3 +61,24 @@ test('invalid glossary import is rejected as a whole', () => {
   assert.throws(() => validateGlossary({ 小日向: good, bad: { ...good, surface: 'bad', reading: '' } }));
   assert.throws(() => validateGlossary({ 小日向: { ...good, surface: 'different' } }));
 });
+
+test('many overrides on a single line and large glossaries apply cleanly and accurately', async () => {
+  const engine = createAnnotator();
+  const baseLine = Array.from({ length: 40 }, () => '東京').join('と');
+  const overrides = Array.from({ length: 40 }, (_, i) => ({
+    line: baseLine,
+    start: i * 3,
+    surface: '東京',
+    reading: i % 2 === 0 ? 'とうきょう' : 'あずま',
+    type: 'hiragana',
+  }));
+  const glossary = [noun('大阪', 'おおさか'), noun('京都', 'きょうと')];
+  const lines = await collect(engine, input(`${baseLine}\n大阪へ`, { overrides, glossary }));
+  assert.equal(lines.length, 2);
+  const readings = lines[0].tokens.filter(t => t.surface === '東京').map(t => t.ruby);
+  assert.equal(readings.length, 40);
+  assert.equal(readings[0], 'とうきょう');
+  assert.equal(readings[1], 'あずま');
+  assert.equal(lines[1].tokens[0].ruby, 'おおさか');
+  assert.equal(lines[1].tokens[0].readingSource, 'glossary');
+});

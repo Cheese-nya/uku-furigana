@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
+import { useCallback, useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import type { BatchFileItem, ExportFormat } from '../components/BatchProcessingPanel';
 import type { useFuriganaWorker } from './useFuriganaWorker';
 import type { ScriptLine } from '../utils/furigana';
@@ -51,6 +51,8 @@ export function useBatchProcessing({
   const [batchSaveMode, setBatchSaveMode] = useState<BatchSaveMode>('zip');
   const [alsoSaveToLibrary, setAlsoSaveToLibrary] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const batchAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => () => { batchAbortRef.current?.abort(); }, []);
   // Completion summary modal
   const [isBatchDoneModalOpen, setIsBatchDoneModalOpen] = useState(false);
   const [batchDoneResults, setBatchDoneResults] = useState<BatchDoneResults>({ total: 0, success: 0, failed: 0, cancelled: 0, filenames: [] });
@@ -120,6 +122,7 @@ export function useBatchProcessing({
   };
 
   const clearBatchFiles = () => {
+    batchAbortRef.current?.abort();
     setBatchFiles([]);
   };
 
@@ -143,6 +146,8 @@ export function useBatchProcessing({
       }
     }
 
+    const controller = new AbortController();
+    batchAbortRef.current = controller;
     setIsBatchProcessing(true);
     pendingSaveOutputRef.current = null;
     let successCount = 0;
@@ -151,11 +156,16 @@ export function useBatchProcessing({
     const exportedNames: string[] = [];
     const zipOutputs: Array<{ filename: string; blob: Blob }> = [];
     let finalSaveOutput: { filename: string; blob: Blob } | null = null;
+    const zipItemIds = new Set<string>();
     let batchDatabase = database;
     let librarySnapshot = libraryDbRef.current;
     let libraryWritten = false;
 
     for (let i = 0; i < batchFiles.length; i++) {
+      if (controller.signal.aborted) {
+        cancelCount += batchFiles.length - i;
+        break;
+      }
       const item = batchFiles[i];
 
       setBatchFiles(prev =>
@@ -217,7 +227,7 @@ export function useBatchProcessing({
         setDatabase(previous => resolveScript(previous, itemTitle, textContent, fingerprint, resolved.scriptId).database);
         const parsedLines = await annotate({ text: textContent, rubyType, glossary: glossaryEntries,
           sourceOverrides: importedOverrides, overrides: batchDatabase.scripts[resolved.scriptId].overrides,
-          learned: batchDatabase.scripts[resolved.scriptId]?.learned || [] });
+          learned: batchDatabase.scripts[resolved.scriptId]?.learned || [] }, controller.signal);
 
         // Generate output based on target format
         let outputBlob: Blob;
@@ -285,6 +295,7 @@ export function useBatchProcessing({
           }
         } else {
           zipOutputs.push({ filename: outName, blob: outputBlob });
+          zipItemIds.add(item.id);
           setBatchFiles(prev =>
             prev.map(f => f.id === item.id ? { ...f, status: 'done', progress: 100, lineCount: parsedLines.length } : f)
           );
@@ -292,6 +303,13 @@ export function useBatchProcessing({
           successCount++;
         }
       } catch (err) {
+        if (controller.signal.aborted || (err instanceof Error && err.name === 'AbortError')) {
+          cancelCount += batchFiles.length - i;
+          setBatchFiles(prev =>
+            prev.map(f => f.id === item.id ? { ...f, status: 'pending', progress: 0 } : f)
+          );
+          break;
+        }
         setBatchFiles(prev =>
           prev.map(f => f.id === item.id ? { ...f, status: 'error', progress: 0, error: err instanceof Error ? err.message : String(err) } : f)
         );
@@ -314,15 +332,27 @@ export function useBatchProcessing({
           for (let index = exportedNames.length - 1; index >= 0; index -= 1) {
             if (zipped.has(exportedNames[index])) exportedNames.splice(index, 1);
           }
+          setBatchFiles(prev =>
+            prev.map(f => zipItemIds.has(f.id) ? { ...f, status: 'pending', progress: 0 } : f)
+          );
         }
       } catch (error) {
         finalSaveOutput = null;
         failCount += zipOutputs.length;
         successCount = Math.max(0, successCount - zipOutputs.length);
+        const zipped = new Set(zipOutputs.map(file => file.filename));
+        const zipMessage = error instanceof Error ? error.message : String(error);
+        for (let index = exportedNames.length - 1; index >= 0; index -= 1) {
+          if (zipped.has(exportedNames[index])) exportedNames.splice(index, 1);
+        }
+        setBatchFiles(prev =>
+          prev.map(f => zipItemIds.has(f.id) ? { ...f, status: 'error', progress: 0, error: zipMessage } : f)
+        );
         console.error('[batch] zip save failed', error);
       }
     }
 
+    if (batchAbortRef.current === controller) batchAbortRef.current = null;
     setIsBatchProcessing(false);
 
     // Safari sometimes needs the download to start from a fresh gesture after a long annotation job.

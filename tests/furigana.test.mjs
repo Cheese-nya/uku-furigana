@@ -124,6 +124,11 @@ for (const [text, reading] of [
   ['一週間', 'いっしゅうかん'], ['一軒と一歩', 'いっけんといっぽ'], ['一件と一点', 'いっけんといってん'],
   ['一着と一通と一頭', 'いっちゃくといっつうといっとう'], ['十一軒と二十一点', 'じゅういっけんとにじゅういってん'],
   ['三軒と三足', 'さんげんとさんぞく'], ['何軒ある？', 'なんげんある？'], ['何足', 'なんぞく'],
+  ['一ヶ月と三ヶ月と何ヶ月', 'いっかげつとさんかげつとなんかげつ'],
+  ['１ヶ月で百人', 'いっかげつでひゃくにん'],
+  ['金がない', 'かねがない'],
+  ['金さん', 'きむさん'],
+  ['行ってきます', 'いってきます'],
 ]) {
   test(`offline reading: ${text}`, () => {
     assert.equal(readingOf(text), reading);
@@ -281,3 +286,11 @@ for (const [text, surface, current, alternatives] of [
     assert.deepEqual([...group.alternatives].sort(), [...new Set(alternatives)].sort(), text);
   });
 }
+
+test('unambiguous counters, motion 行っ, and 金 before particles stay out of false review', () => {
+  for (const text of ['100人と一万人', '何枚ある？', '何ヶ月', '学校に行った', '会議を行った', '行ってきます']) {
+    assert.deepEqual(collectReviewGroups([annotateLine(text)]).map(group => group.surface), [], text);
+  }
+  const money = annotateLine('金がない');
+  assert.equal(money.tokens[0].ruby, 'かね');
+});

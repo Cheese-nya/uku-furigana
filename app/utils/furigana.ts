@@ -398,7 +398,10 @@ export function disambiguateToken(
     // なん before です/だ/の/と/て (何ですか, 何の本, 何と言った) and the counters above.
     const isNanFollower = nande || /^(だ|です|である|だった|だろう|の|と|て)/.test(nextSurface);
 
-    if (isCounter || isNanFollower) {
+    const isCertainCounter = kt.pos_detail_1 === '数' && nextToken?.pos_detail_1 === '接尾';
+    if (isCertainCounter) {
+      reading = 'なん';
+    } else if (isCounter || isNanFollower) {
       reading = 'なん';
       alternatives = ['なん', 'なに'];
     } else {
@@ -478,10 +481,16 @@ export function disambiguateToken(
   else if (surface === '行っ') {
     const before = allTokens.slice(Math.max(0, i - 3), i).map(token => token.surface_form).join('');
     const after = allTokens.slice(i + 1, i + 5).map(token => token.surface_form).join('');
-    const motion = /(?:に|へ|どこ|出て)$/.test(before) || /^て(?:おいで|来|き|くる)/.test(after);
+    const motion = /(?:に|へ|どこ|出て)$/.test(before) ||
+      /^て(?:おいで|来|き|くる|い|らっしゃい|み|しま|お|あ|くれ)|^ちゃっ|^た(?:こと|きり|っきり|ばかり)/.test(after);
     const eventObject = /を$/.test(before);
-    if (motion && !eventObject) reading = 'いっ';
-    alternatives = [reading, reading === 'いっ' ? 'おこなっ' : 'いっ'];
+    if (motion && !eventObject) {
+      reading = 'いっ';
+    } else if (eventObject && !motion) {
+      reading = 'おこなっ';
+    } else {
+      alternatives = [reading, reading === 'いっ' ? 'おこなっ' : 'いっ'];
+    }
   }
   else if (surface === '行く') {
     reading = 'いく';
@@ -493,13 +502,21 @@ export function disambiguateToken(
 
   // 8. 人 (じん vs にん vs ひと) when isolated
   else if (surface === '人') {
-    if (prevToken && (prevToken.pos === '名詞' || prevToken.surface_form.endsWith('国') || prevToken.surface_form === '日本')) {
+    if (kt.pos_detail_1 === '接尾' && prevToken?.pos_detail_1 === '数') {
+      reading = reading || 'にん';
+    } else if (prevToken && (prevToken.pos === '名詞' || prevToken.surface_form.endsWith('国') || prevToken.surface_form === '日本')) {
       reading = reading || 'じん';
       alternatives = ['じん', 'にん', 'ひと'];
     } else {
       reading = reading || 'ひと';
       alternatives = ['ひと', 'にん', 'じん'];
     }
+  }
+
+  // 8b. IPADIC tags standalone 金 before particles as Korean surname キム; restore かね/きん.
+  else if (surface === '金' && kt.pos_detail_1 === '固有名詞' && reading === 'きむ' && nextToken?.pos === '助詞') {
+    reading = 'かね';
+    alternatives = ['かね', 'きん'];
   }
 
   // 9. Common IPADIC heteronyms: table default, refined by a few set phrases.
@@ -566,6 +583,8 @@ function findPersonCompound(tokens: KuromojiToken[], index: number): { length: n
   return null;
 }
 
+const GRAMMAR_PATTERN_KEYS = Object.keys(GRAMMAR_PATTERNS).sort((a, b) => b.length - a.length);
+
 export function annotateLine(
   rawLine: string,
   rubyType: RubyType = 'hiragana'
@@ -575,9 +594,6 @@ export function annotateLine(
   // reader and exports never show the leftover bytes.
   const content = sanitizeText(rawLine);
   const tokens: Token[] = [];
-
-  // Check for pre-segmented phrases (e.g. 一日中)
-  const patternKeys = Object.keys(GRAMMAR_PATTERNS).sort((a, b) => b.length - a.length);
 
   // 1. If Kuromoji is ready, use it with Contextual Disambiguation
   if (isKuromojiReady()) {
@@ -641,7 +657,7 @@ export function annotateLine(
       let matched = false;
 
       // 2a. Check multi-char grammar idioms
-      for (const pat of patternKeys) {
+      for (const pat of GRAMMAR_PATTERN_KEYS) {
         if (content.startsWith(pat, i) && !(PERSON_COMPOUNDS[pat] &&
           (/[0-9０-９一二三四五六七八九十百千万億兆]/.test(content[i - 1] || '') || content[i + pat.length] === '称'))) {
           if (currentWord) {

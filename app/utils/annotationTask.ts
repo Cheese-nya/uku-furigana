@@ -37,7 +37,9 @@ function groupOverrides(entries: RubyOverride[]) {
   const grouped = new Map<string, RubyOverride[]>();
   for (const raw of entries) {
     const entry = sanitizeOverride(raw);
-    grouped.set(entry.line, [...(grouped.get(entry.line) || []), entry]);
+    let list = grouped.get(entry.line);
+    if (!list) grouped.set(entry.line, (list = []));
+    list.push(entry);
   }
   return grouped;
 }
