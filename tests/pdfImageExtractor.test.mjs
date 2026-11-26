@@ -135,3 +135,36 @@ test('defaultCoverEncoder degrades to null when the page cannot render', async (
     if (originalDocument !== undefined) globalThis.document = originalDocument;
   }
 });
+
+test('extractPageImages bounds stalled worker object callbacks via timeout and abort', async () => {
+  const stalledPage = {
+    getOperatorList: async () => ({ fnArray: [ops.paintImageXObject], argsArray: [['never_resolves']] }),
+    objs: {
+      get(_name, callback) {
+        if (callback) return null; // intentionally never calls callback
+        throw new Error('not resolved yet');
+      },
+    },
+  };
+  const timedOut = await extractPageImages(stalledPage, 0, { width: 600, height: 800 }, {
+    ops,
+    objectTimeoutMs: 20,
+    encodeImage: async () => ({ mime: 'image/jpeg', data: new Uint8Array([1]) }),
+  });
+  assert.equal(timedOut.images.length, 0);
+
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), 15);
+  await assert.rejects(
+    () => extractPageImages(
+      {
+        getOperatorList: async () => ({ fnArray: [ops.paintImageXObject, ops.paintImageXObject], argsArray: [['a'], ['b']] }),
+        objs: stalledPage.objs,
+      },
+      0,
+      { width: 600, height: 800 },
+      { ops, objectTimeoutMs: 5000, signal: controller.signal },
+    ),
+    err => err.name === 'AbortError',
+  );
+});

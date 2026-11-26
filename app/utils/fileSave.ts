@@ -23,8 +23,14 @@ export interface BatchOutputFile {
 
 export interface DirectoryHandleLike {
   getFileHandle(name: string, options?: { create?: boolean }): Promise<{
-    createWritable(): Promise<{ write(blob: Blob): Promise<void>; close(): Promise<void> }>;
+    createWritable(): Promise<WritableLike>;
   }>;
+}
+
+interface WritableLike {
+  write(blob: Blob): Promise<void>;
+  close(): Promise<void>;
+  abort?(reason?: unknown): Promise<void>;
 }
 
 interface SaveWindow extends Omit<Window, 'showSaveFilePicker' | 'matchMedia'> {
@@ -32,7 +38,7 @@ interface SaveWindow extends Omit<Window, 'showSaveFilePicker' | 'matchMedia'> {
   AndroidBridge?: { saveFile?: (filename: string, base64Data: string) => string };
   showSaveFilePicker?: (options: { suggestedName: string; types: { description: string; accept: Record<string, string[]> }[] }) => Promise<{
     name: string;
-    createWritable(): Promise<{ write(blob: Blob): Promise<void>; close(): Promise<void> }>;
+    createWritable(): Promise<WritableLike>;
   }>;
   showDirectoryPicker?: (options?: { mode?: 'read' | 'readwrite' }) => Promise<DirectoryHandleLike>;
   matchMedia?: (query: string) => MediaQueryList | { matches: boolean };
@@ -61,18 +67,33 @@ export function isMobileSharePreferred(target: SaveWindow): boolean {
   return false;
 }
 
+async function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '');
+    reader.onerror = () => reject(reader.error || new Error('文件读取失败'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function writeAndClose(writable: WritableLike, blob: Blob): Promise<void> {
+  try {
+    await writable.write(blob);
+    await writable.close();
+  } catch (error) {
+    await writable.abort?.(error).catch(() => {});
+    throw error;
+  }
+}
+
 /** Only fall back when a save API is unavailable or the share sheet rejects the file, never after a failed write. */
 export async function saveBlob(blob: Blob, filename: string, options?: SaveFileOptions): Promise<SaveResult> {
+  const safeName = safeFileName(filename);
   const target = window as SaveWindow;
   const api = target.pywebview?.api;
   if (api?.save_file) {
-    const base64 = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result).split(',')[1]);
-      reader.onerror = () => reject(reader.error || new Error('文件读取失败'));
-      reader.readAsDataURL(blob);
-    });
-    const result = await api.save_file(filename, base64);
+    const base64 = await blobToBase64(blob);
+    const result = await api.save_file(safeName, base64);
     if (result?.success) return { success: true, path: result.path };
     if (result?.error === 'Cancelled') return { success: false };
     throw new Error(result?.error || '文件保存失败');
@@ -80,15 +101,10 @@ export async function saveBlob(blob: Blob, filename: string, options?: SaveFileO
 
   const androidSave = target.AndroidBridge?.saveFile;
   if (typeof androidSave === 'function') {
-    const base64 = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result).split(',')[1]);
-      reader.onerror = () => reject(reader.error || new Error('文件读取失败'));
-      reader.readAsDataURL(blob);
-    });
+    const base64 = await blobToBase64(blob);
     let parsed: { success?: boolean; path?: string; error?: string } | null = null;
     try {
-      const raw = androidSave.call(target.AndroidBridge, filename, base64);
+      const raw = androidSave.call(target.AndroidBridge, safeName, base64);
       parsed = JSON.parse(raw);
     } catch (error) {
       throw new Error(error instanceof Error ? error.message : String(error));
@@ -98,34 +114,36 @@ export async function saveBlob(blob: Blob, filename: string, options?: SaveFileO
   }
 
   if (target.showSaveFilePicker && !options?.skipFilePicker) {
-    const ext = filename.split('.').pop()?.toLowerCase() || 'txt';
+    const ext = safeName.split('.').pop()?.toLowerCase() || 'txt';
     const types: Record<string, { description: string; accept: Record<string, string[]> }> = {
       txt: { description: 'TXT 文本文件', accept: { 'text/plain': ['.txt'] } },
       json: { description: 'JSON 专名词典', accept: { 'application/json': ['.json'] } },
       srt: { description: 'SRT 字幕文件', accept: { 'application/x-subrip': ['.srt'] } },
       docx: { description: 'Word 文档', accept: { 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'] } },
+      epub: { description: 'EPUB 电子书', accept: { 'application/epub+zip': ['.epub'] } },
+      pdf: { description: 'PDF 文档', accept: { 'application/pdf': ['.pdf'] } },
+      zip: { description: 'ZIP 压缩包', accept: { 'application/zip': ['.zip'] } },
     };
     let handle;
     try {
-      handle = await target.showSaveFilePicker({ suggestedName: filename, types: [types[ext] || types.txt] });
+      handle = await target.showSaveFilePicker({ suggestedName: safeName, types: [types[ext] || types.txt] });
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') return { success: false };
       throw error;
     }
     const writable = await handle.createWritable();
-    await writable.write(blob);
-    await writable.close();
+    await writeAndClose(writable, blob);
     return { success: true, path: handle.name };
   }
 
   if (!options?.skipShare && isMobileSharePreferred(target)) {
     const nav = (target.navigator ?? (typeof navigator !== 'undefined' ? navigator : undefined)) as ShareNavigator;
-    const file = new File([blob], filename, { type: blob.type || 'text/plain' });
+    const file = new File([blob], safeName, { type: blob.type || 'text/plain' });
     try {
       if (nav.canShare?.({ files: [file] })) {
         try {
-          await nav.share?.({ files: [file], title: filename });
-          return { success: true, path: filename };
+          await nav.share?.({ files: [file], title: safeName });
+          return { success: true, path: safeName };
         } catch (error) {
           if (error instanceof Error && error.name === 'AbortError') return { success: false };
           // Safari can reject a generated EPUB or lose activation after a long annotation job.
@@ -140,12 +158,12 @@ export async function saveBlob(blob: Blob, filename: string, options?: SaveFileO
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
-  anchor.download = filename;
+  anchor.download = safeName;
   anchor.style.display = 'none';
   document.body.appendChild(anchor);
   try {
     anchor.click();
-    return { success: true, path: filename, downloadStarted: true };
+    return { success: true, path: safeName, downloadStarted: true };
   } finally {
     anchor.remove();
     // Safari may consume a generated blob after the click has returned; keep its URL alive long enough.
@@ -155,7 +173,7 @@ export async function saveBlob(blob: Blob, filename: string, options?: SaveFileO
 }
 
 function safeFileName(filename: string): string {
-  const cleaned = filename.replace(/[\\/]/g, '_').replace(/\u0000/g, '').trim();
+  const cleaned = filename.replace(/[\\/:*?"<>|\u0000-\u001F\u007F]/g, '_').trim();
   return cleaned || 'untitled';
 }
 
@@ -173,8 +191,7 @@ export async function pickBatchDirectory(): Promise<DirectoryHandleLike | null> 
 export async function saveBlobToDirectory(dirHandle: DirectoryHandleLike, filename: string, blob: Blob): Promise<void> {
   const handle = await dirHandle.getFileHandle(safeFileName(filename), { create: true });
   const writable = await handle.createWritable();
-  await writable.write(blob);
-  await writable.close();
+  await writeAndClose(writable, blob);
 }
 
 function uniqueZipName(filename: string, used: Set<string>): string {

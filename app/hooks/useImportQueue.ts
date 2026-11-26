@@ -321,12 +321,15 @@ export function useImportQueue(options: ImportQueueOptions) {
             committed = true;
             break;
           }
-          patchItem(item.id, { status: 'failed', error: importError });
           if (decision.action === 'cancel') {
             controller.abort();
+            patchItem(item.id, { status: 'cancelled' });
             markRemainingCancelled(index + 1);
             stopQueue = true;
+            committed = true;
+            break;
           }
+          patchItem(item.id, { status: 'failed', error: importError });
           committed = true;
         }
       }
@@ -400,6 +403,11 @@ export function useImportQueue(options: ImportQueueOptions) {
   }, [replaceItems, run]);
 
   const dismissSummary = useCallback(() => setSummary(null), []);
+
+  useEffect(() => () => {
+    runTokenRef.current += 1;
+    abortRef.current?.abort();
+  }, []);
 
   return {
     items, review, progress, summary, isRunning,

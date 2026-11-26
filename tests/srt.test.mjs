@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { loadTypescript } from './loadTypescript.mjs';
-const { parseSRT, generateSRT } = loadTypescript('../app/utils/srt.ts');
+const { parseSRT, parseVTT, generateSRT } = loadTypescript('../app/utils/srt.ts');
 const { applyRubyOverrides } = loadTypescript('../app/utils/rubyOverrides.ts');
 const { annotateLine } = loadTypescript('../app/utils/furigana.ts');
 
@@ -23,4 +23,27 @@ test('invalid SRT blocks are ignored and generated cues include ruby readings', 
   assert.deepEqual(parseSRT('plain text\n\n1\nnot a timecode\nignored').cues, []);
   const output = generateSRT([annotateLine('学校へ')]);
   assert.match(output, /00:00:00,000 --> 00:00:03,000\n学校\(がっこう\)へ/);
+});
+
+test('parseSRT accepts 1-digit hours and dot milliseconds; parseVTT ignores NOTE/STYLE blocks with arrows and decodes quotes', () => {
+  const srt = parseSRT('1\n0:01:02.500 --> 0:01:05.750\n台詞\n');
+  assert.deepEqual(srt.cues, [{ index: '1', start: '00:01:02,500', end: '00:01:05,750', lines: ['台詞'] }]);
+
+  const vtt = [
+    'WEBVTT',
+    '',
+    'NOTE 00:00.000 --> 00:01.000 ignored comment',
+    'multi-line note',
+    '',
+    'STYLE',
+    '::cue { color: white; } /* a --> b */',
+    '',
+    '00:02.000 --> 00:04.500',
+    '&quot;台詞&quot; &apos;テスト&#39;',
+    '',
+  ].join('\n');
+  const parsed = parseVTT(vtt);
+  assert.deepEqual(parsed.cues, [
+    { index: '1', start: '00:00:02,000', end: '00:00:04,500', lines: ['"台詞" \'テスト\''] },
+  ]);
 });

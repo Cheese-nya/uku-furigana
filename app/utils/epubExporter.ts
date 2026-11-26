@@ -7,6 +7,7 @@ import JSZip from 'jszip';
 import type { ScriptLine } from './furigana';
 import { cleanScriptTitle } from './docxImporter';
 import { extractChapters, type BookChapter } from './libraryDatabase';
+import { sanitizeText } from './textSanitize';
 
 export interface EpubExportOptions {
   title?: string;
@@ -16,7 +17,7 @@ export interface EpubExportOptions {
 }
 
 function escapeXml(value: string): string {
-  return value
+  return sanitizeText(value)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -55,7 +56,7 @@ function renderLineHtml(line: ScriptLine): string {
     }
   }
 
-  return `<p>${parts.join('')}</p>`;
+  return parts.length > 0 ? `<p>${parts.join('')}</p>` : '<p>&#160;</p>';
 }
 
 function buildChapterXhtml(chapter: BookChapter, chapterLines: ScriptLine[]): string {

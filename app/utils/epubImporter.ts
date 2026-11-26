@@ -132,8 +132,10 @@ function normalizeZipPath(rawPath: string): string {
 function resolveHref(baseDir: string, href: string): { path: string; fragment: string } {
   const hashIdx = href.indexOf('#');
   const rawPart = hashIdx >= 0 ? href.slice(0, hashIdx) : href;
+  const queryIdx = rawPart.indexOf('?');
+  const pathPart = queryIdx >= 0 ? rawPart.slice(0, queryIdx) : rawPart;
   const fragment = hashIdx >= 0 ? safeDecodeURI(href.slice(hashIdx + 1)) : '';
-  const decoded = safeDecodeURI(rawPart.trim());
+  const decoded = safeDecodeURI(pathPart.trim());
   if (!decoded) {
     return { path: normalizeZipPath(baseDir), fragment };
   }
@@ -868,15 +870,19 @@ export async function importEpub(
 
   if (tocTargets.length > 0) {
     const seenLines = new Set<number>();
+    const resolvedTargets: ImportedChapter[] = [];
     for (const target of tocTargets) {
       const startLine = target.fragment
         ? elementStartLine.get(`${target.zipPath}#${target.fragment}`)
         : fileStartLine.get(target.zipPath);
       if (startLine === undefined || seenLines.has(startLine)) continue;
       seenLines.add(startLine);
-      chapters.push({ title: target.title, startLine, level: Math.min(2, target.level) });
+      resolvedTargets.push({ title: target.title, startLine, level: Math.min(2, target.level) });
     }
-  } else if (headingFallbackChapters.length > 0) {
+    resolvedTargets.sort((a, b) => a.startLine - b.startLine);
+    chapters.push(...resolvedTargets);
+  }
+  if (chapters.length === 0 && headingFallbackChapters.length > 0) {
     const seenLines = new Set<number>();
     for (const chapter of headingFallbackChapters) {
       if (seenLines.has(chapter.startLine)) continue;
@@ -953,9 +959,21 @@ async function extractTocTargets(
           if (!zipPath) return;
           targets.push({ title: label, zipPath, fragment, level: Math.min(2, level) });
         };
+        const firstAnchorOutsideSublists = (el: Element): Element | undefined => {
+          for (const child of Array.from(el.childNodes)) {
+            if (child.nodeType !== 1) continue;
+            const childEl = child as Element;
+            const tag = localTag(childEl);
+            if (tag === 'a') return childEl;
+            if (tag === 'ol' || tag === 'ul') continue;
+            const found = firstAnchorOutsideSublists(childEl);
+            if (found) return found;
+          }
+          return undefined;
+        };
         const collectList = (list: Element, level: number) => {
           for (const li of directChildren(list, 'li')) {
-            const anchor = directChildren(li, 'a')[0];
+            const anchor = firstAnchorOutsideSublists(li);
             if (anchor) pushAnchor(anchor, level);
             for (const nested of [...directChildren(li, 'ol'), ...directChildren(li, 'ul')]) {
               collectList(nested, level + 1);

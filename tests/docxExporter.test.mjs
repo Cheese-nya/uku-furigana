@@ -63,3 +63,27 @@ test('Word export title drops a trailing _dubbing suffix and has no footer rule'
   assert.equal(text.includes('自动生成'), false);
   assert.equal(elements(xml, 'pBdr').length, 0);
 });
+
+test('Word export omits suppressed ruby and strips XML-illegal control characters', async () => {
+  const line = {
+    id: 'suppressed',
+    speaker: '佐藤\u0000',
+    rawText: '',
+    cleanText: '',
+    tokens: [
+      { surface: '私', ruby: 'わたし', hasKanji: true, annotationSuppressed: true },
+      { surface: '\u0007漢字\uD800', ruby: 'かん\u0000じ', hasKanji: true },
+    ],
+  };
+  const blob = await buildDocxBlob([line], { title: '題名\u0000' });
+  const zip = await JSZip.loadAsync(await blob.arrayBuffer());
+  const rawXml = await zip.file('word/document.xml').async('string');
+  const xml = new DOMParser().parseFromString(rawXml, 'text/xml');
+  assert.equal(xml.getElementsByTagName('parsererror').length, 0);
+  const rubies = elements(xml, 'ruby');
+  assert.equal(rubies.length, 1);
+  assert.equal(elements(rubies[0], 'rubyBase')[0].textContent, '漢字');
+  assert.equal(elements(rubies[0], 'rt')[0].textContent, 'かんじ');
+  assert.equal(rawXml.includes('\u0000'), false);
+  assert.equal(rawXml.includes('\u0007'), false);
+});

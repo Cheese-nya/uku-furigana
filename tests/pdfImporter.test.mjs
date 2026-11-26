@@ -851,3 +851,42 @@ test('importPdf spaces wrapped English after punctuation and keeps headings on t
     'This is the first sentence. The next line wraps after a period. A closing bracket (like this) continues on the next line. A hyphenated word exam-ple stays joined.',
   ]);
 });
+
+test('importPdf sorts out-of-order outline chapters stably and always calls doc.destroy()', async () => {
+  let destroyed = 0;
+  const loader = {
+    numPages: 2,
+    getPage(n) {
+      return {
+        getTextContent: () => ({
+          items: [makeItem(n === 1 ? '　第一章の本文です。十分な文字数を確保します。' : '　第二章の本文です。十分な文字数を確保します。', { y: 750 })],
+        }),
+      };
+    },
+    getMetadata: () => ({ info: { Title: '順序' } }),
+    getOutline: () => [
+      { title: '第二章', dest: [{ page: 1 }] },
+      { title: '第一章', dest: [{ page: 0 }] },
+    ],
+    getPageIndex: ref => ref.page,
+    getDestination: () => null,
+    destroy: async () => { destroyed += 1; },
+  };
+  const book = await importPdf(new ArrayBuffer(8), 'outline-order.pdf', loader);
+  assert.equal(destroyed, 1);
+  assert.deepEqual(book.chapters.map(c => [c.title, c.startLine]), [['第一章', 0], ['第二章', 1]]);
+
+  const controller = new AbortController();
+  const abortingLoader = {
+    ...loader,
+    getPage() {
+      controller.abort();
+      return loader.getPage(1);
+    },
+  };
+  await assert.rejects(
+    () => importPdf(new ArrayBuffer(8), 'abort-destroy.pdf', abortingLoader, { signal: controller.signal }),
+    err => err.name === 'AbortError',
+  );
+  assert.equal(destroyed, 2);
+});

@@ -10,6 +10,7 @@ import { subsetFont } from './fontSubset';
 import type { ScriptLine } from './furigana';
 import { cleanScriptTitle } from './docxImporter';
 import { extractChapters, type BookChapter } from './libraryDatabase';
+import { sanitizeText } from './textSanitize';
 
 export interface PdfLayout {
   pageWidth: number;
@@ -70,7 +71,7 @@ function getNotoSansJpBytes(): Promise<ArrayBuffer> {
 }
 
 function sanitizePdfText(text: string): string {
-  return text.replace(/[\r\n]+/g, '');
+  return sanitizeText(text).replace(/[\r\n]+/g, '').replace(/\t+/g, ' ');
 }
 
 function buildHeadingUnits(
@@ -125,7 +126,7 @@ function buildLineUnits(
           rubyText: rubyText || undefined,
           baseWidth: baseSpan,
           rubyWidth: rubySpan,
-          unitWidth: baseSpan,
+          unitWidth: Math.max(baseSpan, rubySpan),
         });
       } else {
         const baseWidth = font.widthOfTextAtSize(surface, baseFontSize);
@@ -222,7 +223,7 @@ export async function buildPdfBlob(
   lines: ScriptLine[],
   opts?: PdfExportOptions
 ): Promise<Blob> {
-  const title = cleanScriptTitle(opts?.title || '') || '日语假名配音台本';
+  const title = sanitizePdfText(cleanScriptTitle(opts?.title || '')) || '日语假名配音台本';
   const layout = opts?.layout;
   const pageWidth = layout ? layout.pageWidth : DEFAULT_PAGE_WIDTH;
   const pageHeight = layout ? layout.pageHeight : DEFAULT_PAGE_HEIGHT;
@@ -250,8 +251,8 @@ export async function buildPdfBlob(
   doc.setTitle(title);
 
   // Every string drawn below comes from these: title, chapter titles, speakers, token surfaces and rubies.
-  const usedText = [title, '：', ' ', ...chapters.map(c => c.title),
-    ...lines.flatMap(l => [l.speaker ?? '', ...l.tokens.flatMap(t => [t.surface, t.ruby ?? ''])])].join('');
+  const usedText = sanitizePdfText([title, '：', ' ', ...chapters.map(c => c.title),
+    ...lines.flatMap(l => [l.speaker ?? '', ...l.tokens.flatMap(t => [t.surface, (!t.annotationSuppressed && t.ruby) || ''])])].join('')) || ' ';
   const font = await doc.embedFont(await subsetFont(fontBytes, usedText), { subset: false });
 
   const baseColor = rgb(0.1, 0.1, 0.1);
@@ -336,14 +337,14 @@ export async function buildPdfBlob(
           let topY = pageHeight - margin;
 
           for (const unit of segment) {
-            let charTopY = topY;
+            let charTopY = topY - (unit.unitWidth - unit.baseWidth) / 2;
             for (const ch of Array.from(unit.baseText)) {
               drawVerticalChar(page, font, ch, colX, charTopY - baseFontSize, baseFontSize, baseColor);
               charTopY -= baseFontSize;
             }
 
             if (unit.rubyText) {
-              let rubyTopY = topY - (unit.baseWidth - unit.rubyWidth) / 2;
+              let rubyTopY = topY - (unit.unitWidth - unit.rubyWidth) / 2;
               for (const rch of Array.from(unit.rubyText)) {
                 drawVerticalChar(page, font, rch, rubyX, rubyTopY - rubyFontSize, rubyFontSize, rubyColor);
                 rubyTopY -= rubyFontSize;

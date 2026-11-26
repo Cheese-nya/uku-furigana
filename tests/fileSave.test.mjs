@@ -247,3 +247,54 @@ test('buildBatchSaveOutput saves one EPUB as itself and keeps multiple outputs i
   const zip = await JSZip.loadAsync(await multiple.blob.arrayBuffer());
   assert.deepEqual(Object.keys(zip.files).sort(), ['号哭.epub', '続き.epub'].sort());
 });
+
+test('showSaveFilePicker uses accurate MIME types for epub/pdf/zip, sanitizes filenames, and aborts writable on write failure', async () => {
+  const pickerCalls = [];
+  globalThis.window = {
+    showSaveFilePicker: async options => {
+      pickerCalls.push(options);
+      return {
+        name: options.suggestedName,
+        createWritable: async () => ({ write: async () => {}, close: async () => {} }),
+      };
+    },
+  };
+  await saveBlob(new Blob(['a']), 'book.epub');
+  await saveBlob(new Blob(['b']), 'book.pdf');
+  await saveBlob(new Blob(['c']), '台本:批量?.zip');
+  assert.deepEqual(pickerCalls.map(c => c.types[0].accept), [
+    { 'application/epub+zip': ['.epub'] },
+    { 'application/pdf': ['.pdf'] },
+    { 'application/zip': ['.zip'] },
+  ]);
+  assert.equal(pickerCalls[2].suggestedName, '台本_批量_.zip');
+
+  let abortedWith = null;
+  globalThis.window = {
+    showSaveFilePicker: async () => ({
+      name: 'x.txt',
+      createWritable: async () => ({
+        write: async () => { throw new Error('Disk full'); },
+        close: async () => assert.fail('close must not run after failed write'),
+        abort: async err => { abortedWith = err; },
+      }),
+    }),
+  };
+  await assert.rejects(saveBlob(new Blob(['x']), 'x.txt'), /Disk full/);
+  assert.match(abortedWith?.message, /Disk full/);
+
+  let dirAborted = false;
+  await assert.rejects(
+    saveBlobToDirectory({
+      getFileHandle: async () => ({
+        createWritable: async () => ({
+          write: async () => { throw new Error('Quota exceeded'); },
+          close: async () => {},
+          abort: async () => { dirAborted = true; },
+        }),
+      }),
+    }, 'bad:name*.txt', new Blob(['x'])),
+    /Quota exceeded/,
+  );
+  assert.equal(dirAborted, true);
+});

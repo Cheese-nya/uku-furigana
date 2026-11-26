@@ -821,3 +821,20 @@ test('fetchPixivNovel skips the relay when pixiv already answered or the page is
     else delete globalThis.window;
   }
 });
+
+test('fetchPixivNovel times out stalled local/direct requests and falls back to relay', async () => {
+  const novel = { id: '123456', title: 'T', author: 'A', description: '', content: '本文', rubyOverrides: {}, coverUrl: '', sourceUrl: 'https://www.pixiv.net/novel/show.php?id=123456' };
+  const stub = stubFetch((url, init) => {
+    if (url.startsWith(RELAY)) return jsonResponse(novel);
+    return new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('Timed out', 'AbortError')), { once: true });
+    });
+  });
+  try {
+    const result = await fetchPixivNovel('123456', { timeoutMs: 15 });
+    assert.deepEqual(result, novel);
+    assert.ok(stub.calls.some(url => url.startsWith(RELAY)));
+  } finally {
+    stub.restore();
+  }
+});

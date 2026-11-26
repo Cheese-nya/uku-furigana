@@ -54,6 +54,8 @@ export interface PdfImageExtractionOptions {
   signal?: AbortSignal;
   /** Images smaller than this fraction of the page are decorations/gaiji. */
   minAreaRatio?: number;
+  /** Test seam / bound on pending pdf.js object decode callbacks (ms). */
+  objectTimeoutMs?: number;
 }
 
 function positive(value: unknown): number {
@@ -82,7 +84,12 @@ function imageHash(image: PdfImageLike, width: number, height: number): string |
   return `${width}x${height}:${image.kind ?? 0}:${data.length}:${hash >>> 0}`;
 }
 
-function objectForName(page: PdfImagePageLike, name: unknown): unknown {
+function objectForName(
+  page: PdfImagePageLike,
+  name: unknown,
+  signal?: AbortSignal,
+  timeoutMs = 5000,
+): unknown {
   if (typeof name !== 'string') return undefined;
   // pdf.js sends page-local images through `objs` and shared ones (g_*) through `commonObjs`.
   const store = name.startsWith('g_') ? page.commonObjs : page.objs;
@@ -90,13 +97,25 @@ function objectForName(page: PdfImagePageLike, name: unknown): unknown {
   try {
     return store.get(name);
   } catch {
+    if (signal?.aborted) return undefined;
     // The worker may still be decoding this image when the operator list resolves. Dropping it
     // here silently loses illustrations; pdf.js calls back when the object arrives.
     return new Promise(resolve => {
+      let settled = false;
+      const finish = (value: unknown) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
+        resolve(value);
+      };
+      const onAbort = () => finish(undefined);
+      const timer = setTimeout(() => finish(undefined), timeoutMs);
+      signal?.addEventListener('abort', onAbort, { once: true });
       try {
-        store.get(name, resolve);
+        store.get(name, finish);
       } catch {
-        resolve(undefined);
+        finish(undefined);
       }
     });
   }
@@ -250,7 +269,7 @@ export async function extractPageImages(
     const args = operatorList.argsArray[index] ?? [];
     let image: unknown;
     if (fn === ops.paintImageXObject || fn === ops.paintJpegXObject) {
-      image = await objectForName(page, args[0]);
+      image = await objectForName(page, args[0], options.signal, options.objectTimeoutMs);
     } else if (fn === ops.paintInlineImageXObject) {
       image = args[0];
     } else {

@@ -16,6 +16,7 @@ import {
 } from 'docx';
 import type { ScriptLine } from './furigana';
 import { cleanScriptTitle, EXPORT_TITLE_BOOKMARK } from './docxImporter';
+import { sanitizeText } from './textSanitize';
 
 class ElementComponent extends XmlComponent {
   constructor(name: string, children: XmlComponent[] = [], value?: string) {
@@ -84,7 +85,7 @@ export async function buildDocxBlob(lines: ScriptLine[], options?: DocxExportOpt
   const rubySizeHalfPts = Math.round((options?.rubyFontSize || 10) * 1.5);
   const lineSpacingVal = Math.round((options?.lineSpacing || 1.8) * 240);
 
-  const docTitle = cleanScriptTitle(options?.title || '') || '日语假名配音台本';
+  const docTitle = sanitizeText(cleanScriptTitle(options?.title || '')) || '日语假名配音台本';
 
   // Title only — no exporter subtitle or horizontal rule. The bookmark lets
   // importDocx drop the title instead of turning it into a script line.
@@ -119,7 +120,7 @@ export async function buildDocxBlob(lines: ScriptLine[], options?: DocxExportOpt
     if (line.speaker) {
       paragraphChildren.push(
         new TextRun({
-          text: `${line.speaker}：`,
+          text: `${sanitizeText(line.speaker)}：`,
           bold: true,
           size: baseSizeHalfPts,
           font: 'Yu Gothic',
@@ -130,20 +131,22 @@ export async function buildDocxBlob(lines: ScriptLine[], options?: DocxExportOpt
 
     // Render tokens with native Word Ruby elements (<w:ruby>)
     for (const token of line.tokens) {
-      if (token.ruby) {
+      const surface = sanitizeText(token.surface);
+      const ruby = token.ruby ? sanitizeText(token.ruby) : '';
+      if (ruby && !token.annotationSuppressed) {
         // Kanji with furigana directly ABOVE it!
         paragraphChildren.push(
           // Ruby is run content in OpenXML; a direct paragraph child is invalid
           // and causes WPS to omit the annotated base text.
           new TextRun({
-            children: [new RubyElement(token.surface, token.ruby, baseSizeHalfPts, rubySizeHalfPts)],
+            children: [new RubyElement(surface, ruby, baseSizeHalfPts, rubySizeHalfPts)],
           })
         );
       } else {
         // Normal text without furigana
         paragraphChildren.push(
           new TextRun({
-            text: token.surface,
+            text: surface,
             size: baseSizeHalfPts,
             font: 'Yu Gothic',
             color: '1A1A1A',

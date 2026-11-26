@@ -84,6 +84,7 @@ export interface PdfDocumentLike {
   getPageIndex(ref: unknown): Promise<number> | number;
   getDestination(name: string): Promise<unknown[] | null> | unknown[] | null;
   getPageLabels?(): Promise<string[] | null> | string[] | null;
+  destroy?(): Promise<void> | void;
 }
 
 export type PdfLoader =
@@ -609,6 +610,7 @@ export async function importPdf(
   options: PdfImportOptions = {},
 ): Promise<ImportedBook> {
   report(options, { stage: 'reading', current: 0 });
+  throwIfAborted(options.signal);
 
   let doc: PdfDocumentLike;
   try {
@@ -620,6 +622,8 @@ export async function importPdf(
   } catch (error) {
     throw toImportError(error);
   }
+
+  try {
 
   const visualLines: VisualLine[] = [];
   let nonWhitespaceCount = 0;
@@ -1006,6 +1010,7 @@ export async function importPdf(
   let publisher = '';
   let publishedAt = '';
   let identifier = '';
+  throwIfAborted(options.signal);
   try {
     const metadata = await doc.getMetadata();
     const rawTitle = cleanDownloadTitle(sanitizeText(metadata?.info?.Title ?? '').trim());
@@ -1026,6 +1031,7 @@ export async function importPdf(
 
   // Outline chapters, depth preserved. A parent without a destination promotes its children.
   const outlineChapters: ImportedChapter[] = [];
+  throwIfAborted(options.signal);
   try {
     const outline = await doc.getOutline();
     const collect = async (items: PdfOutlineItem[], level: number): Promise<void> => {
@@ -1083,6 +1089,7 @@ export async function importPdf(
 
   // Cover: render page 1. A rendered cover replaces page-1 image extraction, so a full-page cover
   // scan is not stored twice.
+  throwIfAborted(options.signal);
   let cover: EncodedImage | undefined;
   if (firstPage) {
     report(options, { stage: 'cover', current: 1, total: 1 });
@@ -1116,10 +1123,12 @@ export async function importPdf(
   if (imagesFailed > 0) warnings.push({ code: 'images-skipped', count: imagesFailed });
   const inserted = insertImages(paragraphs, paragraphFirst, extractedImages);
   const text = inserted.lines.join('\n');
-  const mappedChapters = chapters.map(chapter => ({
-    ...chapter,
-    startLine: inserted.paragraphLine[chapter.startLine] ?? chapter.startLine,
-  }));
+  const mappedChapters = chapters
+    .map(chapter => ({
+      ...chapter,
+      startLine: inserted.paragraphLine[chapter.startLine] ?? chapter.startLine,
+    }))
+    .sort((a, b) => a.startLine - b.startLine);
   const finalChapters = refineChapterStarts(mappedChapters, inserted.lines);
 
   // A page can open with an illustration and have no text of its own (cover, colour page, contents
@@ -1176,4 +1185,11 @@ export async function importPdf(
     ...(pageLabels ? { pageLabels } : {}),
     ...(cover ? { cover } : {}),
   };
+  } finally {
+    try {
+      await doc.destroy?.();
+    } catch {
+      // Releasing pdf.js worker resources must not mask or fail an import.
+    }
+  }
 }

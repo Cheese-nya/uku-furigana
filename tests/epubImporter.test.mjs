@@ -626,3 +626,50 @@ test('importEpub without a TOC turns every h1–h3 into a chapter and warns', as
   ]);
   assert.deepEqual(book.warnings.filter(w => w.code === 'auto-chapters'), [{ code: 'auto-chapters', count: 3 }]);
 });
+
+test('importEpub resolves wrapped nav anchors, query hrefs, sorts out-of-order TOCs, and falls back to headings when TOC resolves empty', async () => {
+  const opf = `<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/" version="3.0">
+  <metadata><dc:title>Nav Edge Cases</dc:title></metadata>
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="c1" href="text/ch1.xhtml?v=2" media-type="application/xhtml+xml"/>
+    <item id="c2" href="text/ch2.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="c1"/><itemref idref="c2"/></spine>
+</package>`;
+  const nav = `<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body>
+    <nav epub:type="toc"><ol>
+      <li><span><a href="text/ch2.xhtml">第二章</a></span></li>
+      <li><p><a href="text/ch1.xhtml?v=2#start">第一章</a></p></li>
+    </ol></nav>
+  </body></html>`;
+  const buf = await buildEpubBuffer({
+    'OEBPS/content.opf': opf,
+    'OEBPS/nav.xhtml': nav,
+    'OEBPS/text/ch1.xhtml': `<html xmlns="http://www.w3.org/1999/xhtml"><body><p id="start">一章本文</p></body></html>`,
+    'OEBPS/text/ch2.xhtml': `<html xmlns="http://www.w3.org/1999/xhtml"><body><p>二章本文</p></body></html>`,
+  });
+  const book = await importEpub(buf, 'wrapped.epub', new DOMParser());
+  assert.deepEqual(book.chapters, [
+    { title: '第一章', startLine: 0, level: 0 },
+    { title: '第二章', startLine: 1, level: 0 },
+  ]);
+
+  // TOC pointing only to non-existent targets falls back to heading chapters
+  const fallbackNav = `<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body>
+    <nav epub:type="toc"><ol><li><a href="text/missing.xhtml">存在しない</a></li></ol></nav>
+  </body></html>`;
+  const fallbackBuf = await buildEpubBuffer({
+    'OEBPS/content.opf': opf,
+    'OEBPS/nav.xhtml': fallbackNav,
+    'OEBPS/text/ch1.xhtml': `<html xmlns="http://www.w3.org/1999/xhtml"><body><h1>見出し一</h1><p>本文</p></body></html>`,
+    'OEBPS/text/ch2.xhtml': `<html xmlns="http://www.w3.org/1999/xhtml"><body><h2>見出し二</h2><p>続き</p></body></html>`,
+  });
+  const fallbackBook = await importEpub(fallbackBuf, 'fallback.epub', new DOMParser());
+  assert.deepEqual(fallbackBook.chapters, [
+    { title: '見出し一', startLine: 0, level: 0 },
+    { title: '見出し二', startLine: 2, level: 1 },
+  ]);
+  assert.deepEqual(fallbackBook.warnings.filter(w => w.code === 'auto-chapters'), [{ code: 'auto-chapters', count: 2 }]);
+});

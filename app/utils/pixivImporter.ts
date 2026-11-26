@@ -102,15 +102,31 @@ export function toPixivMirrorCoverUrl(coverUrl: string): string {
   return trimmed.replace(/^https?:\/\/i\.pximg\.net\//i, 'https://i.pixiv.re/');
 }
 
+const RELAY_TIMEOUT_MS = 30_000;
+
+export interface PixivFetchOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
 // Bound the whole operation (including response.json), even if a native bridge or
 // WebView ignores AbortSignal. Always consume late rejections and release timers.
-async function withPixivTimeout<T>(run: (signal?: AbortSignal) => Promise<T>, timeoutMs: number): Promise<T> {
+async function withPixivTimeout<T>(run: (signal?: AbortSignal) => Promise<T>, timeoutMs: number, externalSignal?: AbortSignal): Promise<T> {
+  if (externalSignal?.aborted) {
+    throw new DOMException('Aborted', 'AbortError');
+  }
   const controller = typeof AbortController === 'undefined' ? undefined : new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
   try {
     return await Promise.race([
       Promise.resolve().then(() => run(controller?.signal)),
       new Promise<never>((_, reject) => {
+        onAbort = () => {
+          controller?.abort();
+          reject(new DOMException('Aborted', 'AbortError'));
+        };
+        externalSignal?.addEventListener('abort', onAbort, { once: true });
         timer = setTimeout(() => {
           reject(new Error('Pixiv 请求超时，请稍后重试'));
           controller?.abort();
@@ -119,22 +135,25 @@ async function withPixivTimeout<T>(run: (signal?: AbortSignal) => Promise<T>, ti
     ]);
   } finally {
     clearTimeout(timer);
+    if (onAbort) externalSignal?.removeEventListener('abort', onAbort);
   }
 }
 
-async function fetchPixivJson(url: string, timeoutMs: number) {
+async function fetchPixivJson(url: string, timeoutMs: number, externalSignal?: AbortSignal) {
   return withPixivTimeout(async signal => {
     const res = await fetch(url, { signal, headers: { Accept: 'application/json' } });
     const data = await res.json().catch(() => null);
     return { res, data };
-  }, timeoutMs);
+  }, timeoutMs, externalSignal);
 }
 
-export async function fetchPixivNovel(urlOrId: string): Promise<PixivNovelResult> {
+export async function fetchPixivNovel(urlOrId: string, options: PixivFetchOptions = {}): Promise<PixivNovelResult> {
   const id = extractPixivNovelId(urlOrId);
   if (!id) {
     throw new Error('无效的 Pixiv 小说链接或 ID');
   }
+  const externalSignal = options.signal;
+  const stepTimeout = (fallbackMs: number) => (options.timeoutMs !== undefined ? Math.min(options.timeoutMs, fallbackMs) : fallbackMs);
 
   // Native shells have no /api routes and cannot call pixiv.net cross-origin, so the
   // injected bridge is the only working transport there. Keep its error so a network
@@ -186,7 +205,7 @@ export async function fetchPixivNovel(urlOrId: string): Promise<PixivNovelResult
   let apiErrorMessage: string | null = null;
   let apiAgeRestricted = false;
   try {
-    const { res: apiRes, data: apiData } = await fetchPixivJson(`/api/pixiv?id=${encodeURIComponent(id)}`, remaining());
+    const { res: apiRes, data: apiData } = await fetchPixivJson(`/api/pixiv?id=${encodeURIComponent(id)}`, stepTimeout(remaining()), externalSignal);
     if (apiRes.ok) {
       const data = (apiData) as PixivNovelResult;
       if (data && typeof data.content === 'string') {
@@ -200,6 +219,7 @@ export async function fetchPixivNovel(urlOrId: string): Promise<PixivNovelResult
       attempts.push(`/api/pixiv: HTTP ${apiRes.status}`);
     }
   } catch (error) {
+    if (externalSignal?.aborted) throw error;
     // Ignore local route network errors and try direct fallback
     attempts.push(`/api/pixiv: ${describe(error)}`);
   }
@@ -227,7 +247,7 @@ export async function fetchPixivNovel(urlOrId: string): Promise<PixivNovelResult
     const label = endpoint.startsWith('/') ? '/api/pixiv-ajax' : 'pixiv.net direct';
     try {
       if (Date.now() >= deadline) break;
-      const { res: directRes, data: directData } = await fetchPixivJson(endpoint, remaining());
+      const { res: directRes, data: directData } = await fetchPixivJson(endpoint, stepTimeout(remaining()), externalSignal);
       if (!directRes.ok) {
         const reason = typeof directData?.message === 'string' ? directData.message.trim() : '';
         attempts.push(`${label}: HTTP ${directRes.status}${reason ? ` ${reason}` : ''}`);
@@ -268,7 +288,7 @@ export async function fetchPixivNovel(urlOrId: string): Promise<PixivNovelResult
       if (body.coverUrl && typeof body.coverUrl === 'string') {
         try {
           const { res: imgRes, data: imageData } = await fetchPixivJson(
-            `/api/pixiv-image?url=${encodeURIComponent(body.coverUrl)}`, Math.min(3_000, remaining()),
+            `/api/pixiv-image?url=${encodeURIComponent(body.coverUrl)}`, stepTimeout(Math.min(3_000, remaining())), externalSignal,
           );
           if (imgRes.ok) {
             const imgData = (imageData) as { dataUrl?: string };
@@ -292,6 +312,7 @@ export async function fetchPixivNovel(urlOrId: string): Promise<PixivNovelResult
         sourceUrl: `https://www.pixiv.net/novel/show.php?id=${id}`,
       };
     } catch (err) {
+      if (externalSignal?.aborted) throw err;
       if (!(err instanceof Error && err.message.startsWith('Pixiv 请求失败'))) attempts.push(`${label}: ${describe(err)}`);
       lastError = err;
     }
@@ -304,7 +325,11 @@ export async function fetchPixivNovel(urlOrId: string): Promise<PixivNovelResult
   let relayTimeoutMessage: string | null = null;
   if (!cascadePixivMessage && !sameOrigin && !hasLocalSession) {
     try {
-      const { res: relayRes, data: relayData } = await fetchPixivJson(`${RELAY_BASE}/api/pixiv?id=${encodeURIComponent(id)}`, RELAY_TIMEOUT_MS);
+      const { res: relayRes, data: relayData } = await fetchPixivJson(
+        `${RELAY_BASE}/api/pixiv?id=${encodeURIComponent(id)}`,
+        options.timeoutMs ?? RELAY_TIMEOUT_MS,
+        externalSignal,
+      );
       const data = relayData as (PixivNovelResult & { error?: unknown }) | null;
       if (relayRes.ok && data && typeof data.content === 'string') {
         validateContent(data.content);
@@ -314,6 +339,7 @@ export async function fetchPixivNovel(urlOrId: string): Promise<PixivNovelResult
       if (typeof data?.error === 'string' && data.error.trim()) relayErrorMessage = data.error.trim();
       attempts.push(`relay: HTTP ${relayRes.status}${relayErrorMessage ? ` ${relayErrorMessage}` : ''}`);
     } catch (error) {
+      if (externalSignal?.aborted) throw error;
       if (error instanceof Error && error.message === 'Pixiv 请求超时，请稍后重试') relayTimeoutMessage = error.message;
       attempts.push(`relay: ${describe(error)}`);
     }
@@ -351,7 +377,5 @@ export async function fetchPixivNovel(urlOrId: string): Promise<PixivNovelResult
   }
   throw lastError instanceof Error ? lastError : new Error('获取 Pixiv 小说失败');
 }
-
-const RELAY_TIMEOUT_MS = 30_000;
 
 export const PIXIV_UNREACHABLE = '无法连接 pixiv.net，请检查网络（中国大陆需要能访问 pixiv 才能导入）';

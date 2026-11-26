@@ -12,7 +12,11 @@ export interface ParsedSrt {
   cues: SrtCue[];
 }
 
-const TIMING = /^\s*(\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})(?:\s+.*)?$/;
+const TIMING = /^\s*(\d{1,3}:\d{2}:\d{2}[,.]\d{3})\s*-->\s*(\d{1,3}:\d{2}:\d{2}[,.]\d{3})(?:\s+.*)?$/;
+
+function normalizeSrtTime(value: string): string {
+  return value.replace('.', ',').replace(/^(\d):/, '0$1:');
+}
 
 export function parseSRT(source: string): ParsedSrt {
   const blocks = source.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split(/\n{2,}/);
@@ -27,22 +31,47 @@ export function parseSRT(source: string): ParsedSrt {
     // A single newline at the end of the file must not add an empty caption line.
     while (content.length && !content[content.length - 1].trim()) content.pop();
     if (!content.length) continue;
-    cues.push({ index: rows.slice(0, timingIndex).join(' ') || String(cues.length + 1), start: match[1], end: match[2], lines: content });
+    cues.push({
+      index: rows.slice(0, timingIndex).join(' ') || String(cues.length + 1),
+      start: normalizeSrtTime(match[1]),
+      end: normalizeSrtTime(match[2]),
+      lines: content,
+    });
   }
   return { cues, text: cues.map(cue => cue.lines.join('\n')).join('\n') };
 }
 
 const VTT_TIMESTAMP = /(?:(\d+):)?(\d{2}):(\d{2})\.(\d{3})/g;
-const VTT_ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', nbsp: '\u00A0', lrm: '\u200E', rlm: '\u200F' };
+const VTT_ENTITIES: Record<string, string> = {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  nbsp: '\u00A0',
+  lrm: '\u200E',
+  rlm: '\u200F',
+};
+const VTT_NON_CUE_BLOCK = /^(?:WEBVTT(?:\s|$|-)|NOTE(?:\s|$)|STYLE(?:\s|$)|REGION(?:\s|$))/;
 
 function vttText(row: string): string {
   return row.replace(/^<v(?:\.[^\s>]*)?\s+([^>]+)>/, '$1：').replace(/<rt>[\s\S]*?<\/rt>/g, '')
-    .replace(/<[^>]*>/g, '').replace(/&(amp|lt|gt|nbsp|lrm|rlm);/g, (_, name: string) => VTT_ENTITIES[name]);
+    .replace(/<[^>]*>/g, '')
+    .replace(/&#(?:39|x0*27);/gi, "'")
+    .replace(/&(amp|lt|gt|quot|apos|nbsp|lrm|rlm);/g, (_, name: string) => VTT_ENTITIES[name]);
 }
 
 /** WebVTT allows hour-less dotted timestamps, named cue ids and inline markup; map them onto SRT cues. */
 export function parseVTT(source: string): ParsedSrt {
-  const rows = source.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split('\n').flatMap(row => {
+  const cueBlocks = source
+    .replace(/^\uFEFF/, '')
+    .replace(/\r\n?/g, '\n')
+    .split(/\n{2,}/)
+    .filter(block => {
+      const firstLine = block.split('\n').find(line => line.trim() !== '')?.trim() ?? '';
+      return Boolean(firstLine) && !VTT_NON_CUE_BLOCK.test(firstLine);
+    });
+  const rows = cueBlocks.join('\n\n').split('\n').flatMap(row => {
     if (row.includes('-->')) {
       return [row.replace(VTT_TIMESTAMP, (_, hours: string | undefined, minutes: string, seconds: string, millis: string) =>
         `${(hours || '0').padStart(2, '0')}:${minutes}:${seconds},${millis}`)];
