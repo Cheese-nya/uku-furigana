@@ -84,11 +84,22 @@ cp -R "$APP_BUNDLE" "${STAGE_DIR}/"
 ln -s /Applications "${STAGE_DIR}/Applications"
 
 rm -f "$OUTPUT_DMG"
-hdiutil create \
-  -volname "Uku Furigana" \
-  -srcfolder "$STAGE_DIR" \
-  -ov \
-  -format UDZO \
-  "$OUTPUT_DMG"
+for attempt in 1 2 3 4 5; do
+  if hdiutil create \
+    -volname "Uku Furigana" \
+    -srcfolder "$STAGE_DIR" \
+    -ov \
+    -format UDZO \
+    "$OUTPUT_DMG"; then
+    break
+  fi
+  if [[ "$attempt" -eq 5 ]]; then
+    echo "ERROR: hdiutil create failed after 5 attempts." >&2
+    exit 1
+  fi
+  echo "hdiutil create busy (attempt ${attempt}/5), retrying in 5s..." >&2
+  rm -f "$OUTPUT_DMG"
+  sleep 5
+done
 
 echo "==> Done: ${OUTPUT_DMG}"
