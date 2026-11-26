@@ -83,3 +83,36 @@ test('local custom endpoints list models, test connection and accept no-key repl
     ['http://192.168.1.10:8000/v1/chat/completions', undefined],
   ]);
 });
+
+test('listModels supports abort signal and trims apiKey; modelPrice rejects null/empty pricing; probeModels rejects empty translation', async () => {
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    listModels({ baseUrl: 'https://x/v1', model: '', apiKey: '  k \n' }, async (_url, init) => {
+      assert.equal(init.headers.Authorization, 'Bearer k');
+      assert.equal(init.signal.aborted, true);
+      throw new DOMException('Aborted', 'AbortError');
+    }, controller.signal),
+    err => err.name === 'AbortError',
+  );
+
+  await assert.rejects(
+    listModels({ baseUrl: 'https://x/v1', model: '', apiKey: '' }, async () => new Response('<html>oops</html>', { status: 200 })),
+    /无法解析/,
+  );
+
+  assert.equal(modelPrice('custom', 'some-model', { prompt: '', completion: '0' }), 'unknown');
+  assert.equal(modelPrice('deepseek', 'deepseek-chat', { prompt: null, completion: null }), 'paid');
+  assert.equal(modelPrice('custom', 'free-model', { prompt: '0', completion: '0' }), 'free');
+
+  const results = {};
+  await probeModels(
+    { baseUrl: 'https://x/v1', model: '', apiKey: 'k' },
+    ['blank'],
+    'zh-Hans',
+    (id, res) => { results[id] = res; },
+    new AbortController().signal,
+    async () => json({ choices: [{ message: { content: '   ' } }] }),
+  );
+  assert.equal(results.blank.state, 'bad');
+});

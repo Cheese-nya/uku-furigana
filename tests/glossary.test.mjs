@@ -162,3 +162,17 @@ test('applyGlossary keeps the original line object intact', () => {
 // so literal longest-match against the line text is the agreed rule.
 // Reviewed: a romaji-typed entry passes through verbatim by design - there is no
 // romaji-to-kana conversion, so the requested ruby type cannot be applied to it.
+
+test('glossaryOverrides handles large multi-bucket glossaries with shared prefixes deterministically', () => {
+  const entries = [
+    ...Array.from({ length: 120 }, (_, i) => entry(`固有名詞${i}`, `こゆうめいし${i}`)),
+    entry('東京', 'とうきょう'),
+    entry('東京都', 'とうきょうと'),
+    entry('東京都庁', 'とうきょうとちょう'),
+  ];
+  const result = glossaryOverrides('東京都庁と東京と固有名詞42', entries);
+  assert.deepEqual(
+    result.map(({ surface, start }) => [surface, start]),
+    [['東京都庁', 0], ['東京', 5], ['固有名詞42', 8]],
+  );
+});

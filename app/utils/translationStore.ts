@@ -2,6 +2,7 @@ const DB_NAME = 'uku-translations';
 const DB_VERSION = 1;
 const STORE_NAME = 'sentences';
 const BOOK_INDEX = 'book';
+const IDB_CHUNK_SIZE = 500;
 
 export interface TranslationRecord {
   bookId: string;
@@ -121,7 +122,14 @@ export class TranslationStore implements TranslationCache {
 
   private async open(): Promise<IDBDatabase | undefined> {
     const factory = resolveFactory(this.source);
-    return factory ? openDb(factory) : undefined;
+    if (!factory) return undefined;
+    try {
+      const db = await openDb(factory);
+      db.onversionchange = () => db.close();
+      return db;
+    } catch {
+      return undefined;
+    }
   }
 
   async get(bookId: string, target: string, texts: string[]): Promise<Map<string, string>> {
@@ -129,12 +137,16 @@ export class TranslationStore implements TranslationCache {
     const db = await this.open();
     if (!db) return this.memory.get(bookId, target, texts);
     try {
+      const unique = [...new Set(texts)];
       const found = new Map<string, string>();
-      const store = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME);
-      const records = await Promise.all(texts.map(text => requestResult(
-        store.get([bookId, target, text]) as IDBRequest<TranslationRecord | undefined>)));
-      for (const record of records) {
-        if (record && typeof record.translation === 'string') found.set(record.text, record.translation);
+      for (let start = 0; start < unique.length; start += IDB_CHUNK_SIZE) {
+        const chunk = unique.slice(start, start + IDB_CHUNK_SIZE);
+        const store = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME);
+        const records = await Promise.all(chunk.map(text => requestResult(
+          store.get([bookId, target, text]) as IDBRequest<TranslationRecord | undefined>)));
+        for (const record of records) {
+          if (record && typeof record.translation === 'string') found.set(record.text, record.translation);
+        }
       }
       return found;
     } finally {
@@ -147,14 +159,17 @@ export class TranslationStore implements TranslationCache {
     const db = await this.open();
     if (!db) { await this.memory.put(bookId, target, engine, pairs); return; }
     try {
-      const transaction = db.transaction(STORE_NAME, 'readwrite');
-      const store = transaction.objectStore(STORE_NAME);
-      const at = Date.now();
-      for (const [text, translation] of pairs) {
-        const record: TranslationRecord = { bookId, target, text, translation, engine, at };
-        store.put(record);
+      for (let start = 0; start < pairs.length; start += IDB_CHUNK_SIZE) {
+        const chunk = pairs.slice(start, start + IDB_CHUNK_SIZE);
+        const transaction = db.transaction(STORE_NAME, 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        const at = Date.now();
+        for (const [text, translation] of chunk) {
+          const record: TranslationRecord = { bookId, target, text, translation, engine, at };
+          store.put(record);
+        }
+        await transactionDone(transaction);
       }
-      await transactionDone(transaction);
     } finally {
       db.close();
     }
@@ -165,17 +180,26 @@ export class TranslationStore implements TranslationCache {
     const db = await this.open();
     if (!db) return this.memory.count(bookId, target, texts);
     try {
-      const store = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME);
-      const keys = await Promise.all(texts.map(text => requestResult(store.getKey([bookId, target, text]))));
-      return keys.filter(key => key !== undefined).length;
+      const unique = [...new Set(texts)];
+      const present = new Set<string>();
+      for (let start = 0; start < unique.length; start += IDB_CHUNK_SIZE) {
+        const chunk = unique.slice(start, start + IDB_CHUNK_SIZE);
+        const store = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME);
+        const keys = await Promise.all(chunk.map(text => requestResult(store.getKey([bookId, target, text]))));
+        keys.forEach((key, index) => { if (key !== undefined) present.add(chunk[index]); });
+      }
+      let total = 0;
+      for (const text of texts) if (present.has(text)) total += 1;
+      return total;
     } finally {
       db.close();
     }
   }
 
   async clearBook(bookId: string): Promise<void> {
+    await this.memory.clearBook(bookId);
     const db = await this.open();
-    if (!db) { await this.memory.clearBook(bookId); return; }
+    if (!db) return;
     try {
       const transaction = db.transaction(STORE_NAME, 'readwrite');
       const store = transaction.objectStore(STORE_NAME);

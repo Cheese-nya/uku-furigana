@@ -61,3 +61,9 @@ test('empty line yields no sentences and leading ideographic space stays with th
   assert.equal(first.start, 0);
   assert.equal(first.text, '　こんにちは。');
 });
+
+test('extended CJK and editorial brackets keep internal terminators together', () => {
+  assert.deepEqual(texts('〔注：これは仮。確認！〕本文。次'), ['〔注：これは仮。確認！〕本文。', '次']);
+  assert.deepEqual(texts('［解説。続く］終わり。'), ['［解説。続く］終わり。']);
+  assert.deepEqual(texts('〝待って！〟と叫んだ。'), ['〝待って！〟と叫んだ。']);
+});

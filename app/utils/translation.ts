@@ -142,9 +142,76 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+const MICROSOFT_TIMEOUT_MS = 20_000;
+const LLM_TIMEOUT_MS = 60_000;
+
+interface TimeoutControl {
+  signal: AbortSignal;
+  didTimeout: () => boolean;
+  reset: () => void;
+  cleanup: () => void;
+}
+
+/** Links an optional caller AbortSignal with an idle/request timeout (Chrome >= 92 compatible). */
+function withTimeoutSignal(signal: AbortSignal | undefined, timeoutMs: number): TimeoutControl {
+  const controller = new AbortController();
+  let timedOut = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const arm = () => {
+    if (timer !== null) clearTimeout(timer);
+    if (timeoutMs > 0 && Number.isFinite(timeoutMs)) {
+      timer = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, timeoutMs);
+    }
+  };
+  const onAbort = () => {
+    if (timer !== null) clearTimeout(timer);
+    controller.abort();
+  };
+  if (signal?.aborted) controller.abort();
+  else {
+    signal?.addEventListener('abort', onAbort, { once: true });
+    arm();
+  }
+  return {
+    signal: controller.signal,
+    didTimeout: () => timedOut && !signal?.aborted,
+    reset: () => { if (!signal?.aborted && !timedOut) arm(); },
+    cleanup: () => {
+      if (timer !== null) clearTimeout(timer);
+      timer = null;
+      signal?.removeEventListener('abort', onAbort);
+    },
+  };
+}
+
+function wrapTransportError(error: unknown, signal: AbortSignal | undefined, timeout: TimeoutControl): never {
+  if (signal?.aborted || (error instanceof Error && error.name === 'AbortError' && !timeout.didTimeout())) {
+    throw error instanceof Error && error.name === 'AbortError' ? error : abortError();
+  }
+  if (timeout.didTimeout()) throw new TranslationError('请求超时', true);
+  if (error instanceof TranslationError) throw error;
+  const message = error instanceof Error && error.message ? error.message : '网络请求失败';
+  throw new TranslationError(message, true);
+}
+
 function httpError(status: number, what: string): TranslationError {
-  const retryable = status === 429 || status >= 500;
+  const retryable = status === 408 || status === 429 || status >= 500;
   return new TranslationError(`${what}失败（HTTP ${status}）`, retryable);
+}
+
+function parseRetryAfter(raw: string | null | undefined): number | undefined {
+  if (!raw) return undefined;
+  const numeric = Number(raw);
+  if (Number.isFinite(numeric) && numeric > 0) return Math.min(30, numeric) * 1000;
+  const timestamp = Date.parse(raw);
+  if (Number.isFinite(timestamp)) {
+    const ms = timestamp - Date.now();
+    if (ms > 0) return Math.min(30_000, ms);
+  }
+  return undefined;
 }
 
 const MICROSOFT_ENDPOINT = 'https://edge.microsoft.com/translate/translatetext';
@@ -155,31 +222,55 @@ export async function translateMicrosoft(
   target: string,
   fetchImpl: typeof fetch = fetch,
   signal?: AbortSignal,
+  timeoutMs = MICROSOFT_TIMEOUT_MS,
 ): Promise<string[]> {
   if (!texts.length) return [];
+  throwIfAborted(signal);
   const url = `${MICROSOFT_ENDPOINT}?from=ja&to=${encodeURIComponent(target)}&isEnterpriseClient=false`;
-  const response = await fetchImpl(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(texts),
-    signal,
-  });
-  if (!response.ok) throw httpError(response.status, '微软翻译');
-  let payload: unknown;
+  const timeout = withTimeoutSignal(signal, timeoutMs);
+  let response: Response;
   try {
-    payload = await response.json();
-  } catch {
-    throw new TranslationError('微软翻译返回了无法解析的数据', true);
+    response = await fetchImpl(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(texts),
+      signal: timeout.signal,
+    });
+  } catch (error) {
+    timeout.cleanup();
+    wrapTransportError(error, signal, timeout);
   }
-  if (!Array.isArray(payload) || payload.length !== texts.length) {
-    throw new TranslationError('微软翻译返回的条数不一致', false);
+  try {
+    if (!response.ok) {
+      const error = httpError(response.status, '微软翻译');
+      const retryAfterMs = parseRetryAfter(response.headers?.get?.('retry-after'));
+      if (retryAfterMs !== undefined) error.retryAfterMs = retryAfterMs;
+      throw error;
+    }
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch (error) {
+      if (signal?.aborted || timeout.didTimeout()) wrapTransportError(error, signal, timeout);
+      throw new TranslationError('微软翻译返回了无法解析的数据', true);
+    }
+    if (!Array.isArray(payload) || payload.length !== texts.length) {
+      throw new TranslationError('微软翻译返回的条数不一致', false);
+    }
+    return payload.map((item: unknown) => {
+      const translations = (item as { translations?: { text?: unknown }[] } | null)?.translations;
+      const value = Array.isArray(translations) ? translations[0]?.text : undefined;
+      if (typeof value !== 'string') throw new TranslationError('微软翻译返回的数据不完整', false);
+      return value;
+    });
+  } finally {
+    timeout.cleanup();
   }
-  return payload.map((item: unknown) => {
-    const translations = (item as { translations?: { text?: unknown }[] } | null)?.translations;
-    const value = Array.isArray(translations) ? translations[0]?.text : undefined;
-    if (typeof value !== 'string') throw new TranslationError('微软翻译返回的数据不完整', false);
-    return value;
-  });
+}
+
+export interface TranslationGlossaryEntry {
+  surface: string;
+  reading?: string;
 }
 
 const TARGET_NAMES: Record<string, string> = { 'zh-Hans': 'Simplified Chinese', 'zh-Hant': 'Traditional Chinese', en: 'English' };
@@ -194,35 +285,69 @@ function systemPrompt(target: string): string {
   ].join(' ');
 }
 
-function userPrompt(texts: string[], context: string[]): string {
-  const lines = context.filter(line => line.trim()).map(line => line.trim());
-  const header = lines.length ? `Context (previous lines, do not translate):\n${lines.join('\n')}\n\n` : '';
-  return `${header}Sentences to translate (JSON array):\n${JSON.stringify(texts)}`;
+function matchGlossary(texts: string[], context: string[], entries: TranslationGlossaryEntry[]): TranslationGlossaryEntry[] {
+  if (!entries.length) return [];
+  const haystack = `${context.join('\n')}\n${texts.join('\n')}`;
+  const seen = new Set<string>();
+  const matched: TranslationGlossaryEntry[] = [];
+  const sorted = [...entries].sort((a, b) => b.surface.length - a.surface.length);
+  for (const entry of sorted) {
+    const surface = entry.surface.trim();
+    if (!surface || seen.has(surface) || !haystack.includes(surface)) continue;
+    seen.add(surface);
+    matched.push({ surface, reading: entry.reading?.trim() });
+    if (matched.length >= 20) break;
+  }
+  return matched;
 }
 
-/** First balanced JSON array in the text, so surrounding prose does not matter. */
-function firstJsonArray(source: string): string | undefined {
-  const start = source.indexOf('[');
-  if (start < 0) return undefined;
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let index = start; index < source.length; index++) {
-    const char = source[index];
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (char === '\\') escaped = true;
-      else if (char === '"') inString = false;
-      continue;
+function userPrompt(texts: string[], context: string[], glossary: TranslationGlossaryEntry[] = []): string {
+  const parts: string[] = [];
+  const terms = matchGlossary(texts, context, glossary);
+  if (terms.length) {
+    const rows = terms.map(term => (term.reading ? `- ${term.surface} (${term.reading})` : `- ${term.surface}`));
+    parts.push(`Glossary (keep proper-noun names/readings consistent, do not translate literally):\n${rows.join('\n')}`);
+  }
+  const lines = context.filter(line => line.trim()).map(line => line.trim());
+  if (lines.length) parts.push(`Context (previous lines, do not translate):\n${lines.join('\n')}`);
+  parts.push(`Sentences to translate (JSON array):\n${JSON.stringify(texts)}`);
+  return parts.join('\n\n');
+}
+
+/** Iterates balanced JSON arrays `[...]` in the text, skipping string contents. */
+function findJsonArrays(source: string): string[] {
+  const arrays: string[] = [];
+  let pos = 0;
+  while (pos < source.length) {
+    const start = source.indexOf('[', pos);
+    if (start < 0) break;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let end = -1;
+    for (let index = start; index < source.length; index++) {
+      const char = source[index];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (char === '\\') escaped = true;
+        else if (char === '"') inString = false;
+        continue;
+      }
+      if (char === '"') inString = true;
+      else if (char === '[') depth += 1;
+      else if (char === ']') {
+        depth -= 1;
+        if (depth === 0) { end = index; break; }
+      }
     }
-    if (char === '"') inString = true;
-    else if (char === '[') depth += 1;
-    else if (char === ']') {
-      depth -= 1;
-      if (depth === 0) return source.slice(start, index + 1);
+    if (end >= 0) {
+      arrays.push(source.slice(start, end + 1));
+      pos = end + 1;
+    } else {
+      pos = start + 1;
     }
   }
-  return undefined;
+  return arrays;
 }
 
 const stringList = (value: unknown): string[] | undefined =>
@@ -244,56 +369,63 @@ const LLM_INSTRUCTION = /(?:需要翻译的句子|Sentences to translate)\s*[（
 
 /**
  * Extracts every fully-closed string element of the top-level JSON array from a growing streamed reply,
- * skipping `<think>…</think>` blocks and markdown code fences.
+ * skipping `<think>…</think>` blocks, markdown code fences, and non-string preamble brackets like `[2]`.
  */
 export function parseIncrementalArray(reply: string): string[] {
   const text = cleanLlmReply(reply);
-  const start = text.indexOf('[');
-  if (start < 0) return [];
-  const items: string[] = [];
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  let token = '';
-  for (let index = start; index < text.length; index++) {
-    const char = text[index];
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-        if (depth === 1) {
-          if (char === 'n') token += '\n';
-          else if (char === 'r') token += '\r';
-          else if (char === 't') token += '\t';
-          else if (char === 'b') token += '\b';
-          else if (char === 'f') token += '\f';
-          else if (char === 'u' && /^[0-9a-fA-F]{4}/.test(text.slice(index + 1, index + 5))) {
-            token += String.fromCharCode(parseInt(text.slice(index + 1, index + 5), 16));
-            index += 4;
-          } else {
-            token += char;
+  let pos = 0;
+  while (pos < text.length) {
+    const start = text.indexOf('[', pos);
+    if (start < 0) return [];
+    const items: string[] = [];
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let token = '';
+    let closedAt = -1;
+    for (let index = start; index < text.length; index++) {
+      const char = text[index];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+          if (depth === 1) {
+            if (char === 'n') token += '\n';
+            else if (char === 'r') token += '\r';
+            else if (char === 't') token += '\t';
+            else if (char === 'b') token += '\b';
+            else if (char === 'f') token += '\f';
+            else if (char === 'u' && /^[0-9a-fA-F]{4}/.test(text.slice(index + 1, index + 5))) {
+              token += String.fromCharCode(parseInt(text.slice(index + 1, index + 5), 16));
+              index += 4;
+            } else {
+              token += char;
+            }
           }
+        } else if (char === '\\') {
+          escaped = true;
+        } else if (char === '"') {
+          inString = false;
+          if (depth === 1) items.push(token);
+        } else if (depth === 1) {
+          token += char;
         }
-      } else if (char === '\\') {
-        escaped = true;
-      } else if (char === '"') {
-        inString = false;
-        if (depth === 1) items.push(token);
-      } else if (depth === 1) {
-        token += char;
+        continue;
       }
-      continue;
+      if (char === '"') {
+        inString = true;
+        if (depth === 1) token = '';
+      } else if (char === '[' || char === '{') {
+        depth += 1;
+      } else if (char === ']' || char === '}') {
+        depth -= 1;
+        if (depth <= 0) { closedAt = index; break; }
+      }
     }
-    if (char === '"') {
-      inString = true;
-      if (depth === 1) token = '';
-    } else if (char === '[' || char === '{') {
-      depth += 1;
-    } else if (char === ']' || char === '}') {
-      depth -= 1;
-      if (depth <= 0) break;
-    }
+    if (items.length > 0 || closedAt < 0) return items;
+    // Preamble brackets like `[2]` closed with zero strings: continue to the real array.
+    pos = closedAt + 1;
   }
-  return items;
+  return [];
 }
 
 /** Platform-specific parameters to turn off or minimize chain-of-thought reasoning for translation speed. */
@@ -313,6 +445,15 @@ function chatHeaders(llm: LlmSettings): Record<string, string> {
   return headers;
 }
 
+function cleanPlainReply(reply: string, source: string): string {
+  let out = cleanLlmReply(reply).trim();
+  // Always strip ASCII JSON/code quotes around a plain reply, but preserve CJK dialogue quotes when the source had them.
+  out = out.replace(/^["']|["']$/g, '').trim();
+  const hasOpeningDialogueQuote = /^[「『“]/.test(source.trim());
+  if (!hasOpeningDialogueQuote) out = out.replace(/^[「“]|[」”]$/g, '').trim();
+  return out;
+}
+
 /**
  * Read the model's translations, forgiving what models really send: an object around the array, single
  * quotes, trailing commas, unescaped double quotes inside a translation, or a numbered list.
@@ -320,12 +461,43 @@ function chatHeaders(llm: LlmSettings): Record<string, string> {
 export function parseLlmTranslations(reply: string, expected: number): string[] {
   const text = cleanLlmReply(reply);
   const attempts: (() => string[] | undefined)[] = [
-    () => { const raw = firstJsonArray(text); return raw ? stringList(JSON.parse(raw)) : undefined; },
     () => {
-      const parsed: unknown = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1));
-      return parsed && typeof parsed === 'object' ? Object.values(parsed).map(stringList).find(Boolean) : undefined;
+      for (const raw of findJsonArrays(text)) {
+        try {
+          const parsed = stringList(JSON.parse(raw));
+          if (parsed) return parsed;
+        } catch {
+          // Try next balanced array candidate (e.g. skip preamble `[2]`).
+        }
+      }
+      return undefined;
     },
-    () => { const raw = firstJsonArray(text); return raw ? stringList(JSON.parse(raw.replace(/,\s*\]$/, ']'))) : undefined; },
+    () => {
+      const start = text.indexOf('{');
+      const end = text.lastIndexOf('}');
+      if (start < 0 || end <= start) return undefined;
+      const parsed: unknown = JSON.parse(text.slice(start, end + 1));
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+      const nested = Object.values(parsed).map(stringList).find(Boolean);
+      if (nested) return nested;
+      const entries = Object.entries(parsed);
+      if (!entries.length) return undefined;
+      if (entries.every(([k]) => /^\d+$/.test(k))) {
+        entries.sort(([a], [b]) => Number(a) - Number(b));
+      }
+      return stringList(entries.map(([, v]) => v));
+    },
+    () => {
+      for (const raw of findJsonArrays(text)) {
+        try {
+          const parsed = stringList(JSON.parse(raw.replace(/,\s*\]$/, ']')));
+          if (parsed) return parsed;
+        } catch {
+          // Try next candidate.
+        }
+      }
+      return undefined;
+    },
     // ["他说："你好"。", "…"]: split between items instead of trusting the quotes inside them.
     () => {
       const open = text.search(/\[\s*["']/);
@@ -351,25 +523,35 @@ export function parseLlmTranslations(reply: string, expected: number): string[] 
       return items.length ? items.map(item => item.replace(/^["'「“]|["'」”],?$/g, '')) : undefined;
     },
   ];
-  let found: string[] | undefined;
+  let mismatch: string[] | undefined;
   for (const attempt of attempts) {
+    let found: string[] | undefined;
     try { found = attempt(); } catch { found = undefined; }
     if (found?.length === expected) return found;
+    if (found) mismatch ??= found;
   }
-  if (found) throw new TranslationError('译文条数不一致', false);
+  if (mismatch) throw new TranslationError('译文条数不一致', false);
   throw new TranslationError('模型返回的 JSON 无法解析', false);
 }
 
 /** Keep the actual answer out of a prompt-echoing reply; reject a bare prompt fragment. */
-function usableLlmReply(reply: string): string | undefined {
-  const bare = cleanLlmReply(reply).replace(/^["'「“]|["'」”]$/g, '').trim();
+function usableLlmReply(reply: string, source = ''): string | undefined {
+  const bare = cleanLlmReply(reply).trim();
   if (!bare) return undefined;
   if (LLM_INSTRUCTION.test(bare)) {
-    try { return parseLlmTranslations(bare, 1).find(item => item.trim())?.trim(); }
-    catch { return undefined; }
+    try {
+      const extracted = parseLlmTranslations(bare, 1).find(item => item.trim());
+      return extracted ? cleanPlainReply(extracted, source) || undefined : undefined;
+    } catch {
+      return undefined;
+    }
   }
-  try { return parseLlmTranslations(bare, 1)[0].trim() || undefined; }
-  catch { return bare; }
+  try {
+    const parsed = parseLlmTranslations(bare, 1)[0].trim();
+    return parsed ? (cleanPlainReply(parsed, source) || undefined) : undefined;
+  } catch {
+    return cleanPlainReply(bare, source) || undefined;
+  }
 }
 
 /** Do not retain old prompt-echoing cache rows; recover the truncated array when possible. */
@@ -399,6 +581,33 @@ function extractContentPiece(content: unknown): string {
   return '';
 }
 
+function extractErrorDetail(body: unknown): string | undefined {
+  if (typeof body === 'string') return body;
+  if (Array.isArray(body)) return body.length ? extractErrorDetail(body[0]) : undefined;
+  if (!body || typeof body !== 'object') return undefined;
+  const obj = body as { error?: unknown; message?: unknown; msg?: unknown; detail?: unknown };
+  if (typeof obj.error === 'string') return obj.error;
+  if (obj.error && typeof obj.error === 'object') {
+    const nested = extractErrorDetail(obj.error);
+    if (nested) return nested;
+  }
+  if (typeof obj.message === 'string') return obj.message;
+  if (typeof obj.msg === 'string') return obj.msg;
+  if (typeof obj.detail === 'string') return obj.detail;
+  return undefined;
+}
+
+function sseStreamError(parsed: unknown): TranslationError | null {
+  if (!parsed || typeof parsed !== 'object') return null;
+  const err = (parsed as { error?: unknown }).error;
+  if (!err) return null;
+  const detail = extractErrorDetail({ error: err })?.trim();
+  const code = typeof err === 'object' && err !== null ? Number((err as { code?: unknown; status?: unknown }).code ?? (err as { status?: unknown }).status) : NaN;
+  const retryable = code === 408 || code === 429 || (Number.isFinite(code) && code >= 500)
+    || Boolean(detail && /rate.?limit|overloaded|timeout|temporarily/i.test(detail));
+  return new TranslationError(detail ? `模型翻译失败：${detail.slice(0, 160)}` : '模型翻译失败', retryable);
+}
+
 export async function chat(
   url: string,
   llm: LlmSettings,
@@ -407,93 +616,122 @@ export async function chat(
   signal?: AbortSignal,
   onText?: (accumulated: string) => void,
   includeReasoning = true,
+  timeoutMs = LLM_TIMEOUT_MS,
 ): Promise<string> {
+  throwIfAborted(signal);
   const extra = includeReasoning ? reasoningParams(llm) : {};
-  const response = await fetchImpl(url, {
-    method: 'POST',
-    headers: chatHeaders(llm),
-    body: JSON.stringify({ model: llm.model, temperature: 0.3, stream: true, ...extra, messages }),
-    signal,
-  });
-  if (!response.ok) {
-    // Platforms explain refusals in the body (balance, real-name verification, unknown model…): show that.
-    const rawClone = typeof response.clone === 'function' ? response.clone() : undefined;
-    const detail = await response.json().then(
-      (body: { error?: { message?: unknown } | string; message?: unknown }) =>
-        typeof body === 'string' ? body : typeof body?.error === 'string' ? body.error : body?.error?.message ?? body?.message,
-      () => rawClone?.text?.().catch(() => undefined),
-    );
-    if (
-      response.status === 400 &&
-      includeReasoning &&
-      Object.keys(extra).length > 0 &&
-      typeof detail === 'string' &&
-      REASONING_PARAM_NAMES.some(name => detail.includes(name))
-    ) {
-      logEvent('info', 'translate', `${llm.model}: 400 on reasoning params (${Object.keys(extra).join(', ')}), retrying without them`);
-      return chat(url, llm, messages, fetchImpl, signal, onText, false);
-    }
-    const error = httpError(response.status, '模型翻译');
-    if (typeof detail === 'string' && detail.trim()) error.message += `：${detail.trim().slice(0, 160)}`;
-    const wait = Number(response.headers?.get?.('retry-after'));
-    if (Number.isFinite(wait) && wait > 0) error.retryAfterMs = Math.min(30, wait) * 1000;
-    throw error;
-  }
-  const contentType = response.headers?.get?.('content-type') ?? '';
-  if (/text\/event-stream/i.test(contentType) && response.body) {
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let accumulated = '';
-    const consumeLine = (rawLine: string) => {
-      const line = rawLine.trim();
-      if (!line.startsWith('data:')) return;
-      const data = line.slice(5).trim();
-      if (!data || data === '[DONE]') return;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(data);
-      } catch {
-        return;
-      }
-      const choice = (parsed as { choices?: { delta?: { content?: unknown }; message?: { content?: unknown } }[] } | null)?.choices?.[0];
-      const piece = extractContentPiece(choice?.delta?.content ?? choice?.message?.content);
-      if (piece) {
-        accumulated += piece;
-        onText?.(accumulated);
-      }
-    };
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let newline = buffer.indexOf('\n');
-      while (newline >= 0) {
-        consumeLine(buffer.slice(0, newline));
-        buffer = buffer.slice(newline + 1);
-        newline = buffer.indexOf('\n');
-      }
-    }
-    buffer += decoder.decode();
-    if (buffer.trim()) {
-      for (const line of buffer.split('\n')) consumeLine(line);
-    }
-    if (!cleanLlmReply(accumulated)) throw new TranslationError('模型没有返回译文', false);
-    return accumulated;
-  }
-  let payload: unknown;
+  const timeout = withTimeoutSignal(signal, timeoutMs);
+  let response: Response;
   try {
-    payload = await response.json();
-  } catch {
-    throw new TranslationError('模型返回了无法解析的数据', true);
+    response = await fetchImpl(url, {
+      method: 'POST',
+      headers: chatHeaders(llm),
+      body: JSON.stringify({ model: llm.model, temperature: 0.3, stream: true, ...extra, messages }),
+      signal: timeout.signal,
+    });
+  } catch (error) {
+    timeout.cleanup();
+    wrapTransportError(error, signal, timeout);
   }
-  const content = (payload as { choices?: { message?: { content?: unknown } }[] } | null)?.choices?.[0]?.message?.content;
-  // Some endpoints send content as parts: [{ type: 'text', text }].
-  const reply = Array.isArray(content)
-    ? content.map(part => (typeof part === 'string' ? part : (part as { text?: unknown })?.text)).filter(part => typeof part === 'string').join('')
-    : content;
-  if (typeof reply !== 'string' || !cleanLlmReply(reply)) throw new TranslationError('模型没有返回译文', false);
-  return reply;
+  try {
+    if (!response.ok) {
+      // Platforms explain refusals in the body (balance, real-name verification, unknown model…): show that.
+      const rawClone = typeof response.clone === 'function' ? response.clone() : undefined;
+      const detail = await response.json().then(
+        extractErrorDetail,
+        async () => {
+          const textBody = await rawClone?.text?.().catch(() => undefined);
+          return textBody && !/^\s*</.test(textBody) ? textBody : undefined;
+        },
+      );
+      if (
+        response.status === 400 &&
+        includeReasoning &&
+        Object.keys(extra).length > 0 &&
+        typeof detail === 'string' &&
+        (REASONING_PARAM_NAMES.some(name => detail.includes(name)) || /extra_inputs|unknown\s+(?:parameter|field)|unrecognized\s+request\s+argument/i.test(detail))
+      ) {
+        logEvent('info', 'translate', `${llm.model}: 400 on reasoning params (${Object.keys(extra).join(', ')}), retrying without them`);
+        timeout.cleanup();
+        return chat(url, llm, messages, fetchImpl, signal, onText, false, timeoutMs);
+      }
+      const error = httpError(response.status, '模型翻译');
+      if (typeof detail === 'string' && detail.trim()) error.message += `：${detail.trim().slice(0, 160)}`;
+      const retryAfterMs = parseRetryAfter(response.headers?.get?.('retry-after'));
+      if (retryAfterMs !== undefined) error.retryAfterMs = retryAfterMs;
+      throw error;
+    }
+    const contentType = response.headers?.get?.('content-type') ?? '';
+    if (/text\/event-stream/i.test(contentType) && response.body) {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let accumulated = '';
+      const consumeLine = (rawLine: string) => {
+        const line = rawLine.trim();
+        if (!line.startsWith('data:')) return;
+        const data = line.slice(5).trim();
+        if (!data || data === '[DONE]') return;
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(data);
+        } catch {
+          return;
+        }
+        const streamErr = sseStreamError(parsed);
+        if (streamErr) throw streamErr;
+        const choice = (parsed as { choices?: { delta?: { content?: unknown }; message?: { content?: unknown } }[] } | null)?.choices?.[0];
+        const piece = extractContentPiece(choice?.delta?.content ?? choice?.message?.content);
+        if (piece) {
+          accumulated += piece;
+          onText?.(accumulated);
+        }
+      };
+      try {
+        while (true) {
+          let chunk: ReadableStreamReadResult<Uint8Array>;
+          try {
+            chunk = await reader.read();
+          } catch (error) {
+            wrapTransportError(error, signal, timeout);
+          }
+          if (chunk.done) break;
+          timeout.reset();
+          buffer += decoder.decode(chunk.value, { stream: true });
+          let newline = buffer.indexOf('\n');
+          while (newline >= 0) {
+            consumeLine(buffer.slice(0, newline));
+            buffer = buffer.slice(newline + 1);
+            newline = buffer.indexOf('\n');
+          }
+        }
+        buffer += decoder.decode();
+        if (buffer.trim()) {
+          for (const line of buffer.split('\n')) consumeLine(line);
+        }
+      } finally {
+        try { void reader.cancel().catch(() => undefined); } catch { /* ignore */ }
+      }
+      if (!cleanLlmReply(accumulated)) throw new TranslationError('模型没有返回译文', false);
+      return accumulated;
+    }
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch (error) {
+      if (signal?.aborted || timeout.didTimeout()) wrapTransportError(error, signal, timeout);
+      throw new TranslationError('模型返回了无法解析的数据', true);
+    }
+    const content = (payload as { choices?: { message?: { content?: unknown } }[] } | null)?.choices?.[0]?.message?.content;
+    // Some endpoints send content as parts: [{ type: 'text', text }].
+    const reply = Array.isArray(content)
+      ? content.map(part => (typeof part === 'string' ? part : (part as { text?: unknown })?.text)).filter(part => typeof part === 'string').join('')
+      : content;
+    if (typeof reply !== 'string' || !cleanLlmReply(reply)) throw new TranslationError('模型没有返回译文', false);
+    return reply;
+  } finally {
+    timeout.cleanup();
+  }
 }
 
 /**
@@ -509,10 +747,12 @@ export async function translateLlm(
   signal?: AbortSignal,
   context: string[] = [],
   onItem?: (index: number, text: string) => void,
+  glossary: TranslationGlossaryEntry[] = [],
+  timeoutMs = LLM_TIMEOUT_MS,
 ): Promise<string[]> {
   if (!texts.length) return [];
   if (!llm.apiKey.trim() && llmNeedsApiKey(llm)) throw new TranslationError('请先在设置里填写 API Key', false);
-  const url = `${llm.baseUrl.replace(/\/+$/, '')}/chat/completions`;
+  const url = `${llm.baseUrl.trim().replace(/\/+$/, '')}/chat/completions`;
   const language = TARGET_NAMES[target] || target;
   let emitted = 0;
   const handleText = onItem
@@ -529,56 +769,64 @@ export async function translateLlm(
     try {
       const reply = await chat(url, llm, [
         { role: 'system', content: systemPrompt(target) },
-        { role: 'user', content: userPrompt(texts, context) },
-      ], fetchImpl, signal, handleText);
+        { role: 'user', content: userPrompt(texts, context, glossary) },
+      ], fetchImpl, signal, handleText, true, timeoutMs);
       try {
         const [one] = parseLlmTranslations(reply, 1);
         if (!one.trim()) throw new TranslationError('模型没有返回译文', false);
         return [one];
       } catch (error) {
         // A one-sentence answer without the array around it is still the answer.
-        const bare = usableLlmReply(reply);
-        if (bare && !/^[[{]/.test(cleanLlmReply(reply))) return [bare];
+        const bare = cleanLlmReply(reply);
+        if (bare && !/^[[{]/.test(bare) && !bare.includes('\n\n')) {
+          const plain = usableLlmReply(reply, texts[0]);
+          if (plain) return [plain];
+        }
         throw error;
       }
     } catch (error) {
       if (!(error instanceof TranslationError) || !FORMAT_ERRORS.has(error.message)) throw error;
       logEvent('info', 'translate', `${llm.model}: single sentence asked as plain text (${error.message.includes('JSON') ? 'unreadable reply' : 'empty reply'})`);
-      const reply = cleanLlmReply(await chat(url, llm, [
+      const reply = await chat(url, llm, [
         { role: 'system', content: `Translate the Japanese text into ${language}. Reply with the translation only, no quotes, notes or explanations.` },
         { role: 'user', content: texts[0] },
-      ], fetchImpl, signal));
-      const usable = usableLlmReply(reply);
-      if (!usable) throw new TranslationError('模型返回的 JSON 无法解析', false);
-      return [usable];
+      ], fetchImpl, signal, undefined, true, timeoutMs);
+      const plain = usableLlmReply(reply, texts[0]);
+      if (!plain) throw new TranslationError('模型没有返回译文', true);
+      return [plain];
     }
   }
   try {
     const reply = await chat(url, llm, [
       { role: 'system', content: systemPrompt(target) },
-      { role: 'user', content: userPrompt(texts, context) },
-    ], fetchImpl, signal, handleText);
+      { role: 'user', content: userPrompt(texts, context, glossary) },
+    ], fetchImpl, signal, handleText, true, timeoutMs);
     const list = parseLlmTranslations(reply, texts.length);
     // Some models answer with the right number of items but leave some empty: ask those one by one.
     const empty = list.map((item, index) => (item.trim() ? -1 : index)).filter(index => index >= 0);
     if (empty.length) {
       logEvent('info', 'translate', `${llm.model}: ${empty.length}/${texts.length} empty items, asked again one by one`);
-      for (const index of empty) [list[index]] = await translateLlm([texts[index]], target, llm, fetchImpl, signal, texts.slice(Math.max(0, index - 3), index));
+      for (const index of empty) {
+        const itemContext = [...context, ...texts.slice(0, index)].filter(needsTranslation).slice(-CONTEXT_LINES);
+        [list[index]] = await translateLlm([texts[index]], target, llm, fetchImpl, signal, itemContext, undefined, glossary, timeoutMs);
+      }
     }
     return list;
   } catch (error) {
     if (!(error instanceof TranslationError) || !FORMAT_ERRORS.has(error.message)) throw error;
     logEvent('info', 'translate', `${llm.model}: batch of ${texts.length} unreadable (${error.message === '译文条数不一致' ? 'wrong count' : 'not JSON'}), split in half`);
     const half = Math.ceil(texts.length / 2);
-    const first = await translateLlm(texts.slice(0, half), target, llm, fetchImpl, signal, context, onItem);
+    const first = await translateLlm(texts.slice(0, half), target, llm, fetchImpl, signal, context, onItem, glossary, timeoutMs);
     const second = await translateLlm(
       texts.slice(half),
       target,
       llm,
       fetchImpl,
       signal,
-      [...context, ...texts.slice(0, half)].slice(-3),
+      [...context, ...texts.slice(0, half)].filter(needsTranslation).slice(-CONTEXT_LINES),
       onItem ? (index, value) => onItem(half + index, value) : undefined,
+      glossary,
+      timeoutMs,
     );
     return [...first, ...second];
   }
@@ -623,6 +871,9 @@ export interface TranslatorOptions {
   batchSize?: number;
   maxChars?: number;
   concurrency?: number;
+  glossary?: () => TranslationGlossaryEntry[];
+  requestTimeoutMs?: number;
+  retryDelays?: number[];
 }
 
 interface PendingText {
@@ -662,13 +913,40 @@ function compareRank(a: [number, number, number], b: [number, number, number]): 
 
 class Lanes {
   private running = 0;
-  private waiting: { rank: [number, number, number]; start: () => void }[] = [];
+  private waiting: { rank: [number, number, number]; start: () => void; abort: () => void }[] = [];
 
   constructor(private readonly limit: () => number) {}
 
-  run(rank: [number, number, number], task: () => Promise<void>): Promise<void> {
+  run(rank: [number, number, number], task: () => Promise<void>, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) return Promise.reject(abortError());
     return new Promise<void>((resolve, reject) => {
-      this.waiting.push({ rank, start: () => { task().then(resolve, reject).finally(() => { this.running--; this.pump(); }); } });
+      const cleanup = () => signal?.removeEventListener('abort', onAbort);
+      const entry = {
+        rank,
+        start: () => {
+          cleanup();
+          if (signal?.aborted) {
+            this.running--;
+            this.pump();
+            reject(abortError());
+            return;
+          }
+          task().then(resolve, reject).finally(() => { this.running--; this.pump(); });
+        },
+        abort: () => {
+          cleanup();
+          reject(abortError());
+        },
+      };
+      const onAbort = () => {
+        const index = this.waiting.indexOf(entry);
+        if (index >= 0) {
+          this.waiting.splice(index, 1);
+          entry.abort();
+        }
+      };
+      signal?.addEventListener('abort', onAbort, { once: true });
+      this.waiting.push(entry);
       this.pump();
     });
   }
@@ -694,7 +972,7 @@ class Lanes {
  */
 export function translationCacheKey(settings: TranslationSettings): string {
   if (settings.engine !== 'llm') return settings.target;
-  return `${settings.target}|${settings.llm.baseUrl.replace(/\/+$/, '')}|${settings.llm.model}`;
+  return `${settings.target}|${settings.llm.baseUrl.trim().replace(/\/+$/, '')}|${settings.llm.model.trim()}`;
 }
 
 export interface TranslateOptions {
@@ -707,6 +985,8 @@ export interface TranslateOptions {
   background?: boolean;
   /** How many of the texts are on screen: they get batches of their own. */
   leading?: number;
+  /** Preceding sentences from an earlier chunk, used only as LLM context. */
+  context?: string[];
 }
 
 export class Translator {
@@ -716,6 +996,9 @@ export class Translator {
   private readonly batchSize?: number;
   private readonly maxChars?: number;
   private readonly concurrency?: number;
+  private readonly glossary?: () => TranslationGlossaryEntry[];
+  private readonly requestTimeoutMs?: number;
+  private readonly retryDelays: number[];
   private readonly lanes: Lanes;
   private calls = 0;
 
@@ -726,6 +1009,9 @@ export class Translator {
     this.batchSize = options.batchSize;
     this.maxChars = options.maxChars;
     this.concurrency = options.concurrency;
+    this.glossary = options.glossary;
+    this.requestTimeoutMs = options.requestTimeoutMs;
+    this.retryDelays = options.retryDelays ?? RETRY_DELAYS;
     this.lanes = new Lanes(() => this.concurrency ?? translationConcurrency(this.settings()));
   }
 
@@ -747,22 +1033,24 @@ export class Translator {
     onItem?: (index: number, text: string) => void,
   ): Promise<string[]> {
     const settings = this.settings();
+    const glossary = engine === 'llm' ? (this.glossary?.() ?? []) : [];
+    const timeoutMs = this.requestTimeoutMs ?? (engine === 'llm' ? LLM_TIMEOUT_MS : MICROSOFT_TIMEOUT_MS);
     for (let attempt = 0; ; attempt++) {
       throwIfAborted(signal);
       try {
         return engine === 'llm'
-          ? await translateLlm(texts, target, settings.llm, this.fetchImpl, signal, context, onItem)
-          : await translateMicrosoft(texts, target, this.fetchImpl, signal);
+          ? await translateLlm(texts, target, settings.llm, this.fetchImpl, signal, context, onItem, glossary, timeoutMs)
+          : await translateMicrosoft(texts, target, this.fetchImpl, signal, timeoutMs);
       } catch (error) {
         const retryable = error instanceof TranslationError && error.retryable;
         const model = engine === 'llm' ? `${settings.llm.provider ?? 'custom'} ${settings.llm.model}` : 'microsoft';
         const message = error instanceof Error ? error.message : String(error);
-        if (!retryable || attempt >= RETRY_DELAYS.length) {
+        if (!retryable || attempt >= this.retryDelays.length) {
           if (!(error instanceof Error && error.name === 'AbortError')) logEvent('error', 'translate', `${model}: ${texts.length} sentences failed: ${message}`);
           throw error;
         }
         logEvent('warn', 'translate', `${model}: attempt ${attempt + 1} failed, retrying: ${message}`);
-        await delay(Math.max(RETRY_DELAYS[attempt], error instanceof TranslationError ? error.retryAfterMs ?? 0 : 0), signal);
+        await delay(Math.max(this.retryDelays[attempt], error instanceof TranslationError ? error.retryAfterMs ?? 0 : 0), signal);
       }
     }
   }
@@ -773,6 +1061,7 @@ export class Translator {
    * reader shows lines without waiting for the slowest batch.
    */
   async translate(bookId: string, texts: string[], signal?: AbortSignal, options: TranslateOptions = {}): Promise<Map<string, string>> {
+    throwIfAborted(signal);
     const settings = this.settings();
     const target = settings.target;
     const slot = translationCacheKey(settings);
@@ -792,6 +1081,7 @@ export class Translator {
     }
 
     const cached = await this.store.get(bookId, slot, pending.map(item => item.text));
+    throwIfAborted(signal);
     const misses = pending.filter(item => {
       if (!cached.has(item.text)) return true;
       const usable = usableCachedTranslation(engine, cached.get(item.text) as string);
@@ -802,25 +1092,40 @@ export class Translator {
     options.onPartial?.(new Map(result));
     if (!misses.length) return result;
 
+    let draftAbort: AbortController | null = null;
+    let stopDraft: (() => void) | null = null;
     if (engine === 'llm' && (settings.quickDraft ?? true) && !options.background && options.onPartial) {
-      try {
-        const missTexts = misses.map(item => item.text);
-        const drafts = await translateMicrosoft(missTexts, target, this.fetchImpl, signal);
-        const draftMap = new Map<string, string>();
-        missTexts.forEach((source, index) => {
-          const value = drafts[index];
-          if (typeof value === 'string') draftMap.set(source, value);
-        });
-        if (draftMap.size) options.onPartial(draftMap, true);
-      } catch {
-        // Microsoft draft is best-effort; ignore failures silently and proceed with the LLM.
-      }
+      draftAbort = new AbortController();
+      stopDraft = () => draftAbort?.abort();
+      if (signal?.aborted) draftAbort.abort();
+      else signal?.addEventListener('abort', stopDraft, { once: true });
+      const draftBatches = buildBatches(misses, ENGINE_LIMITS.microsoft, options.leading);
+      const draftSignal = draftAbort.signal;
+      const draftTimeoutMs = this.requestTimeoutMs ?? MICROSOFT_TIMEOUT_MS;
+      void Promise.all(draftBatches.map(async batch => {
+        try {
+          const batchTexts = batch.map(item => item.text);
+          const drafts = await translateMicrosoft(batchTexts, target, this.fetchImpl, draftSignal, draftTimeoutMs);
+          if (draftSignal.aborted) return;
+          const draftMap = new Map<string, string>();
+          batchTexts.forEach((source, index) => {
+            const value = drafts[index];
+            if (typeof value === 'string' && value.trim() && !result.has(source)) {
+              draftMap.set(source, value);
+            }
+          });
+          if (draftMap.size) options.onPartial?.(draftMap, true);
+        } catch {
+          // Microsoft draft is best-effort; ignore failures silently and proceed with the LLM.
+        }
+      }));
     }
 
+    const leadingContext = (options.context ?? []).filter(needsTranslation);
     const runBatch = async (batch: PendingText[]) => {
       const list = batch.map(item => item.text);
       const context = engine === 'llm'
-        ? texts.slice(Math.max(0, batch[0].order - CONTEXT_LINES), batch[0].order)
+        ? [...leadingContext, ...texts.slice(0, batch[0].order).filter(needsTranslation)].slice(-CONTEXT_LINES)
         : [];
       const translations = await this.request(engine, list, target, context, signal, (index, value) => {
         const source = list[index];
@@ -839,8 +1144,10 @@ export class Translator {
         result.set(source, usable);
         pairs.push([source, usable]);
       });
-      options.onPartial?.(new Map(pairs));
-      await this.store.put(bookId, slot, engine, pairs);
+      if (pairs.length) {
+        options.onPartial?.(new Map(pairs));
+        await this.store.put(bookId, slot, engine, pairs);
+      }
     };
 
     const batches = buildBatches(misses, this.limits(engine), options.leading);
@@ -848,15 +1155,21 @@ export class Translator {
     // The first failure stops this call's batches that have not started; ones already in flight finish and
     // keep their results, which is why a retry resumes from the cache.
     let failure: { error: unknown } | null = null;
-    await Promise.all(batches.map((batch, index) => this.lanes.run([options.background ? 1 : 0, -call, index], async () => {
-      if (failure) return;
-      try {
-        await runBatch(batch);
-      } catch (error) {
-        failure ??= { error };
-      }
-    })));
+    try {
+      await Promise.all(batches.map((batch, index) => this.lanes.run([options.background ? 1 : 0, -call, index], async () => {
+        if (failure || signal?.aborted) return;
+        try {
+          await runBatch(batch);
+        } catch (error) {
+          failure ??= { error };
+        }
+      }, signal)));
+    } finally {
+      draftAbort?.abort();
+      if (stopDraft) signal?.removeEventListener('abort', stopDraft);
+    }
     if (failure) throw (failure as { error: unknown }).error;
+    throwIfAborted(signal);
     return result;
   }
 
@@ -883,11 +1196,13 @@ export class Translator {
     }
     const report = () => onProgress(done.filter(Boolean).length, total);
     report();
+    let prevContext: string[] = [];
     for (let start = 0; start < total; start += PRETRANSLATE_CHUNK) {
       throwIfAborted(signal);
       const chunk = texts.slice(start, start + PRETRANSLATE_CHUNK);
-      await this.translate(bookId, chunk, signal, { background: true });
+      await this.translate(bookId, chunk, signal, { background: true, context: prevContext });
       throwIfAborted(signal);
+      prevContext = chunk.filter(needsTranslation).slice(-CONTEXT_LINES);
       done.fill(true, start, start + chunk.length);
       report();
     }

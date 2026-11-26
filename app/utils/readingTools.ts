@@ -20,7 +20,7 @@ export interface DictionaryInfo {
 export interface ReaderTools {
   lookup(text: string, offset: number, onPreparing?: (progress: number) => void): Promise<LookupResult | null>;
   /** `onPartial` receives each part as it is ready (cache first, then batch by batch); `leading` texts are on screen. */
-  translate(bookId: string, texts: string[], options?: Pick<TranslateOptions, 'onPartial' | 'leading'>): Promise<Map<string, string>>;
+  translate(bookId: string, texts: string[], options?: Pick<TranslateOptions, 'onPartial' | 'leading'>, signal?: AbortSignal): Promise<Map<string, string>>;
   countTranslated(bookId: string, texts: string[]): Promise<number>;
   pretranslate(bookId: string, texts: string[], onProgress: (done: number, total: number) => void, signal?: AbortSignal): Promise<void>;
   /** Changes with the engine, model or target language: the reader then shows (and fetches) that slot's translations. */
@@ -86,7 +86,7 @@ export function createReaderTools(options: {
       const dictionaries = getDictionaryStore();
       return lookupAt(text, offset, tokens, terms => dictionaries.find(terms));
     },
-    translate: (bookId, texts, options) => translator.translate(bookId, texts, undefined, options),
+    translate: (bookId, texts, opts, signal) => translator.translate(bookId, texts, signal, opts),
     countTranslated: (bookId, texts) => store.count(bookId, translationCacheKey(options.settings), texts),
     pretranslate: (bookId, texts, onProgress, signal) => translator.pretranslate(bookId, texts, onProgress, signal),
     settingsKey: translationCacheKey(options.settings),

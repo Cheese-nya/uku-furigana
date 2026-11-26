@@ -6,8 +6,8 @@ export interface Sentence {
 
 // A sentence ends after a run of these (！？ / ……), so the run stays with the sentence.
 const TERMINATORS = new Set(['。', '．', '！', '？', '!', '?', '…']);
-const OPENERS = new Set(['「', '『', '（', '(', '【', '〈', '《', '“']);
-const CLOSERS = new Set(['」', '』', '）', ')', '】', '〉', '》', '”']);
+const OPENERS = new Set(['「', '『', '（', '(', '【', '〈', '《', '〔', '［', '[', '｛', '“', '〝']);
+const CLOSERS = new Set(['」', '』', '）', ')', '】', '〉', '》', '〕', '］', ']', '｝', '”', '〟']);
 
 function isSpace(char: string): boolean {
   return /\s/.test(char);

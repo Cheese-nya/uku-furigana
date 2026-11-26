@@ -76,8 +76,13 @@ const NOT_CHAT = /embed|whisper|tts|speech|audio|asr|gsr|ocr|captioner|rerank|im
 export function modelPrice(providerId: string, id: string, pricing?: { prompt?: unknown; completion?: unknown }): ModelPrice {
   // Groq lists pay-as-you-go prices, yet its free tier covers every model (with rate limits).
   if (providerId === 'groq') return 'quota';
-  if (pricing && pricing.prompt !== undefined) {
-    return Number(pricing.prompt) === 0 && Number(pricing.completion ?? 0) === 0 ? 'free' : 'paid';
+  if (pricing && pricing.prompt !== undefined && pricing.prompt !== null && pricing.prompt !== '') {
+    const prompt = Number(pricing.prompt);
+    const completionRaw = pricing.completion;
+    const completion = completionRaw === undefined || completionRaw === null || completionRaw === '' ? 0 : Number(completionRaw);
+    if (Number.isFinite(prompt) && Number.isFinite(completion)) {
+      return prompt === 0 && completion === 0 ? 'free' : 'paid';
+    }
   }
   if (id.endsWith(':free')) return 'free';
   switch (providerId) {
@@ -90,21 +95,39 @@ export function modelPrice(providerId: string, id: string, pricing?: { prompt?: 
 }
 
 const PRICE_ORDER: Record<ModelPrice, number> = { free: 0, quota: 1, unknown: 2, paid: 3 };
+const LIST_MODELS_TIMEOUT_MS = 15000;
 
 /** Chat models the platform offers (`GET /models`), free ones first. */
-export async function listModels(llm: LlmSettings, fetchImpl: typeof fetch = fetch): Promise<ModelInfo[]> {
-  const response = await fetchImpl(`${trimSlash(llm.baseUrl)}/models`, {
-    headers: llm.apiKey.trim() ? { Authorization: `Bearer ${llm.apiKey.trim()}` } : {},
-  });
-  if (!response.ok) {
-    logEvent('warn', 'models', `${llm.provider ?? 'custom'}: model list failed, HTTP ${response.status}`);
-    throw new Error(`HTTP ${response.status}`);
+export async function listModels(llm: LlmSettings, fetchImpl: typeof fetch = fetch, signal?: AbortSignal): Promise<ModelInfo[]> {
+  const controller = new AbortController();
+  const stop = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener('abort', stop, { once: true });
+  const timer = setTimeout(stop, LIST_MODELS_TIMEOUT_MS);
+  let body: { data?: { id?: unknown; pricing?: { prompt?: unknown; completion?: unknown }; architecture?: { output_modalities?: unknown }; output_modalities?: unknown; active?: unknown }[] };
+  try {
+    const key = llm.apiKey.trim();
+    const response = await fetchImpl(`${trimSlash(llm.baseUrl)}/models`, {
+      headers: key ? { Authorization: `Bearer ${key}` } : {},
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      logEvent('warn', 'models', `${llm.provider ?? 'custom'}: model list failed, HTTP ${response.status}`);
+      throw new Error(`HTTP ${response.status}`);
+    }
+    try {
+      body = await response.json() as typeof body;
+    } catch {
+      throw new Error('模型列表返回了无法解析的数据');
+    }
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', stop);
   }
-  const body = await response.json() as { data?: { id?: unknown; pricing?: { prompt?: unknown; completion?: unknown }; architecture?: { output_modalities?: unknown }; output_modalities?: unknown; active?: unknown }[] };
   const provider = llm.provider ?? 'custom';
   const seen = new Set<string>();
   const models: ModelInfo[] = [];
-  for (const model of body.data ?? []) {
+  for (const model of body?.data ?? []) {
     if (typeof model.id !== 'string') continue;
     // Gemini lists "models/gemini-…"; the chat endpoint takes the bare name.
     const id = model.id.replace(/^models\//, '');
@@ -161,7 +184,10 @@ export async function probeModels(
         // Arabic model) answer, but do not translate.
         const [answer] = await translateLlm([PROBE_SENTENCE], target, { ...llm, model: id }, fetchImpl, timeout.signal);
         if (signal.aborted) continue;
-        if (/[\u3041-\u3096\u30a1-\u30fa]/.test(answer)) {
+        if (!answer.trim()) {
+          logEvent('warn', 'models', `${llm.provider ?? 'custom'} ${id}: returned empty translation`);
+          onResult(id, { state: 'bad', reason: 'other', detail: 'Empty translation' });
+        } else if (/[\u3041-\u3096\u30a1-\u30fa]/.test(answer)) {
           logEvent('warn', 'models', `${llm.provider ?? 'custom'} ${id}: answered without translating`);
           onResult(id, { state: 'bad', reason: 'language', detail: answer.slice(0, 80) });
         } else onResult(id, { state: 'ok', ms: Date.now() - started });

@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { IDBFactory } from 'fake-indexeddb';
 import { loadTypescript } from './loadTypescript.mjs';
 const {
   DEFAULT_TRANSLATION_SETTINGS, Translator, TranslationError,
-  loadTranslationSettings, llmNeedsApiKey, parseIncrementalArray, reasoningParams, saveTranslationSettings,
-  translateLlm, translationConcurrency, translateMicrosoft, validateTranslationSettings,
+  loadTranslationSettings, llmNeedsApiKey, needsTranslation, parseIncrementalArray, parseLlmTranslations,
+  reasoningParams, saveTranslationSettings, translateLlm, translationConcurrency, translateMicrosoft,
+  usableCachedTranslation, validateTranslationSettings,
 } = loadTypescript('../app/utils/translation.ts');
 const { MemoryTranslationStore, TranslationStore, defaultTranslationStore } = loadTypescript('../app/utils/translationStore.ts');
 
@@ -612,4 +614,187 @@ test('quickDraft emits Microsoft drafts first without caching them in the LLM sl
   assert.deepEqual(result, new Map([['文一。', '精译一'], ['文二。', '精译二']]));
   const cached = await store.get('b1', 'zh-Hans|https://x/v1|m', ['文一。', '文二。']);
   assert.deepEqual(cached, new Map([['文一。', '精译一'], ['文二。', '精译二']]));
+});
+
+test('quickDraft runs concurrently without blocking LLM, batches by Microsoft limits, and never overwrites LLM results', async () => {
+  const store = new MemoryTranslationStore();
+  const llm = { provider: 'deepseek', baseUrl: 'https://x/v1', model: 'm', apiKey: 'k' };
+  const msBatches = [];
+  let draftAborted = 0;
+  const events = [];
+  const translator = new Translator({
+    store,
+    settings: () => settings({ engine: 'llm', quickDraft: true, llm }),
+    fetchImpl: async (url, init) => {
+      if (String(url).includes('edge.microsoft.com')) {
+        msBatches.push(JSON.parse(init.body).length);
+        await new Promise(resolve => {
+          if (init.signal?.aborted) { draftAborted += 1; resolve(); return; }
+          init.signal?.addEventListener('abort', () => { draftAborted += 1; resolve(); }, { once: true });
+        });
+        return microsoftReply(JSON.parse(init.body), '草稿:');
+      }
+      const list = JSON.parse(JSON.parse(init.body).messages.at(-1).content.match(/\[.*\]$/s)[0]);
+      return llmReply(JSON.stringify(list.map(v => `精:${v}`)));
+    },
+  });
+  const texts = Array.from({ length: 55 }, (_, i) => `文${i}。`);
+  const result = await translator.translate('b-parallel', texts, undefined, {
+    onPartial: (found, draft) => {
+      if (found.size) events.push({ draft: Boolean(draft), keys: [...found.keys()] });
+    },
+  });
+  assert.equal(result.size, 55);
+  assert.equal(draftAborted, 2, 'slow Microsoft draft batches aborted once LLM completes');
+  assert.equal(events.some(e => e.draft), false, 'late draft never clobbers arrived LLM translations');
+  assert.deepEqual(msBatches.sort((a, b) => b - a), [45, 10]);
+});
+
+test('SSE stream error events, HTML refusal bodies, Retry-After dates, HTTP 408 and network errors retry cleanly', async () => {
+  const llm = { provider: 'custom', baseUrl: 'https://x/v1', model: 'm', apiKey: '  sk-trim \n' };
+  let sseCalls = 0;
+  const store = new MemoryTranslationStore();
+  const translator = new Translator({
+    store,
+    settings: () => settings({ engine: 'llm', quickDraft: false, llm }),
+    retryDelays: [1, 1, 1],
+    fetchImpl: async (_url, init) => {
+      assert.equal(init.headers.Authorization, 'Bearer sk-trim');
+      sseCalls += 1;
+      if (sseCalls === 1) {
+        return sseReply(['data: {"error":{"code":429,"message":"Rate limit in stream"}}\n\n']);
+      }
+      if (sseCalls === 2) {
+        throw new TypeError('Failed to fetch');
+      }
+      return llmReply('["成功。"]');
+    },
+  });
+  const result = await translator.translate('b-retry', ['あ。']);
+  assert.equal(result.get('あ。'), '成功。');
+  assert.equal(sseCalls, 3);
+
+  // Non-JSON HTML gateway error is not dumped raw into error message, and HTTP 408 / HTTP-date Retry-After are retryable.
+  const err408 = await translateLlm(['あ。'], 'zh-Hans', llm, async () => new Response('<html>502 Bad Gateway</html>', {
+    status: 408,
+    headers: { 'Retry-After': new Date(Date.now() + 5000).toUTCString() },
+  })).catch(e => e);
+  assert.equal(err408.retryable, true);
+  assert.doesNotMatch(err408.message, /<html>/);
+  assert.ok(err408.retryAfterMs > 0 && err408.retryAfterMs <= 30000);
+});
+
+test('request timeout retries and caller abort prunes queued Lanes tasks immediately', async () => {
+  const store = new MemoryTranslationStore();
+  let calls = 0;
+  const translator = new Translator({
+    store,
+    settings: () => settings(),
+    requestTimeoutMs: 20,
+    retryDelays: [1, 1, 1],
+    fetchImpl: async (_url, init) => {
+      calls += 1;
+      if (calls === 1) {
+        await new Promise((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+        });
+      }
+      return microsoftReply(JSON.parse(init.body));
+    },
+  });
+  const res = await translator.translate('b-timeout', ['文一。']);
+  assert.equal(calls, 2);
+  assert.equal(res.get('文一。'), 'zh:文一。');
+
+  // Queued call aborted while slot is busy rejects immediately without waiting for active slot.
+  let releaseBusy;
+  const busyTranslator = new Translator({
+    store: new MemoryTranslationStore(),
+    settings: () => settings(),
+    concurrency: 1,
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      if (body[0] === '占用。') await new Promise(resolve => { releaseBusy = resolve; });
+      return microsoftReply(body);
+    },
+  });
+  const busyPromise = busyTranslator.translate('b1', ['占用。']);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const ac = new AbortController();
+  const queuedPromise = busyTranslator.translate('b1', ['排队一。', '排队二。'], ac.signal);
+  ac.abort();
+  await assert.rejects(queuedPromise, err => err.name === 'AbortError');
+  releaseBusy();
+  await busyPromise;
+});
+
+test('preamble brackets, indexed JSON objects, mismatch preservation, dialogue quotes, context & glossary injection', async () => {
+  assert.deepEqual(parseIncrementalArray('Here are [2] items:\n["甲","乙'), ['甲']);
+  assert.deepEqual(parseLlmTranslations('Here are [2] items:\n["甲","乙"]', 2), ['甲', '乙']);
+  assert.deepEqual(parseLlmTranslations('{"1":"乙","0":"甲"}', 2), ['甲', '乙']);
+  assert.throws(() => parseLlmTranslations('["只有一条"]', 2), err => err instanceof TranslationError && err.message === '译文条数不一致');
+
+  // Quoted dialogue retains CJK quotes in plain-text fallback; non-quoted strips quotes; blank plain reply throws instead of caching.
+  const llm = { provider: 'deepseek', baseUrl: 'https://x/v1', model: 'm', apiKey: 'k' };
+  const quoted = await translateLlm(['「大丈夫？」'], 'zh-Hans', llm, async () => llmReply('「没关系？」'));
+  assert.deepEqual(quoted, ['「没关系？」']);
+
+  // Glossary & meaningful context injection + pretranslate cross-chunk context.
+  const prompts = [];
+  const store = new MemoryTranslationStore();
+  const translator = new Translator({
+    store,
+    settings: () => settings({ engine: 'llm', quickDraft: false, llm }),
+    glossary: () => [{ surface: '東雲', reading: 'しののめ' }, { surface: '無関係', reading: 'むかんけい' }],
+    fetchImpl: async (_url, init) => {
+      const userMsg = JSON.parse(init.body).messages[1].content;
+      prompts.push(userMsg);
+      const arr = JSON.parse(userMsg.match(/\[.*\]$/s)[0]);
+      return llmReply(JSON.stringify(arr.map(v => `译:${v}`)));
+    },
+  });
+  const chunkTexts = Array.from({ length: 205 }, (_, i) => (i === 199 ? '東雲が笑った。' : i === 200 ? '彼は頷いた。' : `文${i}。`));
+  await translator.pretranslate('b-ctx', chunkTexts, () => {});
+  const crossChunkPrompt = prompts.find(p => p.includes('"彼は頷いた。"'));
+  assert.ok(crossChunkPrompt, 'second pretranslate chunk ran');
+  assert.match(crossChunkPrompt, /Context \(previous lines, do not translate\):[\s\S]*東雲が笑った。/);
+  assert.match(crossChunkPrompt, /Glossary[\s\S]*- 東雲 \(しののめ\)/);
+  assert.doesNotMatch(crossChunkPrompt, /無関係/);
+
+  // Blank translations are never cached.
+  const blankStore = new MemoryTranslationStore();
+  await assert.rejects(
+    new Translator({
+      store: blankStore,
+      settings: () => settings({ engine: 'llm', quickDraft: false, llm }),
+      retryDelays: [1, 1, 1],
+      fetchImpl: async () => llmReply('""'),
+    }).translate('b-blank', ['文。']),
+  );
+  assert.equal(await blankStore.count('b-blank', 'zh-Hans|https://x/v1|m', ['文。']), 0);
+  assert.equal(needsTranslation('……'), false);
+});
+
+test('TranslationStore chunks/dedupes large IndexedDB get/count queries and falls back when openDb fails', async () => {
+  const factory = new IDBFactory();
+  const idb = new TranslationStore(factory);
+  const unique = Array.from({ length: 650 }, (_, i) => `文${i}。`);
+  await idb.put('big', 'zh-Hans', 'microsoft', unique.map(t => [t, `zh:${t}`]));
+  const withDupes = [...unique, ...unique.slice(0, 100)];
+  assert.equal(await idb.count('big', 'zh-Hans', withDupes), 750);
+  const got = await idb.get('big', 'zh-Hans', withDupes);
+  assert.equal(got.size, 650);
+  assert.equal(got.get('文649。'), 'zh:文649。');
+
+  // Throwing IDBFactory.open falls back gracefully to in-memory store.
+  const brokenIdb = new TranslationStore(() => ({
+    open() {
+      const req = {};
+      queueMicrotask(() => { req.error = new Error('IDB blocked'); req.onerror?.(); });
+      return req;
+    },
+  }));
+  await brokenIdb.put('b1', 'zh-Hans', 'microsoft', [['文。', '译']]);
+  assert.equal(await brokenIdb.count('b1', 'zh-Hans', ['文。']), 1);
+  assert.equal((await brokenIdb.get('b1', 'zh-Hans', ['文。'])).get('文。'), '译');
 });
