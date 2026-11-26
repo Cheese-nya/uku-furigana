@@ -212,7 +212,7 @@ export function ImportPreviewModal({ t, review, folders, onResolve }: ImportPrev
         </div>
 
         {duplicate && (
-          <div className="rounded-xl border border-[var(--review)]/35 bg-[var(--review)]/10 p-3.5 text-sm">
+          <div className="rounded-xl border border-[var(--review-wash)] bg-[var(--review-soft)] p-3.5 text-sm">
             <b className="block text-[var(--label)]">{fill(t.importPreviewDuplicate, { title: duplicate.title })}</b>
             <p className="mt-1 text-xs leading-relaxed text-[var(--label-2)]">{t.importPreviewDuplicateDetail}</p>
           </div>

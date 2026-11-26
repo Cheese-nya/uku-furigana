@@ -63,6 +63,20 @@ test('modal heights and drag transforms have explicit legacy support', () => {
   assert.match(modal, /CSS\.supports\?\.\('translate', '0'\)/);
   assert.match(modal, /sheet\.style\.transform = `translateY\(/);
   assert.match(modal, /el\.style\.transform = ''/);
+  assert.match(css, /\.modal-sheet \{ transition-property: transform, opacity; \}/);
+  assert.match(css, /min-height:\s*2\.25em;\s*\n\s*min-height:\s*1lh;/);
+});
+
+test('UI components avoid CSS variable opacity modifiers that emit color-mix(in oklab) on Chrome < 111', () => {
+  const componentsDir = join(root, 'app/components');
+  const files = readdirSync(componentsDir, { recursive: true })
+    .map(name => String(name))
+    .filter(name => name.endsWith('.tsx'));
+  assert.ok(files.length > 0);
+  for (const file of files) {
+    const src = read(`app/components/${file}`);
+    assert.doesNotMatch(src, /\[var\(--[^)]+\)\]\/\d+/, `${file} must use Chrome 92-safe rgba tokens instead of var()/opacity`);
+  }
 });
 
 test('static CSS bundle emits no cascade layers', t => {

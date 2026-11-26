@@ -183,6 +183,24 @@ export function LiquidSelector<V extends string>({
     else { shown.current = best; moveTo(best, true, d.now); onChange(best); }
   };
 
+  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!options.length) return;
+    const prevKey = axis === 'y' ? 'ArrowUp' : 'ArrowLeft';
+    const nextKey = axis === 'y' ? 'ArrowDown' : 'ArrowRight';
+    const currentIndex = Math.max(0, options.findIndex(o => o.value === value));
+    let targetIndex = -1;
+    if (event.key === nextKey) targetIndex = (currentIndex + 1) % options.length;
+    else if (event.key === prevKey) targetIndex = (currentIndex - 1 + options.length) % options.length;
+    else if (event.key === 'Home') targetIndex = 0;
+    else if (event.key === 'End') targetIndex = options.length - 1;
+    if (targetIndex < 0) return;
+    event.preventDefault();
+    const next = options[targetIndex];
+    if (!next) return;
+    optRefs.current.get(next.value)?.focus();
+    if (next.value !== value) onChange(next.value);
+  };
+
   const rootMerged = useMemo(
     () => mergeRefs<HTMLDivElement>(rootRef, containerRef, variant === 'glass' ? glassRef : undefined),
     [containerRef, variant, glassRef],
@@ -197,6 +215,7 @@ export function LiquidSelector<V extends string>({
       aria-orientation={axis === 'y' ? 'vertical' : undefined}
       data-testid={testId}
       className={`sel ${variantClass} ${axis === 'y' ? 'flex-col items-stretch' : ''} ${className}`}
+      onKeyDown={onKeyDown}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={endDrag}
@@ -211,6 +230,7 @@ export function LiquidSelector<V extends string>({
           data-opt={o.value}
           data-testid={o.testId}
           role={isTab ? 'tab' : 'radio'}
+          tabIndex={o.value === value ? 0 : -1}
           aria-selected={isTab ? o.value === value : undefined}
           aria-checked={isTab ? undefined : o.value === value}
           aria-label={o.ariaLabel}

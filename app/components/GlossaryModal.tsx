@@ -2,7 +2,8 @@
 
 import { useRef, useState } from 'react';
 import { Modal } from './Modal';
-import { IconImport, IconShare } from './glass/icons';
+import { LiquidSelector } from './glass/LiquidSelector';
+import { IconDictionary, IconImport, IconShare } from './glass/icons';
 import { validateGlossary, type ProperNounEntry } from '../utils/correctionDatabase';
 import { saveBlob } from '../utils/fileSave';
 import type { RubyType } from '../utils/furigana';
@@ -67,13 +68,35 @@ export function GlossaryModal({ isOpen, onClose, entries, onChange, t }: Props) 
         <fieldset className="grid gap-3"><legend className="px-1 text-sm font-semibold text-[var(--label)]">{editingSurface ? t.editEntryLegend : t.addEntryLegend}</legend>
           <label className="grid gap-1.5 text-xs font-medium text-[var(--label)]">{t.sourceTextLabel}<input aria-label={t.sourceTextLabel} className={inputClass} value={surface} onChange={event => setSurface(event.target.value)} placeholder={t.sourceTextPlaceholder} /></label>
           <label className="grid gap-1.5 text-xs font-medium text-[var(--label)]">{t.readingLabel}<input aria-label={t.readingLabel} className={inputClass} value={reading} onChange={event => setReading(event.target.value)} placeholder={t.readingPlaceholder} /></label>
-          <label className="grid gap-1.5 text-xs font-medium text-[var(--label)]">{t.readingFormatLabel}<select aria-label={t.readingFormatLabel} className={inputClass} value={type} onChange={event => setType(event.target.value as RubyType)}><option value="hiragana">{t.hiragana}</option><option value="katakana">{t.katakana}</option><option value="romaji">{t.romajiFormatOption}</option></select></label>
+          <div className="grid gap-1.5 text-xs font-medium text-[var(--label)]">
+            <span>{t.readingFormatLabel}</span>
+            <LiquidSelector
+              variant="solid"
+              role="radiogroup"
+              ariaLabel={t.readingFormatLabel}
+              className="flex w-full [&>[data-opt]]:flex-1 [&>[data-opt]]:px-2 [&>[data-opt]]:text-[13px]"
+              value={type}
+              onChange={setType}
+              options={[
+                { value: 'hiragana', label: t.hiragana },
+                { value: 'katakana', label: t.katakana },
+                { value: 'romaji', label: t.romajiFormatOption },
+              ]}
+            />
+          </div>
           <div className="flex gap-2"><button type="submit" className="btn btn-ink h-11" disabled={!surface.trim() || !reading.trim()}>{t.saveEntryButton}</button>{editingSurface && <button type="button" className="btn h-11" onClick={reset}>{t.cancelEditButton}</button>}</div>
         </fieldset>
       </form>
       <label className="grid gap-1.5 text-xs font-medium text-[var(--label)]">{t.searchEntryLabel}<input className={inputClass} value={search} onChange={event => setSearch(event.target.value)} placeholder={t.searchEntryPlaceholder} /></label>
       <p className="text-xs tabular-nums text-[var(--label-2)]">{t.entryCountSummary.replace('{total}', String(Object.keys(entries).length)).replace('{visible}', String(visible.length))}</p>
-      <ul className="max-h-64 overflow-y-auto rounded-[18px] bg-[var(--surface)] shadow-[var(--card-shadow)]">{visible.map(entry => <li key={entry.surface} className="flex items-center justify-between gap-3 border-b border-[var(--sep)] p-3 last:border-b-0"><div lang="ja" className="min-w-0"><strong className="font-semibold text-[var(--label)]">{entry.surface}</strong><span className="ml-3 font-semibold text-[var(--ruby)]">{entry.reading}</span></div><div className="flex shrink-0 gap-2"><button type="button" aria-label={`${t.editButton} ${entry.surface}`} className="btn" onClick={() => { setSurface(entry.surface); setReading(entry.reading); setType(entry.type); setEditingSurface(entry.surface); }}>{t.editButton}</button><button type="button" aria-label={`${t.deleteButton} ${entry.surface}`} className="btn btn-danger" onClick={() => { const next = { ...entries }; delete next[entry.surface]; onChange(next); if (editingSurface === entry.surface) reset(); }}>{t.deleteButton}</button></div></li>)}</ul>
+      {visible.length === 0 ? (
+        <div className="grid place-items-center gap-2 rounded-[18px] bg-[var(--surface)] py-8 text-center text-xs font-medium text-[var(--label-2)] shadow-[var(--card-shadow)]">
+          <IconDictionary size={28} className="text-[var(--label-3)]" />
+          <span>{Object.keys(entries).length === 0 ? t.noLearnedRecords : t.readerSearchNoResults}</span>
+        </div>
+      ) : (
+        <ul className="max-h-64 overflow-y-auto rounded-[18px] bg-[var(--surface)] shadow-[var(--card-shadow)]">{visible.map(entry => <li key={entry.surface} className="flex items-center justify-between gap-3 border-b border-[var(--sep)] p-3 last:border-b-0"><div lang="ja" className="min-w-0"><strong className="font-semibold text-[var(--label)]">{entry.surface}</strong><span className="ml-3 font-semibold text-[var(--ruby)]">{entry.reading}</span></div><div className="flex shrink-0 gap-2"><button type="button" aria-label={`${t.editButton} ${entry.surface}`} className="btn" onClick={() => { setSurface(entry.surface); setReading(entry.reading); setType(entry.type); setEditingSurface(entry.surface); }}>{t.editButton}</button><button type="button" aria-label={`${t.deleteButton} ${entry.surface}`} className="btn btn-danger" onClick={() => { const next = { ...entries }; delete next[entry.surface]; onChange(next); if (editingSurface === entry.surface) reset(); }}>{t.deleteButton}</button></div></li>)}</ul>
+      )}
       {error && <p role="alert" className="rounded-xl bg-[var(--danger-soft)] p-3 text-xs font-medium text-[var(--danger)]">{error}</p>}
       {message && <p role="status" className="rounded-xl bg-[var(--ok-wash)] p-3 text-xs font-medium text-[var(--ok)]">{message}</p>}
     </div>

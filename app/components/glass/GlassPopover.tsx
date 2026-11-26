@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { SPRING_BOUNCY, prefersReducedMotion, useGlass, mergeRefs } from './hooks';
 import { registerBackHandler } from '../../utils/backStack';
@@ -49,13 +49,14 @@ export function GlassPopover({ open, onClose, anchor, point, placement = 'below'
     return () => out.cancel();
   }, [open]);
 
-  useLayoutEffect(() => {
+  const reposition = useCallback(() => {
     const panel = panelRef.current;
-    if (!open || !mounted || !panel) return;
-    const pw = panel.offsetWidth;
-    const ph = panel.offsetHeight;
+    if (!panel) return;
     const vw = document.documentElement.clientWidth;
     const vh = document.documentElement.clientHeight;
+    panel.style.maxHeight = `${Math.max(120, vh - 20)}px`;
+    const pw = panel.offsetWidth;
+    const ph = panel.offsetHeight;
     let ax: number, ay: number, aw = 0, ah = 0;
     if (point) { ax = point.x; ay = point.y; }
     else if (anchor) { const r = anchor.getBoundingClientRect(); ax = r.left; ay = r.top; aw = r.width; ah = r.height; }
@@ -65,14 +66,45 @@ export function GlassPopover({ open, onClose, anchor, point, placement = 'below'
     if (y + ph > vh - 10) y = ay - ph - 8;
     if (y < 10) y = Math.min(ay + ah + 8, vh - ph - 10);
     x = Math.max(10, Math.min(vw - pw - 10, x));
-    y = Math.max(10, y);
+    y = Math.max(10, Math.min(vh - ph - 10, y));
     panel.style.left = `${x}px`;
     panel.style.top = `${y}px`;
     panel.style.transformOrigin = `${ax + aw / 2 - x}px ${ay + ah / 2 - y}px`;
+  }, [anchor, point, placement]);
+
+  useLayoutEffect(() => {
+    const panel = panelRef.current;
+    if (!open || !mounted || !panel) return;
+    reposition();
     if (!prefersReducedMotion()) {
       panel.animate([{ opacity: 0, transform: 'scale(0.35)' }, { opacity: 1, transform: 'scale(1)' }], { duration: 560, easing: SPRING_BOUNCY });
     }
-  }, [open, mounted, anchor, point, placement]);
+  }, [open, mounted, reposition]);
+
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (!open || !mounted || !panel) return;
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => reposition()) : null;
+    observer?.observe(panel);
+    window.addEventListener('resize', reposition);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', reposition);
+    };
+  }, [open, mounted, reposition]);
+
+  useEffect(() => {
+    if (!open || !mounted) return;
+    const panel = panelRef.current;
+    if (panel && !panel.contains(document.activeElement)) {
+      panel.focus({ preventScroll: true });
+    }
+    return () => {
+      if (panel?.contains(document.activeElement) && anchor?.isConnected) {
+        anchor.focus({ preventScroll: true });
+      }
+    };
+  }, [open, mounted, anchor]);
 
   useEffect(() => {
     if (!open) return;
@@ -99,9 +131,10 @@ export function GlassPopover({ open, onClose, anchor, point, placement = 'below'
   return createPortal(
     <div
       ref={merged}
+      tabIndex={-1}
       role="dialog"
       aria-label={ariaLabel}
-      className={`glass ${tier === 'sheet' ? 'glass-sheet' : 'glass-solid'} fixed z-[80] min-w-[230px] rounded-[22px] p-1.5 text-sm text-[var(--label)] ${className}`}
+      className={`glass ${tier === 'sheet' ? 'glass-sheet' : 'glass-solid'} fixed z-[80] min-w-[230px] overflow-y-auto overscroll-contain rounded-[22px] p-1.5 text-sm text-[var(--label)] outline-none ${className}`}
     >
       {children}
     </div>,

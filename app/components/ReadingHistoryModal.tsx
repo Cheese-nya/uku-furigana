@@ -75,7 +75,7 @@ export function ReadingHistoryModal({
             const isOpen = expanded.has(entry.id);
             const actionLabel = entry.kind === 'undo' ? t.readingHistoryEntryRedo : t.readingHistoryEntryUndo;
             return (
-              <article key={entry.id} className="rounded-[16px] border border-[var(--sep)] bg-[var(--surface)]/60 p-3">
+              <article key={entry.id} className="rounded-[16px] border border-[var(--sep)] bg-[var(--surface)] p-3">
                 <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                   <b className="text-sm font-semibold text-[var(--label)]">{entryKindLabel(entry.kind, t)}</b>
                   <span className="text-[11px] tabular-nums text-[var(--label-3)]">{when(entry.createdAt)}</span>

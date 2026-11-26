@@ -300,3 +300,18 @@ test('<ruby> 永远保持行内（WebKit 对块级 ruby 会丢失或错位 <rt>�
     }
   }
 });
+
+test('Liquid Glass v2：弹窗无嵌套模糊、浮层自适应视口、目录与键盘导航完善', () => {
+  const popover = read('../app/components/glass/GlassPopover.tsx');
+  const selector = read('../app/components/glass/LiquidSelector.tsx');
+  const feedback = read('../app/components/FeedbackModal.tsx');
+  const glossary = read('../app/components/GlossaryModal.tsx');
+
+  assert.ok(popover.includes('ResizeObserver') && popover.includes('maxHeight'), 'GlassPopover repositions on content resize and clamps height');
+  assert.ok(selector.includes('ArrowLeft') && selector.includes('ArrowRight'), 'LiquidSelector supports arrow-key navigation');
+  assert.equal(/backdrop-blur/.test(feedback), false, 'FeedbackModal must not nest backdrop-blur inside Modal');
+  assert.equal(feedback.includes('text-white'), false, 'FeedbackModal must use design tokens instead of text-white');
+  assert.ok(glossary.includes('visible.length === 0'), 'GlossaryModal renders an explicit empty state');
+  assert.ok(source.includes('hudVisible || navigation.running || aaOpen || tocOpen'), 'ReaderPanel hides bottom progress bar when TOC is open');
+  assert.ok(source.includes('{!isVertical && <div className="scroll-edge'), 'ReaderPanel omits top scroll-edge blur in vertical mode');
+});

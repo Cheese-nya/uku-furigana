@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { GlassButton, GlassCapsule } from './glass/GlassButton';
 import { GlassPopover, PopoverItem } from './glass/GlassPopover';
 import { Modal } from './Modal';
@@ -52,6 +52,8 @@ export function BatchProcessingPanel({
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [libraryQuery, setLibraryQuery] = useState('');
   const [pickedBookIds, setPickedBookIds] = useState<string[]>([]);
+  const [dragOver, setDragOver] = useState(false);
+  const dragDepthRef = useRef(0);
   const canExport = batchFiles.some(file => file.status === 'pending') && !isBatchProcessing && !isKuromojiLoading && correctionsReady;
   const queuedBookIds = useMemo(() => new Set(batchFiles.map(file => file.bookId).filter((bookId): bookId is string => !!bookId)), [batchFiles]);
   const visibleBooks = useMemo(() => {
@@ -84,7 +86,24 @@ export function BatchProcessingPanel({
   };
 
   return (
-    <section className="relative flex min-h-0 flex-1 flex-col" onDragOver={event => event.preventDefault()} onDrop={handleDrop}>
+    <section
+      className="relative flex min-h-0 flex-1 flex-col"
+      onDragEnter={event => {
+        event.preventDefault();
+        dragDepthRef.current += 1;
+        setDragOver(true);
+      }}
+      onDragOver={event => event.preventDefault()}
+      onDragLeave={() => {
+        dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+        if (dragDepthRef.current === 0) setDragOver(false);
+      }}
+      onDrop={event => {
+        dragDepthRef.current = 0;
+        setDragOver(false);
+        handleDrop(event);
+      }}
+    >
       <input
         ref={fileInputRef}
         type="file"
@@ -95,24 +114,25 @@ export function BatchProcessingPanel({
       />
 
       <div className="pointer-events-none relative z-20 mb-3 flex items-center gap-2.5 [&>*]:pointer-events-auto">
-        <GlassCapsule>
-          <GlassButton disabled={isBatchProcessing} onClick={() => fileInputRef.current?.click()}>
-            <IconPlus />
-            <span>{t.batchAddFiles}</span>
-          </GlassButton>
-          <GlassButton disabled={isBatchProcessing} onClick={openLibrary}>
-            <IconBooks />
-            <span>{t.batchAddFromLibrary}</span>
-          </GlassButton>
-        </GlassCapsule>
-        <div className="flex-1" />
+        <div className="toolbar-scroll -mx-1 -my-3 flex min-w-0 flex-1 items-center overflow-x-auto px-1 py-3">
+          <GlassCapsule className="shrink-0">
+            <GlassButton disabled={isBatchProcessing} onClick={() => fileInputRef.current?.click()}>
+              <IconPlus />
+              <span>{t.batchAddFiles}</span>
+            </GlassButton>
+            <GlassButton disabled={isBatchProcessing} onClick={openLibrary}>
+              <IconBooks />
+              <span>{t.batchAddFromLibrary}</span>
+            </GlassButton>
+          </GlassCapsule>
+        </div>
         <GlassButton
           ref={setExportAnchor}
           variant="prominent"
           disabled={!canExport}
           aria-expanded={exportOpen}
           onClick={() => setExportOpen(open => !open)}
-          className="!h-[42px] !px-[18px]"
+          className="!h-[42px] shrink-0 !px-[18px]"
         >
           <span>{isBatchProcessing ? t.batchProcessingInProgress : t.batchExportAll}</span>
         </GlassButton>
@@ -120,7 +140,7 @@ export function BatchProcessingPanel({
 
       <h1 className="mx-1 mb-3.5 mt-1.5 text-[34px] font-bold tracking-[-0.02em] md:hidden">{t.mobileNavBatch}</h1>
 
-      <div className="flex min-h-0 flex-col overflow-hidden rounded-[18px] bg-[var(--surface)] shadow-[var(--card-shadow)]">
+      <div className={`flex min-h-0 flex-col overflow-hidden rounded-[18px] bg-[var(--surface)] shadow-[var(--card-shadow)] transition-shadow ${dragOver ? 'ring-2 ring-[var(--label)]' : ''}`}>
         {batchFiles.length === 0 ? (
           <div className="grid min-h-[260px] place-items-center px-6 text-center text-[var(--label-2)]">
             <div>
@@ -148,13 +168,13 @@ export function BatchProcessingPanel({
                   {file.status === 'done' && <span className="flex items-center gap-1 text-[var(--ok)]"><IconCheck size={17} />{t.batchStatusDone}</span>}
                   {file.status === 'processing' && (
                     <>
-                      <span className="h-1 w-[90px] overflow-hidden rounded-sm bg-[var(--fill)]">
+                      <span className="h-1 w-16 overflow-hidden rounded-sm bg-[var(--fill)] sm:w-[90px]">
                         <i className="block h-full rounded-sm bg-[var(--label)]" style={{ width: `${file.progress}%` }} />
                       </span>
                       <span className="tabular-nums">{file.progress}%</span>
                     </>
                   )}
-                  {file.status === 'pending' && <span className="text-[var(--label-3)]">{t.batchStatusQueued}</span>}
+                  {file.status === 'pending' && <span className="text-[var(--label-2)]">{t.batchStatusQueued}</span>}
                   {file.status === 'error' && <span className="text-[var(--danger)]">{t.batchStatusFailed}</span>}
                   {(file.status === 'error' || (file.status === 'pending' && !isBatchProcessing)) && (
                     <button type="button" className={`btn h-7 px-3 text-xs ${file.status === 'error' ? 'btn-danger' : ''}`} onClick={() => removeBatchFile(file.id)}>

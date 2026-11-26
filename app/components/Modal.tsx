@@ -15,6 +15,7 @@ interface ModalProps {
   maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | '3xl' | '4xl' | '5xl';
   /** Sheets that carry their own heading (e.g. the reading-correction sheet) hide the title bar. */
   hideHeader?: boolean;
+  closeLabel?: string;
 }
 
 export const Modal: React.FC<ModalProps> = ({
@@ -25,6 +26,7 @@ export const Modal: React.FC<ModalProps> = ({
   footer,
   maxWidth = 'md',
   hideHeader = false,
+  closeLabel = '关闭',
 }) => {
   const modalRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
@@ -137,7 +139,7 @@ export const Modal: React.FC<ModalProps> = ({
       }
       if (event.key !== 'Tab' || !modalRef.current) return;
       const focusable = Array.from(modalRef.current.querySelectorAll<HTMLElement>(
-        'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], [tabindex="0"]',
+        'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], summary, [tabindex]:not([tabindex="-1"])',
       )).filter(element => element.getClientRects().length > 0);
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
@@ -200,7 +202,7 @@ export const Modal: React.FC<ModalProps> = ({
         {hideHeader ? <h2 id={titleId} className="sr-only">{title}</h2> : (
         <header {...dragHandlers} className="mb-4 flex shrink-0 touch-none items-center justify-between gap-4 border-b border-[var(--sep)] pb-3 sm:touch-auto">
           <h2 id={titleId} className="text-[17px] font-semibold tracking-tight text-[var(--label)]">{title}</h2>
-          <button type="button" onClick={onClose} aria-label="关闭" className="btn h-8 w-8 justify-center !p-0" >
+          <button type="button" onClick={onClose} aria-label={closeLabel} className="btn h-8 w-8 justify-center !p-0" >
             <IconClose size={16} />
           </button>
         </header>

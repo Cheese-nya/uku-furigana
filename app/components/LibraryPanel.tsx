@@ -216,45 +216,47 @@ export function LibraryPanel({
 
       {/* Floating toolbar */}
       <div className="pointer-events-none relative z-20 mb-3 flex items-center gap-2.5 [&>*]:pointer-events-auto">
-        <label ref={searchRef} className="glass !hidden h-[42px] w-[230px] items-center gap-2 rounded-full px-3.5 text-[var(--label-2)] md:!flex">
-          <IconSearch />
-          <input
-            value={query}
-            onChange={event => setQuery(event.target.value)}
-            placeholder={t.librarySearchPlaceholder}
-            className="w-full border-0 bg-transparent text-sm text-[var(--label)] outline-none placeholder:text-[var(--label-3)]"
+        <div className="toolbar-scroll -mx-1 -my-3 hidden min-w-0 flex-1 items-center gap-2.5 overflow-x-auto px-1 py-3 md:flex [&>*]:shrink-0">
+          <label ref={searchRef} className="glass flex h-[42px] w-[150px] items-center gap-2 rounded-full px-3.5 text-[var(--label-2)] lg:w-[230px]">
+            <IconSearch />
+            <input
+              value={query}
+              onChange={event => setQuery(event.target.value)}
+              placeholder={t.librarySearchPlaceholder}
+              className="w-full border-0 bg-transparent text-sm text-[var(--label)] outline-none placeholder:text-[var(--label-3)]"
+            />
+          </label>
+          <LiquidSelector
+            variant="glass"
+            className="h-[42px] !p-1"
+            ariaLabel={t.libraryCategoryLabel}
+            value={category}
+            onChange={setCategory}
+            options={categoryOptions(['all', 'script', 'novel', 'subtitle', 'other'])}
           />
-        </label>
-        <LiquidSelector
-          variant="glass"
-          className="!hidden h-[42px] !p-1 md:!inline-flex"
-          ariaLabel={t.libraryCategoryLabel}
-          value={category}
-          onChange={setCategory}
-          options={categoryOptions(['all', 'script', 'novel', 'subtitle', 'other'])}
-        />
-        <GlassCapsule className="!hidden md:!inline-flex">
-          <GlassButton ref={setSortAnchor} aria-expanded={sortOpen === 'desktop'} onClick={() => setSortOpen(open => (open ? null : 'desktop'))}>
-            <span>{sortLabel[sortBy]}</span>
-            <IconChevronDown size={14} />
-          </GlassButton>
-          <GlassButton
-            icon
-            aria-label={t.libraryFilterFavorites}
-            aria-pressed={favoritesOnly}
-            onClick={() => setFavoritesOnly(value => !value)}
-            className={favoritesOnly ? '!text-[var(--review)]' : ''}
-          >
-            {favoritesOnly ? <IconStarFill /> : <IconStar />}
-          </GlassButton>
-        </GlassCapsule>
-        <div className="flex-1" />
-        <GlassCapsule className="md:!hidden">
+          <GlassCapsule>
+            <GlassButton ref={setSortAnchor} aria-expanded={sortOpen === 'desktop'} onClick={() => setSortOpen(open => (open ? null : 'desktop'))}>
+              <span>{sortLabel[sortBy]}</span>
+              <IconChevronDown size={14} />
+            </GlassButton>
+            <GlassButton
+              icon
+              aria-label={t.libraryFilterFavorites}
+              aria-pressed={favoritesOnly}
+              onClick={() => setFavoritesOnly(value => !value)}
+              className={favoritesOnly ? '!text-[var(--review)]' : ''}
+            >
+              {favoritesOnly ? <IconStarFill /> : <IconStar />}
+            </GlassButton>
+          </GlassCapsule>
+        </div>
+        <div className="flex-1 md:hidden" />
+        <GlassCapsule className="shrink-0 md:!hidden">
           <GlassButton ref={setPhoneSortAnchor} icon aria-label={t.librarySortLabel} onClick={() => setSortOpen(open => (open ? null : 'phone'))}>
             <IconMore />
           </GlassButton>
         </GlassCapsule>
-        <GlassButton ref={setNewAnchor} variant="prominent" aria-expanded={newOpen} onClick={() => setNewOpen(open => !open)} className="!h-[42px] !px-4">
+        <GlassButton ref={setNewAnchor} variant="prominent" aria-expanded={newOpen} onClick={() => setNewOpen(open => !open)} className="!h-[42px] shrink-0 !px-4">
           <IconPlus />
           <span>{t.libraryNewShort}</span>
         </GlassButton>
@@ -271,14 +273,16 @@ export function LibraryPanel({
             className="w-full border-0 bg-transparent text-sm text-[var(--label)] outline-none placeholder:text-[var(--label-3)]"
           />
         </label>
-        <LiquidSelector
-          variant="solid"
-          className="self-start"
-          ariaLabel={t.libraryCategoryLabel}
-          value={category === 'other' ? 'all' : category}
-          onChange={setCategory}
-          options={categoryOptions(['all', 'script', 'novel', 'subtitle'])}
-        />
+        <div className="toolbar-scroll -mx-1 overflow-x-auto px-1 pb-0.5">
+          <LiquidSelector
+            variant="solid"
+            className="inline-flex"
+            ariaLabel={t.libraryCategoryLabel}
+            value={category}
+            onChange={setCategory}
+            options={categoryOptions(['all', 'script', 'novel', 'subtitle', 'other'])}
+          />
+        </div>
       </div>
 
       {/* Folder chips: the user's own shelves (e.g. literature vs light novels) */}
@@ -636,7 +640,16 @@ function BookCover({ book, t, categoryText, lifted, onOpen, onMenu }: {
           if (longPressed.current) { longPressed.current = false; return; }
           onOpen();
         }}
-        onKeyDown={event => { if (event.key === 'Enter') onOpen(); }}
+        onKeyDown={event => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            onOpen();
+          } else if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+            event.preventDefault();
+            const rect = event.currentTarget.getBoundingClientRect();
+            onMenu({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+          }
+        }}
         onContextMenu={event => {
           event.preventDefault();
           if (!longPressed.current) onMenu({ x: event.clientX, y: event.clientY });

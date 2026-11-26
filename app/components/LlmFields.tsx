@@ -143,7 +143,7 @@ export function LlmFields({ settings, onSettingsChange, locale, t, loginNotice }
             type="button"
             aria-pressed={item.id === provider.id}
             onClick={() => choose(item.id)}
-            className={`btn h-[30px] px-3 text-[13px] ${item.id === provider.id ? '!bg-[var(--ink)] !text-[var(--on-ink)]' : ''}`}
+            className={`btn h-[30px] px-3 text-[13px] ${item.id === provider.id ? 'btn-ink' : ''}`}
           >
             {en ? item.nameEn : item.name}
           </button>
@@ -165,12 +165,12 @@ export function LlmFields({ settings, onSettingsChange, locale, t, loginNotice }
       <Field label={t.toolsLlmKey}>
         <input className={inputClass} type="password" spellCheck={false} placeholder={keyOptional ? t.toolsKeyOptionalPlaceholder : t.toolsKeyPlaceholder} value={settings.llm.apiKey} onChange={event => setLlm({ apiKey: event.target.value })} />
         {provider.keyUrl && (
-          <a href={provider.keyUrl} target="_blank" rel="noreferrer" className="shrink-0 whitespace-nowrap text-xs font-semibold text-[var(--label)] no-underline">{t.toolsGetKey}</a>
+          <a href={provider.keyUrl} target="_blank" rel="noreferrer" className="shrink-0 whitespace-nowrap text-xs font-semibold text-[var(--label)] no-underline underline-offset-4 hover:underline">{t.toolsGetKey}</a>
         )}
       </Field>
       <Field label={t.toolsLlmModel}>
         <input className={inputClass} spellCheck={false} value={settings.llm.model} onChange={event => setLlm({ model: event.target.value })} />
-        <button type="button" aria-label={t.toolsPickModel} aria-expanded={listOpen} className="shrink-0 p-1 text-[var(--label-2)]" onClick={pickModels}>
+        <button type="button" aria-label={t.toolsPickModel} aria-expanded={listOpen} className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-[var(--label-2)] transition-colors hover:bg-[var(--fill-2)]" onClick={pickModels}>
           <IconChevronDown size={16} />
         </button>
       </Field>

@@ -284,10 +284,14 @@ html[data-refract="on"] .gbtn.gbtn-prominent:hover:not(:disabled) { background: 
   -webkit-tap-highlight-color: transparent;
 }
 .btn:disabled { opacity: 0.4; cursor: default; }
+.btn:hover:not(:disabled) { background: var(--sep); }
 .btn:active:not(:disabled) { scale: 0.96; opacity: 0.72; transition-duration: 120ms, 80ms; }
 .btn.btn-ink { background: var(--ink); color: var(--on-ink); font-weight: 600; }
+.btn.btn-ink:hover:not(:disabled) { background: var(--ink); opacity: 0.88; }
 .btn.btn-danger { background: var(--danger-wash); background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
+.btn.btn-danger:hover:not(:disabled) { background: var(--danger-wash); opacity: 0.86; }
 .btn.btn-plain { background: transparent; }
+.btn.btn-plain:hover:not(:disabled) { background: var(--fill-2); }
 
 /* =========================================================
    Liquid selector (segmented / nav / tab) — see LiquidSelector.tsx
@@ -313,6 +317,9 @@ html[data-refract="on"] .gbtn.gbtn-prominent:hover:not(:disabled) { background: 
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
+  touch-action: pan-y;
+}
+.sel[aria-orientation="vertical"] > [data-opt] {
   touch-action: none;
 }
 .sel.moving .sel-ind,
@@ -367,20 +374,23 @@ html[data-refract="on"] .gbtn.gbtn-prominent:hover:not(:disabled) { background: 
    scale / rotate separately, so position and hide-state fallbacks live here
    instead of replacing the composed .gbtn transform. */
 @supports not (translate: 0px) {
+  .modal-sheet { transition-property: transform, opacity; }
   .modal-sheet[data-visible='false'] { transform: translateY(100%); }
   .modal-sheet[data-visible='true'] { transform: translateY(0); }
   @media (min-width: 640px) {
     .modal-sheet[data-visible='false'] { transform: scale(0.9); }
     .modal-sheet[data-visible='true'] { transform: scale(1); }
   }
-  .mobile-nav-bar { transform: translateX(-50%); }
+  .mobile-nav-bar { transform: translateX(-50%); transition-property: transform, opacity; }
   .mobile-nav-bar.translate-y-\[160\%\] { transform: translate(-50%, 160%); }
+  .sidebar { transition-property: transform, opacity; }
   .sidebar.\-translate-x-\[calc\(100\%\+20px\)\] { transform: translateX(calc(-100% - 20px)); }
   .update-dot.\-translate-y-1\/2 { transform: translateY(-50%); }
-  .reader-capsule { transform: translateX(-50%); }
+  .reader-capsule { transform: translateX(-50%); transition-property: transform, opacity; }
   .reader-capsule.translate-y-\[calc\(100\%\+40px\)\] { transform: translate(-50%, calc(100% + 40px)); }
-  .lookup-bottom-card { transform: translateY(calc(100% + 64px)); }
+  .lookup-bottom-card { transform: translateY(calc(100% + 64px)); transition-property: transform, height; }
   .lookup-bottom-card.translate-y-0 { transform: translateY(0); }
+  .glass-toast { transition-property: transform, opacity; }
   .glass-toast.translate-y-\[160\%\] { transform: translateY(160%); }
   @media (min-width: 768px) {
     .glass-toast { transform: translateX(-50%); }
@@ -389,7 +399,7 @@ html[data-refract="on"] .gbtn.gbtn-prominent:hover:not(:disabled) { background: 
   .reading-tools-switch { transform: scale(0.85); }
   .feedback-chevron { transform: none; }
   .feedback-chevron.rotate-180 { transform: rotate(180deg); }
-  .library-book { transform: scale(1); }
+  .library-book { transform: scale(1); transition-property: transform, box-shadow; }
   .library-book.scale-\[1\.05\] { transform: scale(1.05); }
   .library-book.active\:scale-\[0\.96\]:active,
   .btn:active:not(:disabled),
@@ -527,16 +537,16 @@ html[data-refract="on"] .gbtn.gbtn-prominent:hover:not(:disabled) { background: 
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.45);
+  background: rgba(118, 118, 128, 0.34);
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(100, 116, 139, 0.65);
+  background: rgba(118, 118, 128, 0.54);
 }
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(148, 163, 184, 0.45) transparent;
+  scrollbar-color: rgba(118, 118, 128, 0.34) transparent;
 }
 
 /* Chrome defaults to `space-around` ruby alignment, which spreads the base
@@ -552,6 +562,7 @@ ruby {
   font-family: -apple-system, BlinkMacSystemFont, "Yu Gothic", "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  min-height: 2.25em;
   min-height: 1lh;
 }
 

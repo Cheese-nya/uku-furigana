@@ -162,7 +162,7 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
     <section className="relative flex min-h-0 flex-1 flex-col">
       {/* Floating toolbar — glass capsules over the scrolling content */}
       <div className="pointer-events-none relative z-20 mb-3 flex items-center gap-2.5 [&>*]:pointer-events-auto">
-        <div className="relative md:hidden">
+        <div className="relative shrink-0 md:hidden">
           <GlassButton
             ref={setSettingsAnchor}
             variant="glass"
@@ -178,52 +178,54 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
           {updateDot && <UpdateDot className="!right-0.5 !top-0.5" />}
         </div>
 
-        <LiquidSelector
-          variant="glass"
-          className="!hidden h-[42px] !p-1 md:!inline-flex"
-          ariaLabel={t.rubyModeLabel}
-          value={rubyType}
-          onChange={changeRubyType}
-          options={[
-            { value: 'hiragana', label: t.hiragana },
-            { value: 'katakana', label: t.katakana },
-            { value: 'romaji', label: t.romaji },
-          ]}
-        />
-        <GlassCapsule className="!hidden md:!inline-flex">
-          <GlassButton disabled={!correctionsReady} onClick={() => { advanceControllerRef.current?.abort(); setIsGlossaryOpen(true); }}>
-            <IconDictionary />
-            <span>{t.properNounGlossary}</span>
-          </GlassButton>
-          <GlassButton ref={setTypeAnchor} aria-expanded={typeOpen === 'desktop'} onClick={() => setTypeOpen(open => (open ? null : 'desktop'))}>
-            <IconTextFormat />
-            <span>{t.typographyShort}</span>
-          </GlassButton>
-        </GlassCapsule>
-
-        <div className="flex-1" />
-
-        {(isKuromojiLoading || dictionaryStatus === 'degraded' || reviewCount > 0) && (
-          <GlassCapsule>
-            {isKuromojiLoading ? (
-              <span className="flex h-9 items-center gap-[7px] px-3.5 text-[13px] font-semibold">
-                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-[var(--fill)] border-t-[var(--label)]" />
-                <span className="max-md:hidden">{t.dictLoading}</span>
-              </span>
-            ) : dictionaryStatus === 'degraded' ? (
-              <GlassButton onClick={() => { void runDependencyRepair(); }} className="!text-[13px] font-semibold !text-[var(--danger)]">
-                <IconWarning />
-                <span className="max-md:hidden">{t.dictLoadFailed}</span>
-              </GlassButton>
-            ) : (
-              <GlassButton onClick={jumpToNextReview} className="!text-[13px] font-semibold !text-[var(--review)]">
-                <span className="tabular-nums">{t.needsReviewBadge} {reviewCount}</span>
-              </GlassButton>
-            )}
+        <div className="toolbar-scroll -mx-1 -my-3 flex min-w-0 flex-1 items-center gap-2.5 overflow-x-auto px-1 py-3 [&>*]:shrink-0">
+          <LiquidSelector
+            variant="glass"
+            className="!hidden h-[42px] !p-1 md:!inline-flex"
+            ariaLabel={t.rubyModeLabel}
+            value={rubyType}
+            onChange={changeRubyType}
+            options={[
+              { value: 'hiragana', label: t.hiragana },
+              { value: 'katakana', label: t.katakana },
+              { value: 'romaji', label: t.romaji },
+            ]}
+          />
+          <GlassCapsule className="!hidden md:!inline-flex">
+            <GlassButton disabled={!correctionsReady} onClick={() => { advanceControllerRef.current?.abort(); setIsGlossaryOpen(true); }}>
+              <IconDictionary />
+              <span>{t.properNounGlossary}</span>
+            </GlassButton>
+            <GlassButton ref={setTypeAnchor} aria-expanded={typeOpen === 'desktop'} onClick={() => setTypeOpen(open => (open ? null : 'desktop'))}>
+              <IconTextFormat />
+              <span>{t.typographyShort}</span>
+            </GlassButton>
           </GlassCapsule>
-        )}
 
-        <GlassCapsule>
+          <div className="flex-1" />
+
+          {(isKuromojiLoading || dictionaryStatus === 'degraded' || reviewCount > 0) && (
+            <GlassCapsule>
+              {isKuromojiLoading ? (
+                <span className="flex h-9 items-center gap-[7px] px-3.5 text-[13px] font-semibold">
+                  <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-[var(--fill)] border-t-[var(--label)]" />
+                  <span className="max-md:hidden">{t.dictLoading}</span>
+                </span>
+              ) : dictionaryStatus === 'degraded' ? (
+                <GlassButton onClick={() => { void runDependencyRepair(); }} className="!text-[13px] font-semibold !text-[var(--danger)]">
+                  <IconWarning />
+                  <span className="max-md:hidden">{t.dictLoadFailed}</span>
+                </GlassButton>
+              ) : (
+                <GlassButton onClick={jumpToNextReview} className="!text-[13px] font-semibold !text-[var(--review)]">
+                  <span className="tabular-nums">{t.needsReviewBadge} {reviewCount}</span>
+                </GlassButton>
+              )}
+            </GlassCapsule>
+          )}
+        </div>
+
+        <GlassCapsule className="shrink-0">
           <GlassButton
             ref={setImportAnchor}
             disabled={!correctionsReady || isImporting}
@@ -243,7 +245,7 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
           aria-haspopup="dialog"
           aria-expanded={exportOpen}
           onClick={() => setExportOpen(open => !open)}
-          className="!h-[42px] !px-[18px]"
+          className="!h-[42px] shrink-0 !px-[18px]"
         >
           <IconShare />
           <span>{t.exportButtonLabel}</span>
@@ -637,14 +639,24 @@ function PreviewCard({
                     const content = renderSurface(token.surface, tokenStart, lineHits);
                     if (!token.ruby && !token.hasKanji && !tokenHits.length) return <span key={tokenIndex}>{token.surface}</span>;
                     if (!token.ruby) {
+                      const editableKanji = token.hasKanji;
+                      const activate = () => {
+                        if (tokenHits.length) onOpenSearchHit(tokenHits[0]);
+                        else if (editableKanji) openTokenEditor(line.id, tokenIndex);
+                      };
                       return (
                         <span
                           key={tokenIndex}
-                          className={`rounded-[4px] ${tokenHits.length ? 'cursor-pointer hover:bg-[var(--fill-2)]' : ''}`}
-                          onClick={() => {
-                            if (tokenHits.length) onOpenSearchHit(tokenHits[0]);
-                            else openTokenEditor(line.id, tokenIndex);
-                          }}
+                          role={editableKanji ? 'button' : undefined}
+                          tabIndex={editableKanji ? 0 : undefined}
+                          className={`rounded-[4px] ${tokenHits.length || editableKanji ? 'cursor-pointer transition-colors hover:bg-[var(--fill-2)]' : ''}`}
+                          onClick={activate}
+                          onKeyDown={editableKanji ? event => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault();
+                              activate();
+                            }
+                          } : undefined}
                         >
                           {content}
                         </span>

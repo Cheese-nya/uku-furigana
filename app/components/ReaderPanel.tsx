@@ -98,6 +98,7 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
   const [lookup, setLookup] = useState<{ state: LookupState; line: number; start: number; end: number; anchor: HTMLElement | null } | null>(null);
   const lookupSeq = useRef(0);
   const lookupClosedAt = useRef(0);
+  const popoverClosedAt = useRef(0);
   const [phone, setPhone] = useState(false);
   useEffect(() => {
     const query = window.matchMedia('(max-width: 767px)');
@@ -450,6 +451,7 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
       return;
     }
     if (lookup || Date.now() - lookupClosedAt.current < 350) { if (lookup) closeLookup(); return; }
+    if (aaOpen || tocOpen || Date.now() - popoverClosedAt.current < 350) return;
     setHudVisible(prev => !prev);
   };
 
@@ -478,7 +480,7 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
 
   return (
     <section data-auto-reading={navigation.state} className="relative flex h-full min-h-0 flex-1 flex-col">
-      <div className="scroll-edge fixed inset-x-0 top-0 z-10 h-[76px]" aria-hidden />
+      {!isVertical && <div className="scroll-edge fixed inset-x-0 top-0 z-10 h-[76px]" aria-hidden />}
 
       <div ref={scrollerRef} onPointerDown={event => {
           navigation.pause();
@@ -617,7 +619,7 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
       <div
         aria-hidden
         className={`pointer-events-none fixed bottom-1 left-[22px] right-[22px] z-30 h-[2px] overflow-hidden rounded-[1px] bg-[var(--fill-2)] transition-opacity duration-300 ${
-          hudVisible || navigation.running || aaOpen ? 'opacity-0' : 'opacity-100 delay-[120ms]'
+          hudVisible || navigation.running || aaOpen || tocOpen ? 'opacity-0' : 'opacity-100 delay-[120ms]'
         }`}
       >
         <i className="block h-full rounded-[1px] bg-[var(--label)] opacity-[0.38]" style={{ width: `${scrollPercent}%` }} />
@@ -630,7 +632,7 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
           volumePageTurn: prefs.volumePageTurn, nativeAvailable: navigation.nativeAvailable,
         }}
         open={aaOpen}
-        onClose={() => setAaOpen(false)}
+        onClose={() => { popoverClosedAt.current = Date.now(); setAaOpen(false); }}
         anchor={aaAnchor}
         placement="above"
         rubyType={rubyType}
@@ -660,7 +662,7 @@ export function ReaderPanel({ t, book, annotatedLines, isProcessing, rubyType, o
       {chaptered && (
         <TocCard
           open={tocOpen}
-          onClose={() => setTocOpen(false)}
+          onClose={() => { popoverClosedAt.current = Date.now(); setTocOpen(false); }}
           anchor={capsuleNode}
           phone={phone}
           chapters={chapters}

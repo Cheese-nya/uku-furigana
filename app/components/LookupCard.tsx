@@ -90,8 +90,13 @@ function Entries({ state, dictTitles, locale, t }: { state: LookupState; dictTit
 }
 
 function Footer({ state, dictTitles, t }: { state: LookupState; dictTitles: Record<string, string>; t: Translations }) {
-  const [copied, setCopied] = useState(false);
+  const [copiedWord, setCopiedWord] = useState<string | null>(null);
+  const timerRef = useRef<number | null>(null);
   const word = state.status === 'done' ? state.result.entries[0]?.term ?? state.result.query : state.query;
+  const copied = copiedWord === word;
+  useEffect(() => () => {
+    if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+  }, []);
   const dicts = state.status === 'done' ? [...new Set(state.result.entries.map(entry => entry.dict))] : [];
   const source = dicts.map(id => dictTitles[id] ?? id).join(' · ');
   return (
@@ -100,7 +105,13 @@ function Footer({ state, dictTitles, t }: { state: LookupState; dictTitles: Reco
       <span className="flex-1" />
       <GlassButton
         className="!h-[30px] !px-2.5 text-xs text-[var(--label-2)]"
-        onClick={() => { void navigator.clipboard?.writeText(word).then(() => setCopied(true)).catch(() => undefined); }}
+        onClick={() => {
+          void navigator.clipboard?.writeText(word).then(() => {
+            setCopiedWord(word);
+            if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+            timerRef.current = window.setTimeout(() => setCopiedWord(null), 1800);
+          }).catch(() => undefined);
+        }}
       >
         <IconCopy size={15} />
         <span>{copied ? t.lookupCopied : t.lookupCopy}</span>

@@ -60,26 +60,33 @@ function SwitchRow({ label, checked, onChange }: { label: string; checked: boole
   );
 }
 
-/** Feedback sheet shell. `Modal` unmounts the body once the sheet has closed, so every open starts from a clean draft. */
+/** Feedback sheet shell. Each open gets a fresh session key so drafts reset cleanly after the exit transition finishes. */
 export function FeedbackModal({ open, onClose, initialKind, buildReport, submit, buildPayload, onOpenUrl, t }: FeedbackModalProps) {
-  const title = initialKind === 'log' ? t.feedbackTitleLog : t.feedbackTitleText;
-  // The body mirrors its send state here so the shell can swallow close presses (backdrop, Escape) mid-request.
-  const sendingRef = useRef(false);
-  const close = () => { if (!sendingRef.current) onClose(); };
+  const [wasOpen, setWasOpen] = useState(open);
+  const [session, setSession] = useState(0);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) setSession(value => value + 1);
+  }
   return (
-    <Modal isOpen={open} onClose={close} title={title} maxWidth="lg">
-      <FeedbackForm
-        buildReport={buildReport} submit={submit} buildPayload={buildPayload} onOpenUrl={onOpenUrl}
-        onClose={close} initialKind={initialKind} t={t} sendingRef={sendingRef}
-      />
-    </Modal>
+    <FeedbackForm
+      key={session}
+      open={open}
+      buildReport={buildReport}
+      submit={submit}
+      buildPayload={buildPayload}
+      onOpenUrl={onOpenUrl}
+      onClose={onClose}
+      initialKind={initialKind}
+      t={t}
+    />
   );
 }
 
-/** Everything below the title bar. */
+/** Feedback modal body + pinned Modal footer (single sheet surface, no nested blur). */
 function FeedbackForm({
-  initialKind, onClose, buildReport, submit, buildPayload, onOpenUrl, t, sendingRef,
-}: Omit<FeedbackModalProps, 'open'> & { sendingRef: { current: boolean } }) {
+  open, initialKind, onClose, buildReport, submit, buildPayload, onOpenUrl, t,
+}: FeedbackModalProps) {
   const [kind, setKind] = useState<FeedbackKind>(initialKind);
   const [note, setNote] = useState('');
   const [issueTitle, setIssueTitle] = useState('');
@@ -94,29 +101,27 @@ function FeedbackForm({
   const [previewOpen, setPreviewOpen] = useState(false);
   const statusRef = useRef<HTMLParagraphElement | null>(null);
 
-  useEffect(() => {
-    sendingRef.current = phase === 'sending';
-    return () => { sendingRef.current = false; };
-  }, [phase, sendingRef]);
-
   // Callers may pass an inline builder; keep the latest one but only fetch on mount.
   const buildReportRef = useRef(buildReport);
   useEffect(() => { buildReportRef.current = buildReport; }, [buildReport]);
   useEffect(() => {
+    if (!open) return;
     let alive = true;
     void buildReportRef.current().then(
       value => { if (alive) setReport(value); },
       () => { if (alive) setReportFailed(true); },
     );
     return () => { alive = false; };
-  }, []);
+  }, [open]);
 
-  // The result banner sits at the end of a scrolling form with the footer pinned over it: bring it into view.
+  // The result banner sits at the end of a scrolling form above the modal footer: bring it into view.
   useEffect(() => {
     if (phase === 'success' || phase === 'error') statusRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }, [phase]);
 
   const sending = phase === 'sending';
+  const close = () => { if (!sending) onClose(); };
+  const title = initialKind === 'log' ? t.feedbackTitleLog : t.feedbackTitleText;
   const trimmedTitle = issueTitle.trim();
   const trimmedBody = issueBody.trim();
   const formValid = kind === 'log'
@@ -202,14 +207,14 @@ function FeedbackForm({
   const issueUrl = result?.url;
   const footer = phase === 'success' && result?.ok ? (
     <>
-      <button type="button" className="btn h-11 flex-1 sm:flex-none" onClick={onClose}>{t.done}</button>
+      <button type="button" className="btn h-11 flex-1 sm:flex-none" onClick={close}>{t.done}</button>
       {issueUrl && (
         <button type="button" className="btn btn-ink h-11 flex-1 sm:flex-none" onClick={() => onOpenUrl(issueUrl)}>{t.feedbackViewIssue}</button>
       )}
     </>
   ) : (
     <>
-      <button type="button" className="btn h-11 flex-1 sm:flex-none" disabled={sending} onClick={onClose}>{t.cancel}</button>
+      <button type="button" className="btn h-11 flex-1 sm:flex-none" disabled={sending} onClick={close}>{t.cancel}</button>
       <button type="button" className="btn btn-ink h-11 flex-1 sm:flex-none" disabled={!canSend} onClick={() => void send()}>
         {sending && <span aria-hidden className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />}
         {phase === 'error' ? t.feedbackRetry : sending ? t.feedbackSending : t.feedbackSend}
@@ -218,7 +223,8 @@ function FeedbackForm({
   );
 
   return (
-    <div className="space-y-3.5">
+    <Modal isOpen={open} onClose={close} title={title} maxWidth="lg" footer={footer}>
+      <div className="space-y-3.5">
       {modeSelector}
 
       {/* keyed so switching mode replays the entrance, like the sheet itself */}
@@ -274,19 +280,17 @@ function FeedbackForm({
       </div>
 
       {phase === 'success' && result?.ok && (
-        <p ref={statusRef} role="status" className="rise-in scroll-mb-20 flex items-center gap-2 rounded-[18px] bg-[var(--ok-wash)] p-3.5 text-xs font-medium text-[var(--ok)]">
-          <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-[var(--ok)] text-white"><IconCheck size={13} /></span>
+        <p ref={statusRef} role="status" className="rise-in flex items-center gap-2 rounded-[18px] bg-[var(--ok-wash)] p-3.5 text-xs font-medium text-[var(--ok)]">
+          <IconCheck size={17} className="shrink-0" />
           {t.feedbackSuccess.replace('{number}', String(result.number ?? ''))}
         </p>
       )}
       {phase === 'error' && (
-        <p ref={statusRef} role="alert" className="rise-in scroll-mb-20 rounded-[18px] bg-[var(--danger-soft)] p-3.5 text-xs font-medium text-[var(--danger)]">
+        <p ref={statusRef} role="alert" className="rise-in rounded-[18px] bg-[var(--danger-soft)] p-3.5 text-xs font-medium text-[var(--danger)]">
           {errorText(result?.error, t)}
         </p>
       )}
-
-      {/* pinned to the bottom of the sheet while the form scrolls, like the footer of the other sheets */}
-      <div className="sticky bottom-0 z-10 -mb-px flex gap-2 border-t border-[var(--sep)] bg-[var(--sheet-fill)] pt-3 backdrop-blur-xl sm:justify-end">{footer}</div>
-    </div>
+      </div>
+    </Modal>
   );
 }
