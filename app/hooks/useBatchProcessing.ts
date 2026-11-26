@@ -320,35 +320,44 @@ export function useBatchProcessing({
     if (libraryWritten) setLibraryDb(librarySnapshot);
 
     if (effectiveMode === 'zip' && zipOutputs.length > 0) {
-      try {
-        const saveOutput = await buildBatchSaveOutput(zipOutputs);
-        finalSaveOutput = saveOutput;
-        const zipSave = await saveBlob(saveOutput.blob, saveOutput.filename, { skipFilePicker: true, skipShare: true });
-        if (!zipSave.success) {
-          finalSaveOutput = null;
-          cancelCount += zipOutputs.length;
-          successCount = Math.max(0, successCount - zipOutputs.length);
-          const zipped = new Set(zipOutputs.map(file => file.filename));
-          for (let index = exportedNames.length - 1; index >= 0; index -= 1) {
-            if (zipped.has(exportedNames[index])) exportedNames.splice(index, 1);
-          }
-          setBatchFiles(prev =>
-            prev.map(f => zipItemIds.has(f.id) ? { ...f, status: 'pending', progress: 0 } : f)
-          );
-        }
-      } catch (error) {
-        finalSaveOutput = null;
-        failCount += zipOutputs.length;
-        successCount = Math.max(0, successCount - zipOutputs.length);
+      const dropZippedNames = () => {
         const zipped = new Set(zipOutputs.map(file => file.filename));
-        const zipMessage = error instanceof Error ? error.message : String(error);
         for (let index = exportedNames.length - 1; index >= 0; index -= 1) {
           if (zipped.has(exportedNames[index])) exportedNames.splice(index, 1);
         }
+      };
+      if (controller.signal.aborted) {
+        cancelCount += zipOutputs.length;
+        successCount = Math.max(0, successCount - zipOutputs.length);
+        dropZippedNames();
         setBatchFiles(prev =>
-          prev.map(f => zipItemIds.has(f.id) ? { ...f, status: 'error', progress: 0, error: zipMessage } : f)
+          prev.map(f => zipItemIds.has(f.id) ? { ...f, status: 'pending', progress: 0 } : f)
         );
-        console.error('[batch] zip save failed', error);
+      } else {
+        try {
+          const saveOutput = await buildBatchSaveOutput(zipOutputs);
+          finalSaveOutput = saveOutput;
+          const zipSave = await saveBlob(saveOutput.blob, saveOutput.filename, { skipFilePicker: true, skipShare: true });
+          if (!zipSave.success) {
+            finalSaveOutput = null;
+            cancelCount += zipOutputs.length;
+            successCount = Math.max(0, successCount - zipOutputs.length);
+            dropZippedNames();
+            setBatchFiles(prev =>
+              prev.map(f => zipItemIds.has(f.id) ? { ...f, status: 'pending', progress: 0 } : f)
+            );
+          }
+        } catch (error) {
+          finalSaveOutput = null;
+          failCount += zipOutputs.length;
+          successCount = Math.max(0, successCount - zipOutputs.length);
+          const zipMessage = error instanceof Error ? error.message : String(error);
+          dropZippedNames();
+          setBatchFiles(prev =>
+            prev.map(f => zipItemIds.has(f.id) ? { ...f, status: 'error', progress: 0, error: zipMessage } : f)
+          );
+          console.error('[batch] zip save failed', error);
+        }
       }
     }
 
@@ -358,15 +367,17 @@ export function useBatchProcessing({
     // Safari sometimes needs the download to start from a fresh gesture after a long annotation job.
     pendingSaveOutputRef.current = finalSaveOutput;
 
-    // Show completion notification
-    setBatchDoneResults({
-      total: batchFiles.length,
-      success: successCount,
-      failed: failCount,
-      cancelled: cancelCount,
-      filenames: exportedNames,
-    });
-    setIsBatchDoneModalOpen(true);
+    if (!controller.signal.aborted) {
+      // Show completion notification
+      setBatchDoneResults({
+        total: batchFiles.length,
+        success: successCount,
+        failed: failCount,
+        cancelled: cancelCount,
+        filenames: exportedNames,
+      });
+      setIsBatchDoneModalOpen(true);
+    }
   };
 
   return {

@@ -93,12 +93,9 @@ export function useFuriganaWorker(input: AnnotationInput) {
           void reviewReadings(lines, settings.llm, controller.signal)
             .then(results => {
               if (controller.signal.aborted || results.length === 0) return;
-              setSnapshot(previous => {
-                if (previous.input !== input || previous.revision !== revision) return previous;
-                const nextLines = applyReadingReviewResults(previous.lines, results, input.rubyType);
-                setStableSnapshot(prevStable => (prevStable?.input === input ? { input, lines: nextLines } : prevStable));
-                return { ...previous, lines: nextLines };
-              });
+              const nextLines = applyReadingReviewResults(lines, results, input.rubyType);
+              setStableSnapshot(prevStable => (prevStable?.input === input ? { input, lines: nextLines } : prevStable));
+              setSnapshot(previous => (previous.input === input && previous.revision === revision ? { ...previous, lines: nextLines } : previous));
             })
             .catch(err => {
               if (controller.signal.aborted || (err instanceof Error && err.name === 'AbortError')) return;
