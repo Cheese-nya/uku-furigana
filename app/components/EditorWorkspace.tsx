@@ -207,7 +207,7 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
 
           <div className="flex-1" />
 
-          {(isKuromojiLoading || dictionaryStatus === 'degraded' || reviewCount > 0 || aiReview?.status === 'running' || Boolean(onTriggerAiReview)) && (
+          {(isKuromojiLoading || dictionaryStatus === 'degraded' || reviewCount > 0 || aiReview?.status === 'running') && (
             <GlassCapsule>
               {isKuromojiLoading ? (
                 <span className="flex h-9 items-center gap-[7px] px-3.5 text-[13px] font-semibold">
