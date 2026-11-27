@@ -18,6 +18,8 @@
   [![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm_Noncommercial_1.0.0-orange.svg)](LICENSE)
   [![Platforms](https://img.shields.io/badge/Windows_·_Android_·_Web-3776ab)](#download)
 
+  <p>Community · <a href="https://linux.do/">LINUX DO</a></p>
+
   <br />
 
   <img src="docs/images/workbench.png" alt="The workbench: source text on the left, live furigana preview on the right" width="900" />

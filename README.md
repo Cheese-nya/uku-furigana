@@ -18,6 +18,8 @@
   [![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm_Noncommercial_1.0.0-orange.svg)](LICENSE)
   [![Platforms](https://img.shields.io/badge/Windows_·_Android_·_Web-3776ab)](#下载)
 
+  <p>社区 · <a href="https://linux.do/">LINUX DO</a></p>
+
   <br />
 
   <img src="docs/images/workbench.png" alt="浮く 工作台：左侧原文，右侧实时注音预览" width="900" />
