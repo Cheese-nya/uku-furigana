@@ -12,6 +12,22 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '1.8.8',
+    date: '2026-11-27',
+    items: {
+      'zh-CN': [
+        '双语逐句翻译导出：工作台与批处理导出面板新增「附带逐句翻译」开关，支持 TXT、SRT、Word (.docx)、EPUB 与 PDF（横排/竖排自动按需嵌入 Noto Sans SC 字体）全部格式。',
+        '智能补翻与缓存共享：与阅读器共用本地译文缓存，默认自动补翻缺失句子并写回缓存（也可切换仅用已有译文），支持实时进度展示、随时取消导出与大批量调用确认。',
+        '工作台细节修复：隐藏导入按钮左侧无状态时的空胶囊占位条。',
+      ],
+      en: [
+        'Bilingual Line-by-Line Export: Added an optional "Include line-by-line translation" toggle in both Workbench and Batch export popovers across TXT, SRT, Word (.docx), EPUB, and horizontal/vertical PDF (with lazy Noto Sans SC subsetting).',
+        'Cache Sharing & Auto-Fill: Reuses Reader translations from IndexedDB, auto-translates missing sentences with cached-only fallback, and adds live translation progress, cancellation, and large-LLM confirmation.',
+        'Toolbar Polish: Hid the empty status capsule next to the editor Import button when idle.',
+      ],
+    },
+  },
+  {
     version: '1.8.7',
     date: '2026-11-27',
     items: {

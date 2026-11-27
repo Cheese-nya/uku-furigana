@@ -1,3 +1,21 @@
+# 🎏 浮く Uku Furigana V1.8.8 发布说明 (Release Notes)
+
+> **版本标签 (Tag)**: `v1.8.8`
+> **发布标题 (Title)**: `浮く Uku Furigana V1.8.8 — 全部格式支持可选逐句翻译导出`
+> **发布日期 (Date)**: 2026-11-27
+
+## ✨ 改进与修复 (Improvements & Fixes)
+- **双语逐句翻译导出（全格式）**：工作台单文件导出与批处理导出新增「附带逐句翻译」开关，全面支持 TXT、SRT、Word (.docx)、EPUB 与 PDF（横排紧随原句、竖排左侧辅助列，按需子集化嵌入 Noto Sans SC 中文字体）。
+- **默认自动补翻与缓存共享**：导出直接复用阅读器已有句级译文缓存，默认自动调用当前翻译引擎补翻缺失句并写回缓存；支持切换「仅用已有译文」、实时进度与中断取消、以及大模型大量缺失句确认弹窗。
+- **工作台细节修复**：修复导入按钮左侧在无状态时显示空胶囊条的问题。
+
+## English
+- **Bilingual Export Across All 5 Formats**: Added an "Include line-by-line translation" toggle to both Workbench and Batch export menus with full support for TXT, SRT, DOCX (`keepNext`), EPUB (`.bilingual`), and horizontal/vertical PDF (with lazy Noto Sans SC subsetting).
+- **Auto-Translate Missing & Cache Sharing**: Shares sentence-level IndexedDB cache directly with the Reader, auto-translates uncached sentences by default (or uses cached-only mode), and provides live translation progress, cancellation, and large-LLM confirmation.
+- **UI Polish**: Fixed the empty status capsule rendered beside the editor Import button when idle.
+
+---
+
 # 🎏 浮く Uku Furigana V1.8.7 发布说明 (Release Notes)
 
 > **版本标签 (Tag)**: `v1.8.7`
