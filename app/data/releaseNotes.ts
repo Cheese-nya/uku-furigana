@@ -12,6 +12,24 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '1.8.7',
+    date: '2026-11-27',
+    items: {
+      'zh-CN': [
+        'PDF / EPUB 导入修复：按页面实际纵坐标排序插图并保留图文混排插图，过滤横排 PDF 小号原生注音，支持竖排 PDF 自动识别章节与 RTL 阅读方向。',
+        '沉浸式阅读体验：新增目录/书签/全书搜索三标签面板、PDF 原书页码跳转、纸张/护眼/夜间主题、行距与栏宽预设、进度滑块、桌面快捷键以及阅读器内直接改读音，大书打开首章即刻响应。',
+        '本地假名引擎：支持 々/〆/〇 叠字对齐与多解送假名评分，新增 15+ 语境消歧与全量助数词音变、生僻熟字训合并恢复，以及按首字前缀分桶加速人名匹配。',
+        'AI 辅助校音：支持双模式消歧与生僻读音推理、严格假名/送假名校验、前后句上下文与专名术语表提示、IndexedDB 持久缓存及双路并发校对。',
+      ],
+      en: [
+        'PDF & EPUB Import: Positioned extracted PDF images by true vertical page coordinates, kept illustrations on dense pages, filtered horizontal PDF small ruby text, added vertical PDF chapter detection, and preserved EPUB <hr>/compound <ruby>/RTL direction.',
+        'Immersive Reader: Added TOC/Bookmarks/Search panel, PDF source-page jump, paper/sepia/night themes, line-height & column-width presets, HUD progress scrubber, keyboard shortcuts, in-reader ruby correction, and instant first-chapter rendering.',
+        'Local Furigana Engine: Added 々/〆/〇 iteration handling, multi-solution okurigana scoring, 15+ context rules, extended counter & irregular jukujikun recovery, and prefix-bucketed name matching.',
+        'AI Reading Review: Added dual choose/infer modes with strict kana validation, neighbor-sentence context & glossary hints, persistent IndexedDB caching, and 2-way concurrent batching.',
+      ],
+    },
+  },
+  {
     version: '1.8.6',
     date: '2026-11-26',
     items: {

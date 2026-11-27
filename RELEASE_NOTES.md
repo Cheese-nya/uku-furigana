@@ -1,3 +1,23 @@
+# 🎏 浮く Uku Furigana V1.8.7 发布说明 (Release Notes)
+
+> **版本标签 (Tag)**: `v1.8.7`
+> **发布标题 (Title)**: `浮く Uku Furigana V1.8.7 — PDF/EPUB 沉浸式阅读体验与假名/AI 标注引擎升级`
+> **发布日期 (Date)**: 2026-11-27
+
+## ✨ 改进与修复 (Improvements & Fixes)
+- **PDF & EPUB 导入**：按 PDF 页面实际纵坐标排序插图并保留图文混排页插图，过滤横排小字号原生注音，支持竖排 PDF 自动分章；优化 EPUB 复合 `<ruby>`、`<hr>` 分隔符、目录回退与 RTL 排版识别。
+- **沉浸式阅读体验**：升级三标签导航（目录 / 书签 / 全书搜索）与 PDF 页码跳转，新增纸张 / 护眼 / 夜间主题、行距与栏宽预设、书签切换、全书进度滑块、桌面端快捷键及阅读器内直接改读音，大书打开首章即可流式预览。
+- **本地假名标注引擎**：支持 `々/〆/〇` 叠字分组与多解送假名对齐评分，扩展 15+ 语境规则与更多助数词音变，增强词典熟字训合并恢复，并通过前缀索引提升人名与大书优先分块注音速度。
+- **AI 辅助读音校对**：新增消歧 + 读音推理双模式与严格假名校验，注入前后句上下文与术语表提示，新增 IndexedDB 持久缓存、2 路并发与独立的模型密钥配置支持。
+
+## English
+- **PDF & EPUB Import**: Ordered PDF illustrations by CTM page coordinates, preserved images on text-dense pages, filtered horizontal PDF ruby lines, added vertical PDF chapter detection, and improved EPUB compound `<ruby>`, `<hr>`, TOC fallback, and RTL detection.
+- **Immersive Reader**: Added 3-tab navigation (TOC / Bookmarks / Full-book Search), PDF source-page jump, paper/sepia/night themes, line-height & column-width presets, HUD progress scrubber, keyboard shortcuts, in-reader ruby correction, and instant active-chapter rendering.
+- **Local Furigana Engine**: Added `々/〆/〇` iteration grouping, multi-solution okurigana alignment scoring, 15+ contextual rules, expanded euphonic counters, compound jukujikun recovery, and prefix-bucketed name matching.
+- **AI Reading Review**: Added dual choose/infer modes with strict kana/okurigana validation, neighbor context & glossary hints, persistent IndexedDB caching, and 2-way batch concurrency.
+
+---
+
 # 🎏 浮く Uku Furigana V1.8.6 发布说明 (Release Notes)
 
 > **版本标签 (Tag)**: `v1.8.6`
