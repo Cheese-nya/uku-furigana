@@ -87,6 +87,8 @@ export function ReadingToolsSheet({
     onReorderDictionaries(order.map(item => item.id));
   };
 
+  const canAiReview = Boolean(settings.llm.apiKey.trim()) || !llmNeedsApiKey(settings.llm);
+
   return (
     <Modal isOpen={open} onClose={onClose} title={t.toolsTitle} maxWidth="sm" hideHeader>
       <h3 className="mb-3.5 text-center text-lg font-semibold text-[var(--label)]">{t.toolsTitle}</h3>
@@ -116,25 +118,25 @@ export function ReadingToolsSheet({
               onClick={() => set({ quickDraft: settings.quickDraft === false })}
             ><i /></button>
           </div>
-          {(Boolean(settings.llm.apiKey.trim()) || !llmNeedsApiKey(settings.llm)) && (
-            <div className="mt-2.5 flex items-center justify-between gap-2.5 rounded-[14px] bg-[var(--fill-2)] px-3 py-2.5">
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-semibold text-[var(--label)]">{t.aiReadingReview}</div>
-                <div className="text-xs text-[var(--label-2)]">{t.aiReadingReviewHint}</div>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={Boolean(settings.aiReadingReview)}
-                aria-label={t.aiReadingReview}
-                className="switch reading-tools-switch shrink-0 origin-right scale-[.85]"
-                onClick={() => set({ aiReadingReview: !settings.aiReadingReview })}
-              ><i /></button>
-            </div>
-          )}
         </>
       ) : (
         <p className="mx-0.5 mt-2 text-xs leading-normal text-[var(--label-3)]">{t.toolsMsNote}</p>
+      )}
+      {canAiReview && (
+        <div className="mt-2.5 flex items-center justify-between gap-2.5 rounded-[14px] bg-[var(--fill-2)] px-3 py-2.5">
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold text-[var(--label)]">{t.aiReadingReview}</div>
+            <div className="text-xs text-[var(--label-2)]">{t.aiReadingReviewHint}</div>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={Boolean(settings.aiReadingReview)}
+            aria-label={t.aiReadingReview}
+            className="switch reading-tools-switch shrink-0 origin-right scale-[.85]"
+            onClick={() => set({ aiReadingReview: !settings.aiReadingReview })}
+          ><i /></button>
+        </div>
       )}
 
       <Section>{t.toolsTarget}</Section>

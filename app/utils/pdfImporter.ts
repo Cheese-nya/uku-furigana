@@ -478,7 +478,7 @@ function findHeadingLines(lines: VisualLine[], bodyHeight: number): Map<VisualLi
   if (bodyHeight <= 0) return headings;
   let previous: VisualLine | null = null;
   for (const line of lines) {
-    if (line.rotated || line.vertical) {
+    if (line.rotated) {
       previous = line;
       continue;
     }
@@ -491,7 +491,9 @@ function findHeadingLines(lines: VisualLine[], bodyHeight: number): Map<VisualLi
     const pattern = HEADING_PATTERN_RE.test(text);
     const large = line.height >= bodyHeight * 1.3;
     const firstOnPage = previous === null || previous.pageIndex !== line.pageIndex;
-    const gapBefore = previous && previous.pageIndex === line.pageIndex ? Math.abs(previous.y - line.y) : Infinity;
+    const gapBefore = previous && previous.pageIndex === line.pageIndex
+      ? (line.vertical ? Math.abs(previous.x - line.x) : Math.abs(previous.y - line.y))
+      : Infinity;
     if (pattern || (large && (firstOnPage || gapBefore >= bodyHeight * 1.5))) {
       // A chapter-pattern line is a top-level chapter even at body size; type size only ranks
       // headings that have no recognisable chapter wording.
@@ -527,7 +529,8 @@ function insertImages(
   images: PdfImageItem[],
 ): { lines: string[]; paragraphLine: number[]; imageLines: Map<string, number> } {
   const insertions = new Map<number, PdfImageItem[]>();
-  for (const image of images) {
+  const sorted = images.slice().sort((a, b) => a.pageIndex - b.pageIndex || (b.y ?? Infinity) - (a.y ?? Infinity));
+  for (const image of sorted) {
     let target = paragraphs.length;
     for (let index = 0; index < paragraphFirst.length; index += 1) {
       const first = paragraphFirst[index];
@@ -536,9 +539,10 @@ function insertImages(
         break;
       }
       if (first.pageIndex === image.pageIndex) {
-        // Images sit at the head of their page: before the page's first paragraph.
-        target = index;
-        break;
+        if (image.y === undefined || first.y < image.y) {
+          target = index;
+          break;
+        }
       }
     }
     const list = insertions.get(target) ?? [];
@@ -764,9 +768,7 @@ export async function importPdf(
     }
     flushVisualLine();
 
-    // Illustration pages are the ones with little or no text; a text-heavy page's figures are rare
-    // enough that skipping operator-list work there keeps a 1000-page novel import quick.
-    if (pageChars < 500 && !(pageIndex === 0 && canRenderCover)) {
+    if (!(pageIndex === 0 && canRenderCover)) {
       throwIfAborted(options.signal);
       report(options, { stage: 'images', current: pageIndex + 1, total: doc.numPages });
       const extracted = await extractPageImages(page, pageIndex, pageViewportSize, {
@@ -834,10 +836,10 @@ export async function importPdf(
       columns = bodyLines;
     }
     if (!columns) {
-      // A horizontal page split into one item per glyph: rejoin the runs that continue each
-      // other along the baseline, then let the horizontal paragraph rules below do the rest.
+      // A horizontal page split into one item per glyph: drop small ruby runs before rejoining baselines.
+      const horizontalBody = pageLines.filter(line => bodyHeight <= 0 || line.height >= bodyHeight * 0.6);
       logicalLines.push(
-        ...mergeGlyphRuns(pageLines, bodyHeight).filter(line => !PAGE_NUMBER_RE.test(line.text)),
+        ...mergeGlyphRuns(horizontalBody, bodyHeight).filter(line => !PAGE_NUMBER_RE.test(line.text)),
       );
       continue;
     }

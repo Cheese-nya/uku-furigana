@@ -784,3 +784,72 @@ ruby rt,
 [data-testid="reader-script-canvas"]:not(.vertical-script-flow) > p[data-line] { content-visibility: auto; contain-intrinsic-size: auto 2.4em; }
 /* Chromium's SVG refraction is rasterised on the CPU every frame; while anything moves, glass falls back to blur */
 html[data-glass-busy] .glass { -webkit-backdrop-filter: blur(12px) saturate(180%) !important; backdrop-filter: blur(12px) saturate(180%) !important; }
+
+/* ---------- Reader color themes, scene breaks & search highlights ---------- */
+[data-reader-theme="paper"] {
+  --bg: #fdfcf8;
+  --surface: #ffffff;
+  --surface-2: #f6f4ef;
+  --label: #1c1917;
+  --label-2: #57534e;
+  --label-3: #a8a29e;
+  --ruby: #57534e;
+  --fill: rgba(28, 25, 23, 0.08);
+  --fill-2: rgba(28, 25, 23, 0.045);
+  --sep: rgba(28, 25, 23, 0.10);
+  --item-hover: rgba(28, 25, 23, 0.06);
+  background-color: var(--bg);
+  color: var(--label);
+}
+
+[data-reader-theme="sepia"] {
+  --bg: #f4ecd8;
+  --surface: #f9f3e3;
+  --surface-2: #efe5cc;
+  --label: #3a2e1f;
+  --label-2: #6b5842;
+  --label-3: #9e8a70;
+  --ruby: #7c5e3c;
+  --fill: rgba(58, 46, 31, 0.10);
+  --fill-2: rgba(58, 46, 31, 0.055);
+  --sep: rgba(58, 46, 31, 0.14);
+  --item-hover: rgba(58, 46, 31, 0.07);
+  background-color: var(--bg);
+  color: var(--label);
+}
+
+[data-reader-theme="night"] {
+  --bg: #121417;
+  --surface: #1b1e23;
+  --surface-2: #22262d;
+  --label: #e4e6eb;
+  --label-2: #9ca3af;
+  --label-3: #6b7280;
+  --ruby: #93c5fd;
+  --fill: rgba(255, 255, 255, 0.11);
+  --fill-2: rgba(255, 255, 255, 0.06);
+  --sep: rgba(255, 255, 255, 0.12);
+  --item-hover: rgba(255, 255, 255, 0.08);
+  background-color: var(--bg);
+  color: var(--label);
+}
+
+.reader-scene-break {
+  border: 0;
+  height: 1px;
+  width: 5.5em;
+  margin: 1.8em auto;
+  background: var(--sep);
+}
+
+.vertical-script-flow .reader-scene-break {
+  width: 1px;
+  height: 5.5em;
+  margin: auto 1.8em;
+}
+
+.reader-search-hit {
+  border-radius: 3px;
+  background: rgba(250, 204, 21, 0.35);
+  box-shadow: 0 0 0 1px rgba(202, 138, 4, 0.35);
+}

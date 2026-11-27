@@ -282,6 +282,52 @@ function overlaps(ranges: Array<[number, number]>, start: number, end: number): 
   return ranges.some(([left, right]) => left < end && start < right);
 }
 
+interface PrefixIndex {
+  revision: string;
+  size: number;
+  byFirstChar: Map<string, string[]>;
+}
+
+const prefixIndexCache = new WeakMap<NameReadingTable, PrefixIndex>();
+
+function getNamePrefixIndex(table: NameReadingTable): Map<string, string[]> {
+  const cached = prefixIndexCache.get(table);
+  if (cached && cached.revision === table.revision && cached.size === table.size) {
+    return cached.byFirstChar;
+  }
+  const byFirstChar = new Map<string, string[]>();
+  const sortedKeys = [...table.keys()].sort((a, b) => b.length - a.length || a.localeCompare(b));
+  for (const key of sortedKeys) {
+    const first = key[0];
+    if (!first) continue;
+    let bucket = byFirstChar.get(first);
+    if (!bucket) {
+      bucket = [];
+      byFirstChar.set(first, bucket);
+    }
+    bucket.push(key);
+  }
+  prefixIndexCache.set(table, { revision: table.revision, size: table.size, byFirstChar });
+  return byFirstChar;
+}
+
+const importedReadingTableCache = new WeakMap<ReadingTable, { size: number; names: NameReadingTable }>();
+
+function getImportedNameTable(table: ReadingTable): NameReadingTable {
+  const cached = importedReadingTableCache.get(table);
+  if (cached && cached.size === table.size) return cached.names;
+  const names = makeTable('imported');
+  for (const [key, readings] of table) {
+    if (key.length < 2 || key.length > 24 || !KANJI_REGEX.test(key) || COMMON_SURFACES.has(key)) continue;
+    const values = uniqueByCompact(readings.map(value => normalizeNameReading(value)));
+    if (!values.length || !values.every(value => isValidNameReading(value))) continue;
+    names.set(key, { key, surface: key, reading: values[0], alternatives: values.slice(1),
+      score: 0, priority: IMPORTED_PRIORITY, rubyType: 'hiragana' });
+  }
+  importedReadingTableCache.set(table, { size: table.size, names });
+  return names;
+}
+
 function splitByKnownSubterms(
   skeleton: Skeleton,
   from: number,
@@ -291,16 +337,22 @@ function splitByKnownSubterms(
   excludedKey: string,
   wanted: number,
 ): Segment[] | null {
-  const known = new Map(builtInNameReadingTable());
-  for (const [key, entry] of table) known.set(key, entry);
-  const keys = [...known.keys()].filter(key => key !== excludedKey && key.length < to - from)
-    .sort((a, b) => b.length - a.length || a.localeCompare(b));
+  const builtIn = builtInNameReadingTable();
+  const builtInIndex = getNamePrefixIndex(builtIn);
+  const tableIndex = getNamePrefixIndex(table);
   const segments: Segment[] = [];
   let cursor = from;
   while (cursor < to && segments.length < wanted) {
-    const key = keys.find(candidate => {
+    const ch = skeleton.text[cursor];
+    const tableCandidates = tableIndex.get(ch) || [];
+    const builtInCandidates = builtInIndex.get(ch) || [];
+    const merged = tableCandidates.length && builtInCandidates.length
+      ? [...new Set([...tableCandidates, ...builtInCandidates])].sort((a, b) => b.length - a.length || a.localeCompare(b))
+      : (tableCandidates.length ? tableCandidates : builtInCandidates);
+    const key = merged.find(candidate => {
+      if (candidate === excludedKey || candidate.length >= to - from) return false;
       if (!skeleton.text.startsWith(candidate, cursor) || cursor + candidate.length > to) return false;
-      const entry = known.get(candidate);
+      const entry = table.get(candidate) || builtIn.get(candidate);
       return entry ? splitNameReadingSegments(entry.reading).length === 1 : false;
     });
     if (!key) return null;
@@ -318,13 +370,16 @@ function findNameMatches(
   source: ReadingSource,
   excluded: Array<{ start: number; surface: string }> = [],
 ): NameMatch[] {
+  if (!table.size) return [];
   const skeleton = nameReadingSkeleton(line.cleanText);
-  const keys = [...table.keys()].sort((a, b) => b.length - a.length || a.localeCompare(b));
+  if (!skeleton.text.length) return [];
+  const byFirstChar = getNamePrefixIndex(table);
   const blocked = protectedRanges(line, excluded, source);
   const matches: NameMatch[] = [];
   const used: Array<[number, number]> = [];
   for (let index = 0; index < skeleton.text.length;) {
-    const key = keys.find(candidate => skeleton.text.startsWith(candidate, index));
+    const candidates = byFirstChar.get(skeleton.text[index]);
+    const key = candidates?.find(candidate => skeleton.text.startsWith(candidate, index));
     if (!key) { index++; continue; }
     const endIndex = index + key.length;
     const range = rangeFromSkeleton(skeleton, index, endIndex);
@@ -412,14 +467,8 @@ export function applyNameReadings(line: ScriptLine, table: NameReadingTable): Sc
  * spaces receives one ruby per visible part; ambiguous readings stay as review alternatives.
  */
 export function applyImportedReadingCompounds(line: ScriptLine, table: ReadingTable): ScriptLine {
-  const names = makeTable('imported');
-  for (const [key, readings] of table) {
-    if (key.length < 2 || key.length > 24 || !KANJI_REGEX.test(key) || COMMON_SURFACES.has(key)) continue;
-    const values = uniqueByCompact(readings.map(value => normalizeNameReading(value)));
-    if (!values.length || !values.every(value => isValidNameReading(value))) continue;
-    names.set(key, { key, surface: key, reading: values[0], alternatives: values.slice(1),
-      score: 0, priority: IMPORTED_PRIORITY, rubyType: 'hiragana' });
-  }
+  const names = getImportedNameTable(table);
+  if (!names.size) return line;
   return applyNameReadingOverlay(line, names, 'hiragana', 'automatic');
 }
 

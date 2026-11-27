@@ -66,19 +66,26 @@ export interface DictionaryCompound {
   end: number;
   surface: string;
   reading: string;
+  alternatives?: string[];
 }
 
 const KANJI = /[\u4E00-\u9FFF\u3400-\u4DBF]/;
+const KANJI_GLOBAL = /[\u4E00-\u9FFF\u3400-\u4DBF]/g;
 const MAX_COMPOUND_LENGTH = 6;
+const MAX_JUKUJIKUN_LENGTH = 4;
 
 /**
- * Kuromoji can split a word the reading table knows (号|哭 → 号哭). Recover the longest
- * unambiguous compound starting at an unread automatic token. User overlays are applied after
- * this canonical pass, so manual/glossary/source readings keep their precedence.
+ * Kuromoji can split a word the reading table knows (号|哭 → 号哭, 一|昨日 → いちきのう).
+ * Recover the longest compound starting at an automatic token when either:
+ * (Case A) any token has an unread kanji and the table gives a unique reading, or
+ * (Case B) all tokens already carry automatic readings, form a 2–4 char multi-kanji
+ * jukujikun/irregular compound with intact word boundaries, and the joined automatic
+ * reading does not match any of the table's 1–3 known readings.
  */
 export function findDictionaryCompound(line: ScriptLine, index: number, table: ReadingTable): DictionaryCompound | null {
   const first = line.tokens[index];
   if (!first || (first.readingSource && first.readingSource !== 'automatic') || first.annotationSuppressed) return null;
+  if ((first.word?.offset ?? 0) > 0) return null;
   const offsets: number[] = [];
   let offset = 0;
   for (const token of line.tokens) {
@@ -90,15 +97,32 @@ export function findDictionaryCompound(line: ScriptLine, index: number, table: R
   for (let end = Math.min(text.length, start + MAX_COMPOUND_LENGTH); end > start + 1; end--) {
     const surface = text.slice(start, end);
     const readings = table.get(surface);
-    if (!KANJI.test(surface) || readings?.length !== 1) continue;
+    if (!KANJI.test(surface) || !readings?.length) continue;
     // The compound must cover whole tokens, otherwise a replacement would lose text.
     const parts = line.tokens.filter((_, partIndex) =>
       offsets[partIndex] >= start && offsets[partIndex] + line.tokens[partIndex].surface.length <= end);
     if (parts.length < 2 || parts.reduce((length, token) => length + token.surface.length, 0) !== surface.length) continue;
     const range = line.tokens.slice(index, index + parts.length);
-    if (range.some(token => token.readingSource && token.readingSource !== 'automatic')) continue;
-    if (!range.some(token => token.hasKanji && !token.ruby)) continue;
-    return { start: index, end: index + parts.length, surface, reading: readings[0] };
+    if (range.some(token => (token.readingSource && token.readingSource !== 'automatic') || token.annotationSuppressed)) continue;
+    if (range.some(token => token.hasKanji && !token.ruby)) {
+      if (readings.length !== 1) continue;
+      return { start: index, end: index + parts.length, surface, reading: readings[0] };
+    }
+    if (surface.length > MAX_JUKUJIKUN_LENGTH || readings.length > 3) continue;
+    const last = range[range.length - 1];
+    if (last.word && last.word.offset + last.surface.length !== last.word.surface.length) continue;
+    if (!range.every(token => token.hasKanji)) continue;
+    if ((surface.match(KANJI_GLOBAL) || []).length < 2) continue;
+    const autoReading = katakanaToHiragana(range.map(token => token.ruby || token.surface).join('').normalize('NFKC').trim());
+    if (readings.includes(autoReading)) continue;
+    const alts = uniqueReadings(readings).slice(0, MAX_ALTERNATIVES);
+    return {
+      start: index,
+      end: index + parts.length,
+      surface,
+      reading: alts[0],
+      ...(alts.length > 1 ? { alternatives: alts } : {}),
+    };
   }
   return null;
 }
@@ -126,8 +150,18 @@ export function checkLine(line: ScriptLine, table: ReadingTable): ScriptLine {
   for (let index = 0; index < checked.tokens.length; index++) {
     const compound = findDictionaryCompound(checked, index, table);
     if (!compound) continue;
-    checked.tokens.splice(compound.start, compound.end - compound.start,
-      ...parseCompoundToTokens(compound.surface, compound.reading, 'hiragana'));
+    const parsed = parseCompoundToTokens(compound.surface, compound.reading, 'hiragana');
+    if (compound.alternatives && compound.alternatives.length > 1) {
+      const alts = uniqueReadings([compound.reading, ...compound.alternatives]).slice(0, MAX_ALTERNATIVES);
+      for (let i = 0; i < parsed.length; i++) {
+        const token = parsed[i];
+        if (!token.hasKanji) continue;
+        const standalone = !token.word || token.word.surface === token.surface;
+        if (standalone) parsed[i] = { ...token, alternatives: alts, needsReview: true };
+        else if (token.word) parsed[i] = { ...token, word: { ...token.word, alternatives: alts }, needsReview: true };
+      }
+    }
+    checked.tokens.splice(compound.start, compound.end - compound.start, ...parsed);
     index = compound.start;
   }
   const offsets: number[] = [];

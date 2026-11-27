@@ -78,11 +78,14 @@ test('阅读器字号：最大 40 px，旧偏好被钳制，工作台仍保持 1
   assert.ok(source.includes('fontAnchorRef'), 'size changes anchor the current line while reflowing');
 });
 
-test('阅读器：样稿以外的功能已删除', () => {
-  for (const removed of ['showLineNumbers', 'textAlign', 'customRubyColor', 'RUBY_COLOR_SWATCHES', 'sepia', 'mint', 'requestFullscreen',
-    'reader-fullscreen-btn', 'touch_reveal', 'review_only', 'speechSynthesis', 'bookmark', 'searchHits']) {
+test('阅读器：样稿以外的冗余开关仍保持精简，并支持主题与书签/检索', () => {
+  for (const removed of ['showLineNumbers', 'textAlign', 'customRubyColor', 'RUBY_COLOR_SWATCHES', 'mint', 'requestFullscreen',
+    'reader-fullscreen-btn', 'touch_reveal', 'review_only', 'speechSynthesis']) {
     assert.equal(source.includes(removed), false, `ReaderPanel must not contain ${removed}`);
   }
+  assert.ok(source.includes('data-reader-theme='), 'ReaderPanel exposes reader theme attribute');
+  assert.ok(source.includes('onAddBookmark') && source.includes('onRemoveBookmark'), 'ReaderPanel supports bookmarks');
+  assert.ok(source.includes('searchHighlight'), 'ReaderPanel supports in-book search highlighting');
   const emojis = source.match(/\p{Extended_Pictographic}/gu) ?? [];
   assert.deepEqual(emojis, []);
 });
@@ -109,13 +112,11 @@ test('阅读器翻译按钮：仅首次显示一条可关闭的拖动提示', ()
   assert.ok(css.includes('.ft-guide[data-side=') && css.includes('prefers-reduced-motion'), 'guide has both pointers and reduced-motion styling');
 });
 
-test('阅读器：注音失败时显示台本库原文，而不是空白页', () => {
+test('阅读器：注音失败或初次加载时显示台本库原文，而不是空白页', () => {
   assert.ok(source.includes('plainScriptLines'), 'ReaderPanel falls back to the stored text');
-  // Only on failure: a fallback while annotating keeps the line count from dropping to 0, and
-  // then a ruby-type switch no longer brings the reader back to their line (500 → 44).
-  assert.ok(source.includes("Boolean(error) && !isProcessing && annotatedLines.length === 0"), 'fallback only when annotation failed');
-  assert.ok(source.includes('failed ? plainLines : annotatedLines'));
-  assert.ok(source.includes('readerPlainTextNote'), 'and says why the text is plain');
+  assert.ok(source.includes('Boolean(error) && !isProcessing && annotatedLines.length === 0'), 'detects annotation failure cleanly');
+  assert.ok(source.includes('annotatedLines.length > 0 ? annotatedLines : plainLines'), 'shows annotated lines once ready, plain lines beforehand or on failure');
+  assert.ok(source.includes('readerPlainTextNote'), 'and says why the text is plain on error');
   assert.deepEqual(
     plainScriptLines('第一行\n\n第三行').map(entry => [entry.cleanText, entry.tokens.map(token => token.surface).join('')]),
     [['第一行', '第一行'], ['', ''], ['第三行', '第三行']],

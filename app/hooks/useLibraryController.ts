@@ -17,6 +17,7 @@ import { saveCorrections } from '../utils/correctionStorage';
 import { fingerprintText, resolveScript, type CorrectionDatabaseV2 } from '../utils/correctionDatabase';
 import {
   addBookmark,
+  chapterIndexForLine,
   createFolder,
   createStarterBooks,
   deleteBook,
@@ -485,7 +486,7 @@ export function useLibraryController({
     if (!activeBookId || !book) return;
     const sourceLines = book.content.replace(/\r\n?/g, '\n').split('\n');
     const snippet = (sourceLines[lineIndex] || '').trim().slice(0, 80);
-    const chapterIndex = Math.max(0, book.chapters.findIndex(chapter => lineIndex >= chapter.startLine && lineIndex <= chapter.endLine));
+    const chapterIndex = chapterIndexForLine(book.chapters, lineIndex);
     setLibraryDb(previous => addBookmark(previous, activeBookId, { chapterIndex, lineIndex, label: label ?? '', snippet }));
   };
 

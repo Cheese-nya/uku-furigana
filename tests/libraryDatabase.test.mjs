@@ -586,3 +586,17 @@ test('pageStarts 只接受合法且单调的行号，pageLabels 长度需匹配'
   });
   assert.equal(moved.books[Object.keys(good.books)[0]].pageStarts, undefined);
 });
+
+test('lineForSourcePage 和 chapterIndexForLine 准确解析原书页码和章节索引', async () => {
+  const { chapterIndexForLine, lineForSourcePage } = loadTypescript('../app/utils/libraryDatabase.ts');
+  const chapters = [
+    { id: 'c0', title: '序章', startLine: 0, endLine: 9 },
+    { id: 'c1', title: '第一章', startLine: 10, endLine: 25 },
+  ];
+  assert.equal(chapterIndexForLine(chapters, 0), 0);
+  assert.equal(chapterIndexForLine(chapters, 12), 1);
+  assert.equal(lineForSourcePage([0, -1, 12], ['i', '', '1'], '1'), 12);
+  assert.equal(lineForSourcePage([0, -1, 12], ['i', '', '1'], '2'), 12);
+  assert.equal(lineForSourcePage([0, 12], undefined, 2), 12);
+  assert.equal(lineForSourcePage([0, 12], undefined, '99'), null);
+});

@@ -6,7 +6,7 @@ import { LiquidSelector } from './glass/LiquidSelector';
 import type { Translations } from '../utils/i18n';
 import type { PretranslateState } from '../hooks/useBilingual';
 import { IconCheck } from './glass/icons';
-import type { ReaderPrefs } from '../utils/readerPreferences';
+import { READER_LINE_HEIGHT_MAX, READER_LINE_HEIGHT_MIN, type ReaderContentWidth, type ReaderPrefs, type ReaderTheme } from '../utils/readerPreferences';
 
 type RubyMode = 'hiragana' | 'katakana' | 'romaji';
 
@@ -30,6 +30,20 @@ export interface TypographyPopoverProps {
   /** Writing direction row (reader only). */
   writingMode?: 'horizontal' | 'vertical';
   onWritingModeChange?: (value: 'horizontal' | 'vertical') => void;
+  readerTheme?: ReaderTheme;
+  onReaderThemeChange?: (value: ReaderTheme) => void;
+  lineHeight?: number;
+  onLineHeightChange?: (value: number) => void;
+  contentWidth?: ReaderContentWidth;
+  onContentWidthChange?: (value: ReaderContentWidth) => void;
+  aiReview?: {
+    status: 'idle' | 'running' | 'done' | 'error';
+    completed: number;
+    total: number;
+    error: string;
+    onRun: () => void;
+    onCancel: () => void;
+  };
   /** Bilingual reading (reader only): the switch plus the whole-book translation row. */
   bilingual?: {
     on: boolean;
@@ -104,7 +118,9 @@ function Group({ label, value, children }: { label: string; value?: string; chil
 /** Mockup "排版" popover: ruby mode (phones), font, size, show-ruby switch. */
 export function TypographyPopover({
   open, onClose, anchor, placement, fontFamily, onFontFamilyChange, fontSize, onFontSizeChange, minFontSize = 14, maxFontSize = 26,
-  showRuby, onShowRubyChange, rubyType, onRubyTypeChange, writingMode, onWritingModeChange, bilingual, floatingTranslation, autoReading, t,
+  showRuby, onShowRubyChange, rubyType, onRubyTypeChange, writingMode, onWritingModeChange,
+  readerTheme, onReaderThemeChange, lineHeight, onLineHeightChange, contentWidth, onContentWidthChange,
+  aiReview, bilingual, floatingTranslation, autoReading, t,
 }: TypographyPopoverProps) {
   const size = Math.min(maxFontSize, Math.max(minFontSize, fontSize));
   return (
@@ -122,6 +138,24 @@ export function TypographyPopover({
               { value: 'hiragana', label: t.hiragana },
               { value: 'katakana', label: t.katakana },
               { value: 'romaji', label: t.romaji },
+            ]}
+          />
+        </Group>
+      )}
+      {readerTheme && onReaderThemeChange && (
+        <Group label={t.readerThemeLabel}>
+          <LiquidSelector
+            variant="solid"
+            className={SEG}
+            role="radiogroup"
+            ariaLabel={t.readerThemeLabel}
+            value={readerTheme}
+            onChange={onReaderThemeChange}
+            options={[
+              { value: 'system', label: t.readerThemeSystem },
+              { value: 'paper', label: t.readerThemePaper },
+              { value: 'sepia', label: t.readerThemeSepia },
+              { value: 'night', label: t.readerThemeNight },
             ]}
           />
         </Group>
@@ -171,12 +205,67 @@ export function TypographyPopover({
           className="w-full accent-[var(--label)]"
         />
       </Group>
+      {lineHeight !== undefined && onLineHeightChange && (
+        <Group label={t.readerLineHeightLabel} value={lineHeight.toFixed(1)}>
+          <input
+            type="range"
+            min={READER_LINE_HEIGHT_MIN}
+            max={READER_LINE_HEIGHT_MAX}
+            step={0.1}
+            value={lineHeight}
+            aria-label={t.readerLineHeightLabel}
+            aria-valuetext={lineHeight.toFixed(1)}
+            onChange={event => onLineHeightChange(Number(event.target.value))}
+            className="w-full accent-[var(--label)]"
+          />
+        </Group>
+      )}
+      {writingMode !== 'vertical' && contentWidth && onContentWidthChange && (
+        <Group label={t.readerWidthLabel}>
+          <LiquidSelector
+            variant="solid"
+            className={SEG}
+            role="radiogroup"
+            ariaLabel={t.readerWidthLabel}
+            value={contentWidth}
+            onChange={onContentWidthChange}
+            options={[
+              { value: 'narrow', label: t.readerWidthNarrow },
+              { value: 'medium', label: t.readerWidthMedium },
+              { value: 'wide', label: t.readerWidthWide },
+            ]}
+          />
+        </Group>
+      )}
       <div className="flex items-center justify-between px-3 py-2 font-medium">
         {t.showRubyLabel}
         <button type="button" role="switch" aria-checked={showRuby} aria-label={t.showRubyLabel} className="switch" onClick={() => onShowRubyChange(!showRuby)}>
           <i />
         </button>
       </div>
+      {aiReview && (
+        <div className="px-3 pb-2.5 pt-1.5">
+          <div className="flex items-center justify-between gap-2 font-medium">
+            <span>{t.readerAiChapterTitle}</span>
+            <button
+              type="button"
+              className="btn h-7 px-3 text-xs"
+              onClick={aiReview.status === 'running' ? aiReview.onCancel : aiReview.onRun}
+            >
+              {aiReview.status === 'running' ? t.readerAiChapterCancel : t.readerAiChapterAction}
+            </button>
+          </div>
+          <div className={`mt-0.5 text-xs ${aiReview.status === 'error' ? 'text-[var(--danger)]' : 'text-[var(--label-2)]'}`}>
+            {aiReview.status === 'running'
+              ? fill(t.readerAiChapterRunning, { done: aiReview.completed, total: aiReview.total })
+              : aiReview.status === 'done'
+                ? fill(t.readerAiChapterDone, { count: aiReview.completed })
+                : aiReview.status === 'error'
+                  ? aiReview.error
+                  : t.readerAiChapterIdle}
+          </div>
+        </div>
+      )}
       {autoReading && (
         <>
           <Group label={t.readerAutoMode}>

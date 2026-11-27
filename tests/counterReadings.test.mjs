@@ -110,3 +110,21 @@ test('months duration counter variants (ヶ月/か月/カ月/ケ月/ヵ月/箇�
     assert.equal(counterReading('100', unit), 'ひゃっかげつ', unit);
   }
 });
+
+test('expanded counters (羽/泊/票/品/勝/敗/周/章/巻/曲/局/脚), つ, zeros, and multi-digit 人 work accurately', () => {
+  const { findCounterCompound } = loadTypescript('../app/utils/counterReadings.ts');
+  const numeric = surface_form => ({ surface_form, pos_detail_1: '数' });
+  const suffix = surface_form => ({ surface_form, pos_detail_1: '接尾' });
+  for (const [number, counter, expected] of [
+    ['三', '羽', 'さんば'], ['一', '泊', 'いっぱく'], ['一', '票', 'いっぴょう'],
+    ['一', '品', 'いっぴん'], ['一', '勝', 'いっしょう'], ['八', '敗', 'はっぱい'],
+    ['一', '周', 'いっしゅう'], ['一', '章', 'いっしょう'], ['六', '巻', 'ろっかん'],
+    ['一', '曲', 'いっきょく'], ['一', '脚', 'いっきゃく'],
+    ['1', 'つ', 'ひとつ'], ['5', 'つ', 'いつつ'], ['9', 'つ', 'ここのつ'],
+    ['0', '時', 'れいじ'], ['0', '分', 'ぜろふん'], ['二十', '人', 'にじゅうにん'],
+  ]) {
+    assert.equal(counterReading(number, counter), expected, `${number}${counter}`);
+  }
+  assert.equal(findCounterCompound([numeric('3'), suffix('つ')], 0)?.reading, 'みっつ');
+  assert.equal(findCounterCompound([numeric('一'), suffix('人'), { surface_form: '称', pos_detail_1: '接尾' }], 0), null);
+});

@@ -168,3 +168,45 @@ test('extractPageImages bounds stalled worker object callbacks via timeout and a
     err => err.name === 'AbortError',
   );
 });
+
+test('extractPageImages tracks save/restore/transform CTM y-coordinates when transforms exist', async () => {
+  const ctmOps = { ...ops, save: 10, restore: 11, transform: 12 };
+  const page = {
+    getOperatorList: async () => ({
+      fnArray: [
+        ctmOps.save,
+        ctmOps.transform,
+        ctmOps.paintImageXObject,
+        ctmOps.restore,
+        ctmOps.save,
+        ctmOps.transform,
+        ctmOps.paintImageXObject,
+        ctmOps.restore,
+      ],
+      argsArray: [
+        [],
+        [[200, 0, 0, 150, 50, 520]],
+        ['img_top'],
+        [],
+        [],
+        [[200, 0, 0, 120, 50, 120]],
+        ['img_bot'],
+        [],
+      ],
+    }),
+    objs: {
+      get(name) {
+        if (name === 'img_top') return { width: 200, height: 150, data: new Uint8ClampedArray(200 * 150 * 4).fill(1) };
+        if (name === 'img_bot') return { width: 200, height: 120, data: new Uint8ClampedArray(200 * 120 * 4).fill(2) };
+        return undefined;
+      },
+    },
+  };
+  const { images } = await extractPageImages(page, 0, { width: 600, height: 800 }, {
+    ops: ctmOps,
+    encodeImage: async img => ({ mime: 'image/png', data: new Uint8Array([img.height]) }),
+  });
+  assert.equal(images.length, 2);
+  assert.equal(images[0].y, 670);
+  assert.equal(images[1].y, 240);
+});

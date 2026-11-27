@@ -294,3 +294,23 @@ test('unambiguous counters, motion 行っ, and 金 before particles stay out of 
   const money = annotateLine('金がない');
   assert.equal(money.tokens[0].ruby, 'かね');
 });
+
+test('々 iteration marks, multi-solution okurigana, jukujikun, and new contextual rules work', () => {
+  const { parseCompoundToTokens } = loadTypescript('../app/utils/furigana.ts');
+  assert.deepEqual(
+    parseCompoundToTokens('日々', 'ひび', 'hiragana').map(t => [t.surface, t.ruby]),
+    [['日々', 'ひび']],
+  );
+  assert.deepEqual(
+    parseCompoundToTokens('通り過ぎる', 'とおりすぎる', 'hiragana').map(t => [t.surface, t.ruby]),
+    [['通', 'とお'], ['り', undefined], ['過', 'す'], ['ぎる', undefined]],
+  );
+  assert.deepEqual(
+    parseCompoundToTokens('落ち着く', 'おちつく', 'hiragana').map(t => [t.surface, t.ruby]),
+    [['落', 'お'], ['ち', undefined], ['着', 'つ'], ['く', undefined]],
+  );
+  assert.equal(annotateLine('何処にいる').tokens[0].ruby, 'どこ');
+  assert.equal(annotateLine('流石に').tokens[0].ruby, 'さすが');
+  assert.equal(annotateLine('駅に行った').tokens.find(t => t.surface.startsWith('行'))?.ruby, 'い');
+  assert.equal(annotateLine('調査を行った').tokens.find(t => t.surface.startsWith('行'))?.ruby, 'おこな');
+});

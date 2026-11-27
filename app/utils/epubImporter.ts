@@ -63,7 +63,7 @@ const MARK_ONLY_READING_RE = /^[\s・･﹅﹆●○◎◉▲△▼▽◆◇★�
 const INLINE_IMAGE_HINT_RE = /gaiji|emoji|glyph|\binline\b/i;
 const ALL_BLANK_RE = /^[\u3000\u00A0\s]*$/;
 
-const HEADING_TAGS = new Set(['h1', 'h2', 'h3']);
+const HEADING_TAGS = new Set(['h1', 'h2', 'h3', 'h4']);
 const SKIP_TAGS = new Set(['script', 'style', 'rt', 'rp', 'head']);
 
 const NAMED_ENTITIES: Record<string, string> = {
@@ -400,37 +400,74 @@ function isLinkIndexPage(body: Element, hiddenClasses: Set<string>): boolean {
   return total > 0 && linked / total >= 0.8;
 }
 
-function extractRubyParts(rubyEl: Element): { base: string; reading: string } {
-  let rawBase = '';
-  let rawReading = '';
+function collectTextContent(node: Node, includeRt: boolean): string {
+  if (node.nodeType === 3 || node.nodeType === 4) return node.nodeValue || '';
+  if (node.nodeType !== 1) return '';
+  const el = node as Element;
+  const tag = localTag(el);
+  if (tag === 'rp' || tag === 'script' || tag === 'style' || (!includeRt && tag === 'rt')) return '';
+  return Array.from(el.childNodes).map(child => collectTextContent(child, includeRt)).join('');
+}
 
-  const walkRuby = (node: Node, inRt: boolean) => {
-    if (node.nodeType === 3 || node.nodeType === 4) {
-      if (inRt) {
-        rawReading += node.nodeValue || '';
-      } else {
-        rawBase += node.nodeValue || '';
-      }
-      return;
-    }
-    if (node.nodeType !== 1) return;
-    const el = node as Element;
-    const tag = localTag(el);
-    if (tag === 'rp' || tag === 'script' || tag === 'style') return;
-    const nextInRt = inRt || tag === 'rt';
-    for (const child of Array.from(el.childNodes)) {
-      walkRuby(child, nextInRt);
-    }
-  };
+function extractRubySegments(rubyEl: Element): Array<{ base: string; reading: string }> {
+  const rbTexts: string[] = [];
+  const rtTexts: string[] = [];
+  const interleaved: Array<{ base: string; reading: string }> = [];
+  let pendingBase = '';
+  let sawNonSequentialRt = false;
 
   for (const child of Array.from(rubyEl.childNodes)) {
-    walkRuby(child, false);
+    if (child.nodeType === 3 || child.nodeType === 4) {
+      pendingBase += child.nodeValue || '';
+      continue;
+    }
+    if (child.nodeType !== 1) continue;
+    const el = child as Element;
+    const tag = localTag(el);
+    if (tag === 'rp' || tag === 'script' || tag === 'style') continue;
+    if (tag === 'rt') {
+      const rtText = collapseInlineString(collectTextContent(el, true));
+      rtTexts.push(rtText);
+      const basePiece = collapseInlineString(pendingBase);
+      pendingBase = '';
+      if (basePiece) {
+        interleaved.push({ base: basePiece, reading: rtText });
+      } else {
+        sawNonSequentialRt = true;
+      }
+      continue;
+    }
+    if (tag === 'rb') {
+      const rbText = collapseInlineString(collectTextContent(el, false));
+      if (rbText) rbTexts.push(rbText);
+      pendingBase += rbText;
+      continue;
+    }
+    pendingBase += collectTextContent(el, false);
   }
 
-  return {
-    base: collapseInlineString(rawBase),
-    reading: collapseInlineString(rawReading),
-  };
+  const trailingBase = collapseInlineString(pendingBase);
+  const fullBase = collapseInlineString(collectTextContent(rubyEl, false));
+  const fullReading = collapseInlineString(rtTexts.join(''));
+  if (!sawNonSequentialRt && interleaved.length >= 1) {
+    // Split compound <ruby> when there are bare base gaps (okurigana like 食<rt>た</rt>べる) or
+    // empty <rt> pieces. When every segment has a reading (e.g. 魔<rt>ま</rt>術<rt>じゅつ</rt>), keep joined.
+    const hasGap = Boolean(trailingBase) || (interleaved.length > 1 && interleaved.some(seg => !seg.reading));
+    if (hasGap) {
+      if (trailingBase) interleaved.push({ base: trailingBase, reading: '' });
+      return interleaved;
+    }
+    return fullBase ? [{ base: fullBase, reading: fullReading }] : [];
+  }
+  if (rbTexts.length > 1 && rbTexts.length === rtTexts.length && !trailingBase) {
+    const hasGap = rtTexts.some(r => !r);
+    if (hasGap) {
+      return rbTexts.map((base, idx) => ({ base, reading: rtTexts[idx] || '' }));
+    }
+    return fullBase ? [{ base: fullBase, reading: fullReading }] : [];
+  }
+
+  return fullBase ? [{ base: fullBase, reading: fullReading }] : [];
 }
 
 interface ManifestItem {
@@ -741,6 +778,12 @@ export async function importEpub(
 
       recordIdIfPresent(el);
 
+      if (tag === 'hr') {
+        flushCurrentLine();
+        sink.push({ kind: 'text', line: '---', overrides: [] });
+        return;
+      }
+
       if (tag === 'br') {
         flushCurrentLine();
         return;
@@ -769,8 +812,8 @@ export async function importEpub(
       }
 
       if (tag === 'ruby') {
-        const { base, reading } = extractRubyParts(el);
-        if (base) {
+        for (const { base, reading } of extractRubySegments(el)) {
+          if (!base) continue;
           const hiraReading = katakanaToHiragana(reading);
           if (hiraReading && reading !== base && hiraReading !== base && !MARK_ONLY_READING_RE.test(hiraReading)) {
             rawRubies.push({
@@ -872,9 +915,12 @@ export async function importEpub(
     const seenLines = new Set<number>();
     const resolvedTargets: ImportedChapter[] = [];
     for (const target of tocTargets) {
-      const startLine = target.fragment
+      let startLine = target.fragment
         ? elementStartLine.get(`${target.zipPath}#${target.fragment}`)
         : fileStartLine.get(target.zipPath);
+      if (startLine === undefined && target.fragment) {
+        startLine = fileStartLine.get(target.zipPath);
+      }
       if (startLine === undefined || seenLines.has(startLine)) continue;
       seenLines.add(startLine);
       resolvedTargets.push({ title: target.title, startLine, level: Math.min(2, target.level) });
@@ -891,6 +937,9 @@ export async function importEpub(
     }
     if (chapters.length > 0) warnings.push({ code: 'auto-chapters', count: chapters.length });
   }
+
+  const spineDirAttr = (spineEl?.getAttribute('page-progression-direction') || '').trim().toLowerCase();
+  const defaultWritingMode: 'vertical' | undefined = spineDirAttr === 'rtl' ? 'vertical' : undefined;
 
   report(options, { stage: 'done', current: 1, total: 1 });
   return {
@@ -909,6 +958,7 @@ export async function importEpub(
     ...(seriesIndex ? { seriesIndex } : {}),
     ...(identifier ? { identifier } : {}),
     ...(cover ? { cover } : {}),
+    ...(defaultWritingMode ? { defaultWritingMode } : {}),
   };
 }
 
@@ -953,7 +1003,7 @@ async function extractTocTargets(
         const targets: TocTarget[] = [];
         const pushAnchor = (aEl: Element, level: number) => {
           const href = aEl.getAttribute('href')?.trim() || '';
-          const label = collapseInlineString(aEl.textContent || '');
+          const label = collapseInlineString(ownText(aEl, new Set()));
           if (!href || !label) return;
           const { path: zipPath, fragment } = resolveHref(navDir, href);
           if (!zipPath) return;

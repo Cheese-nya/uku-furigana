@@ -66,7 +66,9 @@ export class AnnotationClient {
     const job = this.jobs.get(message.taskId);
     if (!job || message.type === 'ANALYZED') return;
     if (message.type === 'CHUNK') {
-      job.lines.splice(message.chunk.offset, message.chunk.lines.length, ...message.chunk.lines);
+      for (let i = 0; i < message.chunk.lines.length; i++) {
+        job.lines[message.chunk.offset + i] = message.chunk.lines[i];
+      }
       job.onChunk?.(message.chunk);
     } else {
       this.jobs.delete(message.taskId);

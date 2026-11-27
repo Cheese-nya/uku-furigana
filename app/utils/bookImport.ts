@@ -32,6 +32,7 @@ export interface ParsedBookFile {
   warnings: ImportWarning[];
   /** Structural count of source pages, for the preview. */
   pageCount?: number;
+  defaultWritingMode?: 'horizontal' | 'vertical';
 }
 
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -115,6 +116,7 @@ function fromImportedBook(book: ImportedBook, format: 'epub' | 'pdf'): ParsedBoo
     ...(book.pdfLayout ? { pdfLayout: book.pdfLayout } : {}),
     ...(book.pageStarts ? { pageStarts: book.pageStarts } : {}),
     ...(book.pageLabels ? { pageLabels: book.pageLabels } : {}),
+    ...(book.defaultWritingMode ? { defaultWritingMode: book.defaultWritingMode } : {}),
     ...(book.pageStarts ? { pageCount: book.pageStarts.length } : {}),
     ...(book.cover ? { cover: new Blob([book.cover.data as BlobPart], { type: book.cover.mime }) } : {}),
   };

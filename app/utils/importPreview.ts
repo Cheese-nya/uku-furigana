@@ -193,6 +193,7 @@ export function importEditToUpsertInput(
     sourceOverrides: parsed.sourceOverrides,
     srtCues: parsed.srtCues,
     chapters: parsed.chapters,
+    ...(parsed.defaultWritingMode ? { defaultWritingMode: parsed.defaultWritingMode } : {}),
     ...(parsed.pdfLayout ? { pdfLayout: parsed.pdfLayout } : {}),
     ...(parsed.pageStarts ? { pageStarts: parsed.pageStarts } : {}),
     ...(parsed.pageLabels ? { pageLabels: parsed.pageLabels } : {}),

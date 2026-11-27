@@ -161,7 +161,7 @@ export default function DubbingStudioApp() {
     loadBookIntoWorkspace, handleSaveToLibrary, importLibraryFiles, createOrUpdateBook,
     importReview, resolveImportReview,
     handleToggleFavorite, handleUpdateBookMetadata,
-    handleImportPixivNovel, handleDeleteBook, handleReaderProgress,
+    handleImportPixivNovel, handleDeleteBook, handleReaderProgress, handleAddBookmark, handleRemoveBookmark,
   } = useLibraryController({
     t, rubyType, docTitle, rawText, sourceOverrides, srtCues, documentId, databaseRef, setDatabase, setDocumentId,
     setDocTitle, setRawText, setSourceOverrides, setSrtCues, setEditingToken, setActiveTab, setImportError,
@@ -191,13 +191,40 @@ export default function DubbingStudioApp() {
     setLibraryToast(`${t.qqCopied}: ${QQ_GROUP}`);
   };
 
+  const [readerChapterRange, setReaderChapterRange] = useState<{ start: number; end: number } | null>(null);
+  const rawLineCount = useMemo(() => {
+    let count = 1;
+    for (let i = 0; i < rawText.length; i++) if (rawText.charCodeAt(i) === 10) count++;
+    return count;
+  }, [rawText]);
+  const initialPriorityRange = useMemo(() => {
+    if (activeTab !== 'reader' || !activeBook || rawLineCount <= 200) return undefined;
+    const savedLine = activeBook.readingProgress.lineIndex;
+    const chap = activeBook.chapters.find(c => savedLine >= c.startLine && savedLine <= c.endLine) ?? activeBook.chapters[0];
+    return chap ? { start: chap.startLine, end: chap.endLine + 1 } : undefined;
+    // Keyed on document/book identity so scrolling across chapters never restarts annotation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeBook?.bookId, documentId]);
+
   const learnedReadings = useMemo(() => database.scripts[documentId]?.learned || [], [database.scripts, documentId]);
   const documentCorrections = useMemo(() => database.scripts[documentId]?.overrides || [], [database.scripts, documentId]);
   const glossaryEntries = useMemo(() => Object.values(database.glossary), [database.glossary]);
-  const annotationInput = useMemo(() => ({ text: rawText, rubyType, glossary: glossaryEntries, sourceOverrides, overrides: documentCorrections, learned: learnedReadings, documentId }),
-    [rawText, rubyType, glossaryEntries, sourceOverrides, documentCorrections, learnedReadings, documentId]);
+  const annotationInput = useMemo(() => ({
+    text: rawText,
+    rubyType,
+    glossary: glossaryEntries,
+    sourceOverrides,
+    overrides: documentCorrections,
+    learned: learnedReadings,
+    documentId,
+    ...(initialPriorityRange ? { priorityRange: initialPriorityRange } : {}),
+  }), [rawText, rubyType, glossaryEntries, sourceOverrides, documentCorrections, learnedReadings, documentId, initialPriorityRange]);
+  const workerOptions = useMemo(() => ({
+    aiLineRange: activeTab === 'reader' && rawLineCount > 300 ? (readerChapterRange ?? undefined) : undefined,
+  }), [activeTab, rawLineCount, readerChapterRange]);
   const { lines: annotatedLines, busy: isAnnotating, engine, error: annotationError,
-    annotate, analyze, retry: retryEngine } = useFuriganaWorker(annotationInput);
+    aiReview, triggerAiReview, cancelAiReview,
+    annotate, analyze, retry: retryEngine } = useFuriganaWorker(annotationInput, workerOptions);
   const dictionaryStatus = engine.status;
   const readingTools = useReadingTools({ analyze, t, engineReady: engine.status !== 'loading', readerOpen: activeTab === 'reader', onNameDictionaryImported: retryEngine });
   const isKuromojiLoading = dictionaryStatus === 'loading';
@@ -908,6 +935,9 @@ export default function DubbingStudioApp() {
             onRestoreSearchHits={requestRestoreSearchHits}
             onOpenHistory={() => setIsHistoryOpen(true)}
             updateDot={updater.state.hasUpdate}
+            aiReview={aiReview}
+            onTriggerAiReview={() => triggerAiReview()}
+            onCancelAiReview={cancelAiReview}
           />
         )}
 
@@ -948,6 +978,15 @@ export default function DubbingStudioApp() {
             dictTitles={readingTools.dictTitles}
             locale={locale}
             error={annotationError}
+            onAddBookmark={handleAddBookmark}
+            onRemoveBookmark={handleRemoveBookmark}
+            onEditToken={(lineId, tokenIndex) => openTokenEditor(lineId, tokenIndex)}
+            onActiveChapterRangeChange={setReaderChapterRange}
+            aiReview={{
+              ...aiReview,
+              onRun: () => triggerAiReview(readerChapterRange ?? undefined),
+              onCancel: cancelAiReview,
+            }}
           />
         )}
 

@@ -673,3 +673,35 @@ test('importEpub resolves wrapped nav anchors, query hrefs, sorts out-of-order T
   ]);
   assert.deepEqual(fallbackBook.warnings.filter(w => w.code === 'auto-chapters'), [{ code: 'auto-chapters', count: 2 }]);
 });
+
+test('importEpub preserves hr breaks, strips rt in TOC links, falls back broken fragment to file, and reads rtl direction', async () => {
+  const opf = `<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/opf" xmlns:dc="http://purl.org/dc/elements/1.1/" version="3.0">
+  <metadata><dc:title>RTL Features</dc:title></metadata>
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="c1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="c2" href="ch2.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine page-progression-direction="rtl"><itemref idref="c1"/><itemref idref="c2"/></spine>
+</package>`;
+  const nav = `<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body>
+    <nav epub:type="toc"><ol>
+      <li><a href="ch1.xhtml#missing">第<ruby>一<rt>いち</rt></ruby>章</a></li>
+      <li><a href="ch2.xhtml">第二章</a></li>
+    </ol></nav>
+  </body></html>`;
+  const ch1 = `<html xmlns="http://www.w3.org/1999/xhtml"><body><p>一段</p><hr/><p>二段</p></body></html>`;
+  const ch2 = `<html xmlns="http://www.w3.org/1999/xhtml"><body><h4>小節</h4><p><ruby>食<rt>た</rt>べる</ruby></p></body></html>`;
+  const buf = await buildEpubBuffer({
+    'OEBPS/content.opf': opf,
+    'OEBPS/nav.xhtml': nav,
+    'OEBPS/ch1.xhtml': ch1,
+    'OEBPS/ch2.xhtml': ch2,
+  });
+  const book = await importEpub(buf, 'rtl.epub', new DOMParser());
+  assert.equal(book.defaultWritingMode, 'vertical');
+  assert.ok(book.text.split('\n').includes('---'));
+  assert.deepEqual(book.chapters.map(c => c.title), ['第一章', '第二章']);
+  assert.deepEqual(book.overrides.map(o => `${o.surface}:${o.reading}`), ['食:た']);
+});

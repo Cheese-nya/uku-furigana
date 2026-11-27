@@ -11,7 +11,7 @@ import { sanitizeText } from './textSanitize';
 
 export type RubyType = 'hiragana' | 'katakana' | 'romaji';
 
-export type ReadingSource = 'automatic' | 'glossary' | 'learned' | 'source' | 'manual';
+export type ReadingSource = 'automatic' | 'ai' | 'glossary' | 'learned' | 'source' | 'manual';
 
 export interface Token {
   surface: string;
@@ -33,10 +33,12 @@ export interface ScriptLine {
   translation?: string;
 }
 
-// Kanji Unicode Range Test
+// Kanji Unicode Range Test (plus kanji iteration/special ideographs for compound grouping)
 export const KANJI_REGEX = /[\u4E00-\u9FFF\u3400-\u4DBF]/;
+const HAS_KANJI_OR_ITER = /[\u4E00-\u9FFF\u3400-\u4DBF\u3005\u3006\u3007]/;
+const KANJI_SPAN_SPLIT_RE = /[\u4E00-\u9FFF\u3400-\u4DBF\u3005\u3006\u3007]+|[^\u4E00-\u9FFF\u3400-\u4DBF\u3005\u3006\u3007]+/gu;
 
-// High-Priority Japanese Idioms & Pre-Segmented Patterns
+// High-Priority Japanese Idioms & Pre-Segmented Patterns (unambiguous only; heteronyms go to disambiguateToken)
 export const GRAMMAR_PATTERNS: Record<string, string> = {
   '一日中': 'いちにちじゅう',
   '大好きな': 'だいすきな',
@@ -47,7 +49,6 @@ export const GRAMMAR_PATTERNS: Record<string, string> = {
   '大丈夫': 'だいじょうぶ',
   '大変': 'たいへん',
   '大切': 'たいせつ',
-  '大事': 'だいじ',
   '匂い': 'におい',
   '匂う': 'におう',
   '匂っ': 'におっ',
@@ -85,8 +86,6 @@ export const GRAMMAR_PATTERNS: Record<string, string> = {
   '言って': 'いって',
   '言わ': 'いわ',
   '言う': 'いう',
-  '行った': 'いった',
-  '行って': 'いって',
   '行う': 'おこなう',
   '行い': 'おこない',
   '行われる': 'おこなわれる',
@@ -96,6 +95,18 @@ export const GRAMMAR_PATTERNS: Record<string, string> = {
   '見つけた': 'みつけた',
   '見つけて': 'みつけて',
   '久しぶり': 'ひさしぶり',
+  '何処': 'どこ',
+  '何故': 'なぜ',
+  '流石': 'さすが',
+  '勿論': 'もちろん',
+  '兎に角': 'とにかく',
+  '矢張り': 'やはり',
+  '貴方': 'あなた',
+  '土産': 'みやげ',
+  '田舎': 'いなか',
+  '梅雨': 'つゆ',
+  '五月雨': 'さみだれ',
+  '二十歳': 'はたち',
 };
 
 // Fallback Kanji Dictionary for words Kuromoji doesn't recognize
@@ -244,37 +255,59 @@ export function parseCompoundToTokens(
     });
   };
   // Align the actual kana in the word, rather than guessing individual kanji readings.
-  // Keep adjacent kanji together (二人/ふたり); split only at unambiguous okurigana.
-  const parts = phrase.match(/[\u4E00-\u9FFF\u3400-\u4DBF]+|[^\u4E00-\u9FFF\u3400-\u4DBF]+/gu) || [phrase];
+  // Keep adjacent kanji (and iteration marks like 々) together; split only at okurigana.
+  const parts = phrase.match(KANJI_SPAN_SPLIT_RE) || [phrase];
   const hira = katakanaToHiragana(reading);
   const solutions: Token[][] = [];
   const align = (index: number, offset: number, result: Token[]) => {
-    if (solutions.length > 1) return;
+    if (solutions.length >= 16) return;
     if (index === parts.length) {
       if (offset === hira.length) solutions.push(result);
       return;
     }
     const surface = parts[index];
-    if (!KANJI_REGEX.test(surface)) {
+    if (!HAS_KANJI_OR_ITER.test(surface)) {
       const literal = katakanaToHiragana(surface);
       if (hira.startsWith(literal, offset)) {
         align(index + 1, offset + literal.length, [...result, { surface, hasKanji: false }]);
       }
       return;
     }
+    const kanjiCount = Array.from(surface).length;
+    const maxEnd = Math.min(hira.length, offset + kanjiCount * 5);
     const nextLiteral = parts[index + 1];
-    for (let end = offset + 1; end <= hira.length; end++) {
+    for (let end = offset + 1; end <= maxEnd; end++) {
       if (nextLiteral ? !hira.startsWith(katakanaToHiragana(nextLiteral), end) : end !== hira.length) continue;
       align(index + 1, end, [...result, { surface, ruby: formatRuby(hira.slice(offset, end), rubyType), hasKanji: true,
         readingSource: 'automatic', needsReview: Boolean(alternatives?.length) }]);
     }
   };
   align(0, 0, []);
-  if (solutions.length !== 1) {
+  if (solutions.length === 0) {
     return withWord([{ surface: phrase, ruby: formatRuby(hira, rubyType), hasKanji: true,
       alternatives: alternatives?.map(value => formatRuby(value, rubyType)), readingSource: 'automatic' }]);
   }
-  const tokens = solutions[0];
+  const scoreSolution = (candidate: Token[]): number => {
+    let score = 0;
+    let firstKanji = true;
+    for (const tok of candidate) {
+      if (!tok.hasKanji || !tok.ruby) continue;
+      const chars = Array.from(tok.surface).length;
+      const moras = Array.from(tok.ruby).length;
+      const ratio = moras / Math.max(1, chars);
+      // Prefer balanced readings (~1–2.5 moras per kanji); strongly prefer shorter initial stem
+      // when repeated okurigana creates an alternative boundary (e.g. 食(く)い意地(いじ)).
+      score += Math.abs(ratio - 1.5) * 10;
+      if (firstKanji) {
+        score += moras * 2;
+        firstKanji = false;
+      }
+    }
+    return score;
+  };
+  const tokens = solutions.length === 1
+    ? solutions[0]
+    : [...solutions].sort((a, b) => scoreSolution(a) - scoreSolution(b))[0];
   if (alternatives && tokens.filter(token => token.hasKanji).length === 1) {
     const kanjiIndex = tokens.findIndex(token => token.hasKanji);
     const prefix = katakanaToHiragana(parts.slice(0, kanjiIndex).join(''));
@@ -317,6 +350,11 @@ export const HETERONYM_READINGS: Record<string, { reading: string; alternatives?
   '風車': { reading: 'ふうしゃ', alternatives: ['ふうしゃ', 'かざぐるま'] },
   '心中': { reading: 'しんじゅう', alternatives: ['しんじゅう', 'しんちゅう'] },
   '日本': { reading: 'にほん', alternatives: ['にほん', 'にっぽん'] },
+  '何方': { reading: 'どちら', alternatives: ['どちら', 'どなた'] },
+  '如何': { reading: 'いか', alternatives: ['いか', 'どう'] },
+  '一昨日': { reading: 'おととい', alternatives: ['おととい', 'いっさくじつ'] },
+  '明後日': { reading: 'あさって', alternatives: ['あさって', 'みょうごにち'] },
+  '紅葉': { reading: 'もみじ', alternatives: ['もみじ', 'こうよう'] },
   // Usually split as 何 + 時 / 何 + で by IPADIC; kept for dictionaries that fuse them.
   '何時': { reading: 'なんじ', alternatives: ['なんじ', 'いつ'] },
   '何で': { reading: 'なんで', alternatives: ['なんで', 'なにで'] },
@@ -478,18 +516,22 @@ export function disambiguateToken(
   }
 
   // 7. 行く (いく vs ゆく) / 行う (おこなう)
-  else if (surface === '行っ') {
+  else if (surface === '行っ' || surface === '行った' || surface === '行って') {
+    const suffix = surface === '行った' ? 'た' : surface === '行って' ? 'て' : '';
     const before = allTokens.slice(Math.max(0, i - 3), i).map(token => token.surface_form).join('');
     const after = allTokens.slice(i + 1, i + 5).map(token => token.surface_form).join('');
     const motion = /(?:に|へ|どこ|出て)$/.test(before) ||
-      /^て(?:おいで|来|き|くる|い|らっしゃい|み|しま|お|あ|くれ)|^ちゃっ|^た(?:こと|きり|っきり|ばかり)/.test(after);
+      /^て(?:おいで|来|き|くる|い|らっしゃい|み|しま|お|あ|くれ)|^ちゃっ|^た(?:こと|きり|っきり|ばかり)/.test(after) ||
+      (surface === '行って' && /^(?:おいで|来|き|くる|い|らっしゃい|み|しま|お|あ|くれ)/.test(after));
     const eventObject = /を$/.test(before);
     if (motion && !eventObject) {
-      reading = 'いっ';
+      reading = `いっ${suffix}`;
     } else if (eventObject && !motion) {
-      reading = 'おこなっ';
+      reading = `おこなっ${suffix}`;
     } else {
-      alternatives = [reading, reading === 'いっ' ? 'おこなっ' : 'いっ'];
+      const fallbackBase = reading.startsWith('おこな') ? 'おこなっ' : 'いっ';
+      reading = `${fallbackBase}${suffix}`;
+      alternatives = [`いっ${suffix}`, `おこなっ${suffix}`];
     }
   }
   else if (surface === '行く') {
@@ -552,6 +594,213 @@ export function disambiguateToken(
   else if (surface === '時' && prevToken?.surface_form === '何') {
     reading = 'じ';
     alternatives = ['じ', 'とき'];
+  }
+
+  // 11. 開く / 開い (ひらく vs あく)
+  else if (surface === '開く' || surface === '開い') {
+    const stem = surface === '開い' ? 'い' : 'く';
+    const before = allTokens.slice(Math.max(0, i - 3), i).map(t => t.surface_form).join('');
+    if (/を$/.test(before)) {
+      reading = `ひら${stem}`;
+      alternatives = [`ひら${stem}`, `あ${stem}`];
+    } else if (/が$/.test(before)) {
+      reading = `あ${stem}`;
+      alternatives = [`あ${stem}`, `ひら${stem}`];
+    } else {
+      reading = reading || `ひら${stem}`;
+      alternatives = [reading, reading.startsWith('ひら') ? `あ${stem}` : `ひら${stem}`];
+    }
+  }
+
+  // 12. 空く / 空い (すく vs あく)
+  else if (surface === '空く' || surface === '空い') {
+    const stem = surface === '空い' ? 'い' : 'く';
+    const before = allTokens.slice(Math.max(0, i - 4), i).map(t => t.surface_form).join('');
+    if (/(?:お腹|おなか|腹|小腹|手|時間|暇)が?$/.test(before)) {
+      reading = `す${stem}`;
+      alternatives = [`す${stem}`, `あ${stem}`];
+    } else if (/(?:席|部屋|穴|場所|スペース|隙間|枠|口|車)が?$/.test(before)) {
+      reading = `あ${stem}`;
+      alternatives = [`あ${stem}`, `す${stem}`];
+    } else {
+      reading = reading || `あ${stem}`;
+      alternatives = [reading, reading.startsWith('あ') ? `す${stem}` : `あ${stem}`];
+    }
+  }
+
+  // 13. 中 (なか vs じゅう vs ちゅう)
+  else if (surface === '中') {
+    const prevSurface = prevToken?.surface_form || '';
+    const nextSurface = nextToken?.surface_form || '';
+    if (prevSurface === 'の' && /^(で|に|へ|から|まで|を)$/.test(nextSurface)) {
+      reading = 'なか';
+      alternatives = ['なか', 'ちゅう', 'じゅう'];
+    } else if (/^(?:一日|一年|一生|世界|全国|日本|地球|宇宙|部屋|家|街|町|国|体|身体|心|夜|朝|昼|夏|冬|今年|今週|今月|今日)$/.test(prevSurface)) {
+      reading = 'じゅう';
+      alternatives = ['じゅう', 'ちゅう', 'なか'];
+    } else if (/^(?:仕事|勉強|会議|移動|授業|食事|放送|準備|工事|運転|治療|通話|検索|処理|同期|充電|営業|休止|停止|検討|調査|開発|実行|作業|待機|再生|録音|読込|接続|通信|練習|休憩|睡眠|外出|留学|入院|滞在中?)$/.test(prevSurface)) {
+      reading = 'ちゅう';
+      alternatives = ['ちゅう', 'じゅう', 'なか'];
+    }
+  }
+
+  // 14. 後 (あと vs のち vs うしろ)
+  else if (surface === '後') {
+    const prevSurface = prevToken?.surface_form || '';
+    const nextSurface = nextToken?.surface_form || '';
+    if (prevSurface === 'その' || /^(?:に|ほど|々)$/.test(nextSurface) && !prevToken?.conjugated_form?.includes('連体')) {
+      reading = prevSurface === 'その' ? 'のち' : (reading || 'あと');
+      alternatives = ['あと', 'のち', 'うしろ'];
+    } else if (/^(?:姿|向き|側|手|足|髪|指)$/.test(nextSurface)) {
+      reading = 'うしろ';
+      alternatives = ['うしろ', 'あと'];
+    } else if (prevSurface === 'の' && /^(?:で|に|から)$/.test(nextSurface)) {
+      reading = 'あと';
+      alternatives = ['あと', 'のち'];
+    }
+  }
+
+  // 15. 間 (あいだ vs ま vs かん)
+  else if (surface === '間') {
+    const prevSurface = prevToken?.surface_form || '';
+    const nextSurface = nextToken?.surface_form || '';
+    if (prevSurface === 'の') {
+      reading = 'あいだ';
+      alternatives = ['あいだ', 'ま'];
+    } else if (/^(?:もなく|に合う|に合わ|に合っ|が悪い|抜け)/.test(followingTokens(2)) ||
+        (nextSurface === 'に' && /^合/.test(allTokens[i + 2]?.surface_form || ''))) {
+      reading = 'ま';
+      alternatives = ['ま', 'あいだ'];
+    } else if (prevToken?.pos_detail_1 === '数' || /^(?:年間|時間|週間|日間|ヶ月間|か月間)$/.test(`${prevSurface}${surface}`)) {
+      reading = 'かん';
+    }
+  }
+
+  // 16. 主 (おも vs あるじ vs ぬし)
+  else if (surface === '主') {
+    const prevSurface = prevToken?.surface_form || '';
+    const nextSurface = nextToken?.surface_form || '';
+    if (/^(?:な|に)$/.test(nextSurface)) {
+      reading = 'おも';
+      alternatives = ['おも', 'ぬし', 'あるじ'];
+    } else if (prevSurface === 'ご' || /^(?:家|館|屋敷|城|店)の$/.test(allTokens.slice(Math.max(0, i - 2), i).map(t => t.surface_form).join(''))) {
+      reading = 'あるじ';
+      alternatives = ['あるじ', 'ぬし'];
+    } else if (/^(?:森|山|湖|川|海|沼|飼い|持ち|家|土地)の?$/.test(allTokens.slice(Math.max(0, i - 2), i).map(t => t.surface_form).join(''))) {
+      reading = 'ぬし';
+      alternatives = ['ぬし', 'あるじ'];
+    }
+  }
+
+  // 17. 表 (おもて vs ひょう)
+  else if (surface === '表') {
+    const prevSurface = prevToken?.surface_form || '';
+    const nextSurface = nextToken?.surface_form || '';
+    if (/^(?:へ|に)(?:出|出ろ|出る|出た)/.test(followingTokens(2)) || /^(?:通り|玄関|向き|裏)$/.test(nextSurface) || prevSurface === '裏') {
+      reading = 'おもて';
+      alternatives = ['おもて', 'ひょう'];
+    } else if (/^(?:一覧|時刻|料金|成績|別|対応|対照|比較|年)$/.test(prevSurface) || /^(?:を|で)(?:見|確認|作)/.test(followingTokens(2))) {
+      reading = 'ひょう';
+      alternatives = ['ひょう', 'おもて'];
+    }
+  }
+
+  // 18. 側 (がわ vs そば)
+  else if (surface === '側') {
+    const prevSurface = prevToken?.surface_form || '';
+    const nextSurface = nextToken?.surface_form || '';
+    if (/^(?:右|左|北|南|東|西|上|下|内|外|表|裏|向こう|こちら|あちら|そちら|相手|日本|企業|運営|公式|学校|会社|店|敵|味方|両|片)$/.test(prevSurface)) {
+      reading = 'がわ';
+      alternatives = ['がわ', 'そば'];
+    } else if (/^(?:に|で|へ|から)$/.test(nextSurface) && (prevSurface === 'の' || !prevSurface)) {
+      reading = 'そば';
+      alternatives = ['そば', 'がわ'];
+    }
+  }
+
+  // 19. 実 (み vs じつ)
+  else if (surface === '実') {
+    const before = allTokens.slice(Math.max(0, i - 2), i).map(t => t.surface_form).join('');
+    const after = followingTokens(2);
+    if (/^(?:は|を言う|のところ)$/.test(after) || after.startsWith('に')) {
+      reading = 'じつ';
+      alternatives = ['じつ', 'み'];
+    } else if (/(?:木|果物|植物|花|りんご|桃)の$/.test(before) || /^が(?:な|成|熟|結|落ち)/.test(after)) {
+      reading = 'み';
+      alternatives = ['み', 'じつ'];
+    }
+  }
+
+  // 20. 辺 (へん vs あたり)
+  else if (surface === '辺') {
+    const prevSurface = prevToken?.surface_form || '';
+    if (/^(?:この|その|あの|どの)$/.test(prevSurface)) {
+      reading = 'へん';
+      alternatives = ['へん', 'あたり'];
+    } else if (nextToken?.surface_form === 'り') {
+      reading = 'あた';
+    }
+  }
+
+  // 21. 大事 (だいじ vs おおごと)
+  else if (surface === '大事') {
+    const after = followingTokens(2);
+    const before = allTokens.slice(Math.max(0, i - 2), i).map(t => t.surface_form).join('');
+    if (/^(?:にな|に至)/.test(after) || /一$/.test(before)) {
+      reading = 'おおごと';
+      alternatives = ['おおごと', 'だいじ'];
+    } else {
+      reading = 'だいじ';
+      alternatives = ['だいじ', 'おおごと'];
+    }
+  }
+
+  // 22. 一言 (ひとこと vs いちごん)
+  else if (surface === '一言') {
+    if (followingTokens(1).startsWith('一句')) {
+      reading = 'いちごん';
+      alternatives = ['いちごん', 'ひとこと'];
+    } else {
+      reading = 'ひとこと';
+      alternatives = ['ひとこと', 'いちごん'];
+    }
+  }
+
+  // 23. 一時 (いちじ vs いっとき)
+  else if (surface === '一時') {
+    const after = followingTokens(2);
+    if (/^(?:も|は|の)/.test(after)) {
+      reading = 'いっとき';
+      alternatives = ['いっとき', 'いちじ'];
+    } else {
+      reading = 'いちじ';
+      alternatives = ['いちじ', 'いっとき'];
+    }
+  }
+
+  // 24. 額 (ひたい vs がく)
+  else if (surface === '額') {
+    const prevSurface = prevToken?.surface_form || '';
+    const after = followingTokens(2);
+    if (/^(?:に汗|に皺|を寄せ|を拭|に触)/.test(after)) {
+      reading = 'ひたい';
+      alternatives = ['ひたい', 'がく'];
+    } else if (/^(?:金|総|定|全|高|少|増|減|残|半|差|年|月|金|予算|投資)$/.test(prevSurface) || after.startsWith('面')) {
+      reading = 'がく';
+      alternatives = ['がく', 'ひたい'];
+    }
+  }
+
+  // 25. 訳 (わけ vs やく)
+  else if (surface === '訳') {
+    const prevSurface = prevToken?.surface_form || '';
+    if (/^(?:日本語|英語|中国語|韓国語|フランス語|ドイツ語|直|意|誤|翻|和|英|名|新|抄|全|完|逐語)$/.test(prevSurface)) {
+      reading = 'やく';
+      alternatives = ['やく', 'わけ'];
+    } else if (/^(?:が|は|も|じゃ|では|には|で|だ|ない)/.test(followingTokens(2)) || prevSurface === 'いう' || prevSurface === 'そんな') {
+      reading = 'わけ';
+      alternatives = ['わけ', 'やく'];
+    }
   }
 
   return { reading, alternatives };

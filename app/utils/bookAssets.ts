@@ -44,6 +44,7 @@ export interface ImportedBook {
   /** Source PDF page geometry, read back on export; absent when the loader gives no page viewport. */
   pdfLayout?: PdfLayout;
   cover?: { mime: string; data: Uint8Array };
+  defaultWritingMode?: 'horizontal' | 'vertical';
   description?: string;
   language?: string;
   publisher?: string;

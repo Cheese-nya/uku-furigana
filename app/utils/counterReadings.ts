@@ -28,6 +28,18 @@ const COUNTERS: Record<string, Endings> = {
   '通': { 1: 'いっつう' },
   '頭': { 0: 'じゅっとう', 1: 'いっとう', 8: 'はっとう' },
   '足': { 3: 'さんぞく' },
+  '羽': { 0: 'じゅっぱ', 3: 'さんば', 6: 'ろっぱ', 8: 'はっぱ' },
+  '泊': ['じゅっぱく', 'いっぱく', 'にはく', 'さんぱく', 'よんはく', 'ごはく', 'ろっぱく', 'ななはく', 'はっぱく', 'きゅうはく'],
+  '票': ['じゅっぴょう', 'いっぴょう', 'にひょう', 'さんぴょう', 'よんひょう', 'ごひょう', 'ろっぴょう', 'ななひょう', 'はっぴょう', 'きゅうひょう'],
+  '品': ['じゅっぴん', 'いっぴん', 'にひん', 'さんぴん', 'よんひん', 'ごひん', 'ろっぴん', 'ななひん', 'はっぴん', 'きゅうひん'],
+  '勝': { 0: 'じゅっしょう', 1: 'いっしょう', 8: 'はっしょう' },
+  '敗': { 0: 'じゅっぱい', 1: 'いっぱい', 3: 'さんぱい', 6: 'ろっぱい', 8: 'はっぱい' },
+  '周': { 0: 'じゅっしゅう', 1: 'いっしゅう', 8: 'はっしゅう' },
+  '章': { 1: 'いっしょう' },
+  '巻': { 0: 'じゅっかん', 1: 'いっかん', 6: 'ろっかん', 8: 'はっかん' },
+  '曲': { 0: 'じゅっきょく', 1: 'いっきょく', 6: 'ろっきょく', 8: 'はっきょく' },
+  '局': { 1: 'いっきょく' },
+  '脚': { 0: 'じゅっきゃく', 1: 'いっきゃく', 6: 'ろっきゃく', 8: 'はっきゃく' },
   'ヶ月': MONTHS_COUNT,
   'か月': MONTHS_COUNT,
   'カ月': MONTHS_COUNT,
@@ -35,10 +47,25 @@ const COUNTERS: Record<string, Endings> = {
   'ヵ月': MONTHS_COUNT,
   '箇月': MONTHS_COUNT,
 };
+// Zero counts for common counters (0発 remains null to leave unsupported counters untouched).
+const ZERO_COUNTER_READINGS: Readonly<Record<string, string>> = {
+  '時': 'れいじ',
+  '分': 'ぜろふん',
+  '回': 'ぜろかい',
+  '点': 'ぜろてん',
+  '円': 'ぜろえん',
+  '人': 'ぜろにん',
+  '個': 'ぜろこ',
+  '本': 'ぜろほん',
+};
 // Whole counts whose reading is not built from the digits.
 const FIXED_READINGS: Record<string, Readonly<Record<number, string>>> = {
   '歳': { 20: 'はたち' },
   '通り': { 1: 'ひととおり', 2: 'ふたとおり' },
+  'つ': {
+    1: 'ひとつ', 2: 'ふたつ', 3: 'みっつ', 4: 'よっつ', 5: 'いつつ',
+    6: 'むっつ', 7: 'ななつ', 8: 'やっつ', 9: 'ここのつ',
+  },
   '月': {
     1: 'いちがつ', 2: 'にがつ', 3: 'さんがつ', 4: 'しがつ', 5: 'ごがつ', 6: 'ろくがつ',
     7: 'しちがつ', 8: 'はちがつ', 9: 'くがつ', 10: 'じゅうがつ', 11: 'じゅういちがつ', 12: 'じゅうにがつ',
@@ -63,6 +90,7 @@ const FUSED_COUNTERS: Record<string, { counter: string; tail: string }> = {
 const THOUSAND_ENDINGS: Record<string, string> = {
   '発': 'ぱつ', '本': 'ぼん', '杯': 'ばい', '匹': 'びき', '回': 'かい',
   '個': 'こ', '冊': 'さつ', '階': 'がい', '分': 'ぷん',
+  '泊': 'はく', '票': 'ひょう', '品': 'ひん',
   'ヶ月': 'かげつ', 'か月': 'かげつ', 'カ月': 'かげつ', 'ケ月': 'かげつ', 'ヵ月': 'かげつ', '箇月': 'かげつ',
 };
 const DIGITS = ['ぜろ', 'いち', 'に', 'さん', 'よん', 'ご', 'ろく', 'なな', 'はち', 'きゅう'];
@@ -89,8 +117,28 @@ export function counterReading(number: string, counter: string): string | null {
     const reading = counterReading(number, fused.counter);
     return reading && reading + fused.tail;
   }
+  const normalizedZero = number.normalize('NFKC');
+  if (normalizedZero === '0' || normalizedZero === '〇' || normalizedZero === '零') {
+    return ZERO_COUNTER_READINGS[counter] ?? null;
+  }
   const value = parseNumber(number);
   if (value === null) return null;
+  if (counter === '人') {
+    if (value === 1) return 'ひとり';
+    if (value === 2) return 'ふたり';
+    const thousands = Math.floor(value / 1000);
+    const hundreds = Math.floor((value % 1000) / 100);
+    const tens = Math.floor((value % 100) / 10);
+    const units = value % 10;
+    const tStr = thousands === 0 ? '' : thousands === 1 ? 'せん' :
+      thousands === 3 ? 'さんぜん' : thousands === 8 ? 'はっせん' : DIGITS[thousands] + 'せん';
+    const hStr = hundreds === 0 ? '' : hundreds === 1 ? 'ひゃく' :
+      hundreds === 3 ? 'さんびゃく' : hundreds === 6 ? 'ろっぴゃく' :
+      hundreds === 8 ? 'はっぴゃく' : DIGITS[hundreds] + 'ひゃく';
+    const tenStr = tens === 0 ? '' : (tens === 1 ? '' : DIGITS[tens]) + 'じゅう';
+    const unitStr = units === 0 ? '' : units === 4 ? 'よ' : units === 7 ? 'しち' : units === 9 ? 'きゅう' : DIGITS[units];
+    return tStr + hStr + tenStr + unitStr + 'にん';
+  }
   const fixed = FIXED_READINGS[counter]?.[value];
   if (fixed) return fixed;
   const endings = COUNTERS[counter];
@@ -150,7 +198,8 @@ export function findCounterCompound(tokens: KuromojiToken[], index: number): Cou
   if (end === index || !tokens[end]) return null;
   const counter = tokens[end].surface_form;
   // Check POS as well as surface: 本 can be a book noun outside a count (月 is 名詞-一般).
-  if (tokens[end].pos_detail_1 !== '接尾' && counter !== '月') return null;
+  if (tokens[end].pos_detail_1 !== '接尾' && counter !== '月' && counter !== 'つ') return null;
+  if (counter === '人' && tokens[end + 1]?.surface_form === '称') return null;
   const length = end - index + 1;
   const value = parseNumber(number);
   const choices = value === null ? undefined : AMBIGUOUS_READINGS[counter]?.[value];

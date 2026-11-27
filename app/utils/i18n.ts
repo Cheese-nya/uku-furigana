@@ -609,8 +609,36 @@ export interface Translations {
   lookupNotFound: string;
   lookupCopy: string;
   lookupCopied: string;
+  lookupEditReading: string;
   lookupPreparing: string;
   lookupFailed: string;
+  readerTabToc: string;
+  readerTabBookmarks: string;
+  readerTabSearch: string;
+  readerBookmarkAdd: string;
+  readerBookmarkRemove: string;
+  readerBookmarksEmpty: string;
+  readerPageJumpPlaceholder: string;
+  readerPageJump: string;
+  readerPageOfTotal: string;
+  readerSearchEmpty: string;
+  readerSearchNoResult: string;
+  readerSearchCount: string;
+  readerThemeSystem: string;
+  readerThemePaper: string;
+  readerThemeNight: string;
+  readerLineHeightLabel: string;
+  readerWidthLabel: string;
+  readerWidthNarrow: string;
+  readerWidthMedium: string;
+  readerWidthWide: string;
+  readerAiChapterTitle: string;
+  readerAiChapterAction: string;
+  readerAiChapterCancel: string;
+  readerAiChapterRunning: string;
+  readerAiChapterDone: string;
+  readerAiChapterIdle: string;
+  readerScrubberLabel: string;
   bilingualLabel: string;
   readerFloatTranslation: string;
   readerDockTranslation: string;
@@ -1339,8 +1367,36 @@ export const translations: Record<Locale, Translations> = {
     lookupNotFound: '词典里没有找到这个词。可以长按选中更长或更短的一段再查。',
     lookupCopy: '复制',
     lookupCopied: '已复制',
+    lookupEditReading: '改读音',
     lookupPreparing: '正在准备词典 {percent}%',
     lookupFailed: '查词失败：{error}',
+    readerTabToc: '目录',
+    readerTabBookmarks: '书签',
+    readerTabSearch: '搜索',
+    readerBookmarkAdd: '添加书签',
+    readerBookmarkRemove: '移除书签',
+    readerBookmarksEmpty: '暂无书签，点击底部书签图标即可添加',
+    readerPageJumpPlaceholder: '页码…',
+    readerPageJump: '跳转',
+    readerPageOfTotal: '共 {total} 页',
+    readerSearchEmpty: '输入关键词即可全书检索',
+    readerSearchNoResult: '未找到匹配内容',
+    readerSearchCount: '{count} 处',
+    readerThemeSystem: '默认',
+    readerThemePaper: '素纸',
+    readerThemeNight: '夜间',
+    readerLineHeightLabel: '行距',
+    readerWidthLabel: '版宽',
+    readerWidthNarrow: '窄',
+    readerWidthMedium: '适中',
+    readerWidthWide: '宽',
+    readerAiChapterTitle: 'AI 章节校音',
+    readerAiChapterAction: '立即校音',
+    readerAiChapterCancel: '停止',
+    readerAiChapterRunning: '校音中 {done}/{total}',
+    readerAiChapterDone: '已完成（{count} 处）',
+    readerAiChapterIdle: '结合上下文优化当前章节读音',
+    readerScrubberLabel: '阅读进度',
     bilingualLabel: '对照翻译',
     readerFloatTranslation: '悬浮翻译按钮',
     readerDockTranslation: '收回翻译按钮到工具栏',
@@ -2065,8 +2121,36 @@ export const translations: Record<Locale, Translations> = {
     lookupNotFound: 'Not found in the dictionaries. Long-press to select a longer or shorter piece and try again.',
     lookupCopy: 'Copy',
     lookupCopied: 'Copied',
+    lookupEditReading: 'Edit reading',
     lookupPreparing: 'Preparing the dictionary {percent}%',
     lookupFailed: 'Lookup failed: {error}',
+    readerTabToc: 'Contents',
+    readerTabBookmarks: 'Bookmarks',
+    readerTabSearch: 'Search',
+    readerBookmarkAdd: 'Add bookmark',
+    readerBookmarkRemove: 'Remove bookmark',
+    readerBookmarksEmpty: 'No bookmarks yet. Tap the bookmark icon below to save your place.',
+    readerPageJumpPlaceholder: 'Page…',
+    readerPageJump: 'Go',
+    readerPageOfTotal: '{total} pages',
+    readerSearchEmpty: 'Enter keywords to search across the book',
+    readerSearchNoResult: 'No matches found',
+    readerSearchCount: '{count} hits',
+    readerThemeSystem: 'Auto',
+    readerThemePaper: 'Paper',
+    readerThemeNight: 'Night',
+    readerLineHeightLabel: 'Line height',
+    readerWidthLabel: 'Width',
+    readerWidthNarrow: 'Narrow',
+    readerWidthMedium: 'Medium',
+    readerWidthWide: 'Wide',
+    readerAiChapterTitle: 'AI Chapter Review',
+    readerAiChapterAction: 'Review',
+    readerAiChapterCancel: 'Stop',
+    readerAiChapterRunning: 'Reviewing {done}/{total}',
+    readerAiChapterDone: 'Done ({count})',
+    readerAiChapterIdle: 'Refine ambiguous readings in this chapter',
+    readerScrubberLabel: 'Reading position',
     bilingualLabel: 'Bilingual',
     readerFloatTranslation: 'Float translation button',
     readerDockTranslation: 'Return translation button to toolbar',

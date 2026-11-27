@@ -82,6 +82,8 @@ export interface BookItem {
   pageStarts?: number[];
   /** PDF only: source page labels (`i`, `ii`, `1`, …), index = source page - 1. */
   pageLabels?: string[];
+  /** EPUB spine writing direction when specified (`rtl` -> `'vertical'`). */
+  defaultWritingMode?: 'horizontal' | 'vertical';
   chapters: BookChapter[];
   readingProgress: ReadingProgress;
   bookmarks: BookmarkItem[];
@@ -218,6 +220,7 @@ export interface UpsertBookInput {
   pageLabels?: string[];
   /** Table of contents of an EPUB or PDF; ignored for other formats. */
   chapters?: ChapterStart[];
+  defaultWritingMode?: 'horizontal' | 'vertical';
   favorite?: boolean;
   /** Keep a second book even when its text fingerprint already exists in the library. */
   allowDuplicate?: boolean;
@@ -297,6 +300,8 @@ export async function upsertBook(db: LibraryDatabase, input: UpsertBookInput): P
   const validPageLabels = pageStarts && pageLabels && pageLabels.length === pageStarts.length ? pageLabels : undefined;
   const requestedFolder = input.folderId === undefined ? existing?.folderId : input.folderId;
   const folderId = requestedFolder && db.folders[requestedFolder] ? requestedFolder : undefined;
+  const defaultWritingMode = input.defaultWritingMode ?? existing?.defaultWritingMode;
+  const chapters = chaptersFor(input.format ?? existing?.format ?? 'txt', content, title, input.chapters ?? (existing?.content === content ? existing.chapters : undefined));
   const book: BookItem = {
     bookId,
     title,
@@ -321,8 +326,9 @@ export async function upsertBook(db: LibraryDatabase, input: UpsertBookInput): P
     ...(pdfLayout !== undefined ? { pdfLayout } : {}),
     ...(pageStarts !== undefined ? { pageStarts } : {}),
     ...(validPageLabels !== undefined ? { pageLabels: validPageLabels } : {}),
-    chapters: chaptersFor(input.format ?? existing?.format ?? 'txt', content, title, input.chapters ?? (existing?.content === content ? existing.chapters : undefined)),
-    readingProgress: { ...readingProgress, chapterIndex: 0 },
+    ...(defaultWritingMode ? { defaultWritingMode } : {}),
+    chapters,
+    readingProgress: { ...readingProgress, chapterIndex: chapterIndexForLine(chapters, readingProgress.lineIndex) },
     bookmarks: existing?.bookmarks ?? [],
     favorite: input.favorite ?? existing?.favorite ?? false,
     createdAt: existing?.createdAt ?? now,
@@ -453,6 +459,45 @@ export function lineProgressPercent(lineIndex: number, totalLines: number): numb
  * The source page shown at an output line. A PDF line map stores each page's first text line
  * (index = page - 1); pages with no text are -1. Labels are used when the PDF supplied them.
  */
+export function chapterIndexForLine(chapters: BookChapter[], lineIndex: number): number {
+  if (chapters.length <= 1 || !Number.isFinite(lineIndex)) return 0;
+  let found = 0;
+  for (let i = 0; i < chapters.length; i += 1) {
+    if (chapters[i].startLine <= lineIndex) found = i;
+    else break;
+  }
+  return found;
+}
+
+export function lineForSourcePage(
+  pageStarts?: number[],
+  pageLabels?: string[],
+  query?: string | number,
+): number | null {
+  if (!pageStarts?.length || query === undefined || query === null) return null;
+  const trimmed = String(query).trim();
+  if (!trimmed) return null;
+  let targetIndex = -1;
+  if (pageLabels?.length) {
+    const lower = trimmed.toLowerCase();
+    targetIndex = pageLabels.findIndex(label => label.trim().toLowerCase() === lower);
+  }
+  if (targetIndex < 0 && /^\d+$/.test(trimmed)) {
+    const num = Number(trimmed);
+    if (num >= 1 && num <= pageStarts.length) targetIndex = num - 1;
+  }
+  if (targetIndex < 0) return null;
+  const exact = pageStarts[targetIndex];
+  if (Number.isInteger(exact) && exact >= 0) return exact;
+  for (let i = targetIndex + 1; i < pageStarts.length; i += 1) {
+    if (Number.isInteger(pageStarts[i]) && pageStarts[i] >= 0) return pageStarts[i];
+  }
+  for (let i = targetIndex - 1; i >= 0; i -= 1) {
+    if (Number.isInteger(pageStarts[i]) && pageStarts[i] >= 0) return pageStarts[i];
+  }
+  return null;
+}
+
 export function sourcePageLabel(pageStarts?: number[], pageLabels?: string[], lineIndex?: number): string | null {
   if (!pageStarts?.length || lineIndex === undefined || !Number.isFinite(lineIndex)) return null;
   let found = -1;
@@ -610,6 +655,8 @@ function validateBook(id: string, value: unknown, version: number): BookItem {
   const sourceUrl = typeof value.sourceUrl === 'string' ? value.sourceUrl : undefined;
   const folderId = typeof value.folderId === 'string' && value.folderId ? value.folderId : undefined;
   const category = version === 1 ? legacyCategory(id, value.category as BookCategory, sourceUrl) : value.category as BookCategory;
+  const chapters = chaptersFor(value.format as BookFormat, content, title, value.chapters.filter(validChapter));
+  const defaultWritingMode = value.defaultWritingMode === 'vertical' ? 'vertical' : value.defaultWritingMode === 'horizontal' ? 'horizontal' : undefined;
   const book: BookItem = {
     bookId: id,
     title,
@@ -630,8 +677,9 @@ function validateBook(id: string, value: unknown, version: number): BookItem {
     content,
     fingerprint: value.fingerprint,
     sourceOverrides,
-    chapters: chaptersFor(value.format as BookFormat, content, title, value.chapters.filter(validChapter)),
-    readingProgress: { ...readingProgress, chapterIndex: 0 },
+    ...(defaultWritingMode ? { defaultWritingMode } : {}),
+    chapters,
+    readingProgress: { ...readingProgress, chapterIndex: chapterIndexForLine(chapters, readingProgress.lineIndex) },
     bookmarks: value.bookmarks.map(validateBookmark),
     favorite: value.favorite,
     createdAt: finiteNumber(value.createdAt, '创建时间'),

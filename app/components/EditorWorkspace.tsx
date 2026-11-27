@@ -109,6 +109,9 @@ export interface EditorWorkspaceProps {
   onOpenHistory: () => void;
   /** Yellow dot on the ⋮ button: an update is available. */
   updateDot?: boolean;
+  aiReview?: { status: 'idle' | 'running' | 'done' | 'error'; completed: number; total: number; error: string };
+  onTriggerAiReview?: () => void;
+  onCancelAiReview?: () => void;
 }
 
 export function EditorWorkspace(props: EditorWorkspaceProps) {
@@ -118,7 +121,7 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
     editorFileInputRef, handleEditorFileImport, isImporting, importError, libraryBooks, onImportFromLibrary,
     handleSaveToLibrary, isExporting, handleExport, dictionaryStatus, isKuromojiLoading, runDependencyRepair,
     isAnnotating, annotationError, reviewCount, jumpToNextReview, renderSettings, updateDot,
-    documentId, onOpenSearch,
+    documentId, onOpenSearch, aiReview, onTriggerAiReview, onCancelAiReview,
   } = props;
 
   const [pane, setPane] = useState<'source' | 'preview'>('source');
@@ -204,7 +207,7 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
 
           <div className="flex-1" />
 
-          {(isKuromojiLoading || dictionaryStatus === 'degraded' || reviewCount > 0) && (
+          {(isKuromojiLoading || dictionaryStatus === 'degraded' || reviewCount > 0 || aiReview?.status === 'running' || Boolean(onTriggerAiReview)) && (
             <GlassCapsule>
               {isKuromojiLoading ? (
                 <span className="flex h-9 items-center gap-[7px] px-3.5 text-[13px] font-semibold">
@@ -217,9 +220,23 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
                   <span className="max-md:hidden">{t.dictLoadFailed}</span>
                 </GlassButton>
               ) : (
-                <GlassButton onClick={jumpToNextReview} className="!text-[13px] font-semibold !text-[var(--review)]">
-                  <span className="tabular-nums">{t.needsReviewBadge} {reviewCount}</span>
-                </GlassButton>
+                <>
+                  {aiReview?.status === 'running' ? (
+                    <GlassButton onClick={() => onCancelAiReview?.()} className="!text-[13px] font-semibold">
+                      <span className="h-3 w-3 animate-spin rounded-full border-2 border-[var(--fill)] border-t-[var(--label)]" />
+                      <span className="tabular-nums">AI {aiReview.total > 0 ? `${aiReview.completed}/${aiReview.total}` : '…'}</span>
+                    </GlassButton>
+                  ) : onTriggerAiReview && reviewCount > 0 ? (
+                    <GlassButton onClick={onTriggerAiReview} className="!text-[13px] font-semibold">
+                      <span>AI</span>
+                    </GlassButton>
+                  ) : null}
+                  {reviewCount > 0 && (
+                    <GlassButton onClick={jumpToNextReview} className="!text-[13px] font-semibold !text-[var(--review)]">
+                      <span className="tabular-nums">{t.needsReviewBadge} {reviewCount}</span>
+                    </GlassButton>
+                  )}
+                </>
               )}
             </GlassCapsule>
           )}

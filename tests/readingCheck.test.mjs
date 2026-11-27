@@ -143,3 +143,29 @@ test('the reading table is fetched next to the dictionary, gzipped or already de
     globalThis.fetch = original;
   }
 });
+
+test('checkLine recovers mis-segmented 2-4 kanji jukujikun compounds when automatic reading disagrees', () => {
+  const wrongCompound = {
+    id: '0',
+    rawText: '一昨日',
+    cleanText: '一昨日',
+    tokens: [
+      { surface: '一', ruby: 'いち', hasKanji: true, readingSource: 'automatic', word: { surface: '一', reading: 'いち', alternatives: [], offset: 0 } },
+      { surface: '昨日', ruby: 'きのう', hasKanji: true, readingSource: 'automatic', word: { surface: '昨日', reading: 'きのう', alternatives: [], offset: 0 } },
+    ],
+  };
+  const dict = table({ 一昨日: ['おととい', 'いっさくじつ'] });
+  const compound = findDictionaryCompound(wrongCompound, 0, dict);
+  assert.deepEqual(compound, {
+    start: 0,
+    end: 2,
+    surface: '一昨日',
+    reading: 'おととい',
+    alternatives: ['おととい', 'いっさくじつ'],
+  });
+  const checked = checkLine(wrongCompound, dict);
+  assert.equal(checked.tokens.length, 1);
+  assert.equal(checked.tokens[0].surface, '一昨日');
+  assert.equal(checked.tokens[0].ruby, 'おととい');
+  assert.deepEqual(checked.tokens[0].alternatives, ['おととい', 'いっさくじつ']);
+});

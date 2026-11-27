@@ -203,6 +203,83 @@ test('reviewReadings supports romaji options without mangling ASCII and preserve
       assert.equal(updated[0].tokens[0].ruby, 'konnichi');
       assert.equal(updated[0].tokens[0].word.reading, 'konnichi');
       assert.equal(updated[0].tokens[0].needsReview, false);
+      assert.equal(updated[0].tokens[0].readingSource, 'ai');
     },
   );
+});
+
+test('reviewReadings supports dual infer mode, okurigana validation, rich context, glossary hints, and IDB/memory cache', async () => {
+  const { isValidInferredReading } = loadTypescript('../app/utils/aiReadingReview.ts');
+  const { clearAiReviewCache } = loadTypescript('../app/utils/aiReviewCache.ts');
+  await clearAiReviewCache();
+
+  assert.equal(isValidInferredReading('食べる', 'たべる'), 'たべる');
+  assert.equal(isValidInferredReading('食べる', '食る'), null);
+  assert.equal(isValidInferredReading('食べる', 'くう'), null);
+  assert.equal(isValidInferredReading('綺麗', 'きれい'), 'きれい');
+  assert.equal(isValidInferredReading('綺麗', 'abc'), null);
+
+  const lines = [
+    {
+      id: '0',
+      rawText: '前の行',
+      cleanText: '前の行',
+      tokens: [{ surface: '前の行', hasKanji: false }],
+    },
+    {
+      id: '1',
+      rawText: '謎の魔導書',
+      cleanText: '謎の魔導書',
+      tokens: [
+        { surface: '謎', hasKanji: true, ruby: '', readingSource: 'automatic' },
+        { surface: 'の', hasKanji: false },
+        { surface: '魔導書', hasKanji: true, ruby: 'まどうしょ', readingSource: 'automatic' },
+      ],
+    },
+    {
+      id: '2',
+      rawText: '次の行',
+      cleanText: '次の行',
+      tokens: [{ surface: '次の行', hasKanji: false }],
+    },
+  ];
+
+  let calls = 0;
+  await withFakeFetch(
+    (_req, callNum) => {
+      calls = callNum;
+      return llmReply(JSON.stringify({ '0': 'なぞ' }));
+    },
+    async fakeFetch => {
+      const results1 = await reviewReadings(lines, llm, undefined, undefined, {
+        lineRange: { start: 1, end: 2 },
+        glossary: [{ surface: '魔導書', reading: 'まどうしょ' }],
+        includeUnread: true,
+        richContext: true,
+        useCache: true,
+      });
+      assert.equal(calls, 1);
+      assert.equal(results1.length, 1);
+      assert.equal(results1[0].reading, 'なぞ');
+      const sysPrompt = fakeFetch.calls[0].body.messages[0].content;
+      assert.ok(sysPrompt.includes('魔導書=まどうしょ'));
+      const userPayload = JSON.parse(fakeFetch.calls[0].body.messages[1].content);
+      assert.equal(userPayload[0].prev, '前の行');
+      assert.equal(userPayload[0].next, '次の行');
+      assert.equal(userPayload[0].sentence, '【謎】の魔導書');
+      assert.equal(userPayload[0].mode, 'infer');
+
+      // Second call hits the persistent cache without calling fetch again.
+      const results2 = await reviewReadings(lines, llm, undefined, undefined, {
+        lineRange: { start: 1, end: 2 },
+        glossary: [{ surface: '魔導書', reading: 'まどうしょ' }],
+        includeUnread: true,
+        richContext: true,
+        useCache: true,
+      });
+      assert.equal(calls, 1);
+      assert.deepEqual(results2, results1);
+    },
+  );
+  await clearAiReviewCache();
 });

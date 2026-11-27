@@ -24,6 +24,7 @@ export interface EncodedImage {
 export interface PdfImageItem extends EncodedImage {
   id: string;
   pageIndex: number;
+  y?: number;
 }
 
 interface PdfImageLike {
@@ -40,6 +41,9 @@ interface OpsLike {
   paintImageXObject?: number;
   paintJpegXObject?: number;
   paintInlineImageXObject?: number;
+  save?: number;
+  restore?: number;
+  transform?: number;
 }
 
 export interface PdfImageExtractionOptions {
@@ -262,11 +266,38 @@ export async function extractPageImages(
   const images: PdfImageItem[] = [];
   let ignored = 0;
   let failed = 0;
+  let ctm: [number, number, number, number, number, number] = [1, 0, 0, 1, 0, 0];
+  const ctmStack: Array<[number, number, number, number, number, number]> = [];
+  let seenTransform = false;
 
   for (let index = 0; index < operatorList.fnArray.length; index += 1) {
     throwIfAborted(options.signal);
     const fn = operatorList.fnArray[index];
     const args = operatorList.argsArray[index] ?? [];
+    if (ops.save !== undefined && fn === ops.save) {
+      ctmStack.push([...ctm]);
+      continue;
+    }
+    if (ops.restore !== undefined && fn === ops.restore) {
+      const prev = ctmStack.pop();
+      if (prev) ctm = prev;
+      continue;
+    }
+    if (ops.transform !== undefined && fn === ops.transform) {
+      const m = Array.isArray(args[0]) ? (args[0] as number[]) : (args as number[]);
+      if (m.length >= 6 && m.every(v => typeof v === 'number' && Number.isFinite(v))) {
+        seenTransform = true;
+        ctm = [
+          ctm[0] * m[0] + ctm[2] * m[1],
+          ctm[1] * m[0] + ctm[3] * m[1],
+          ctm[0] * m[2] + ctm[2] * m[3],
+          ctm[1] * m[2] + ctm[3] * m[3],
+          ctm[0] * m[4] + ctm[2] * m[5] + ctm[4],
+          ctm[1] * m[4] + ctm[3] * m[5] + ctm[5],
+        ];
+      }
+      continue;
+    }
     let image: unknown;
     if (fn === ops.paintImageXObject || fn === ops.paintJpegXObject) {
       image = await objectForName(page, args[0], options.signal, options.objectTimeoutMs);
@@ -307,7 +338,13 @@ export async function extractPageImages(
       failed += 1;
       continue;
     }
-    images.push({ id: `img-${pageIndex + 1}-${images.length + 1}`, pageIndex, ...encoded });
+    const y = seenTransform ? Math.round((ctm[5] + Math.max(0, ctm[3])) * 10) / 10 : undefined;
+    images.push({
+      id: `img-${pageIndex + 1}-${images.length + 1}`,
+      pageIndex,
+      ...(y !== undefined ? { y } : {}),
+      ...encoded,
+    });
   }
 
   return { images, skipped: ignored, failed };

@@ -4,7 +4,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { GlassButton } from './glass/GlassButton';
 import { GlassPopover } from './glass/GlassPopover';
 import { useGlass } from './glass/hooks';
-import { IconCopy } from './glass/icons';
+import { IconCopy, IconEdit } from './glass/icons';
 import { registerBackHandler } from '../utils/backStack';
 import type { Translations } from '../utils/i18n';
 import { INFLECTION_LABELS } from '../utils/lookup';
@@ -24,6 +24,7 @@ export interface LookupCardProps {
   onClose: () => void;
   dictTitles: Record<string, string>;
   locale: string;
+  onEditReading?: () => void;
   t: Translations;
 }
 
@@ -89,7 +90,7 @@ function Entries({ state, dictTitles, locale, t }: { state: LookupState; dictTit
   );
 }
 
-function Footer({ state, dictTitles, t }: { state: LookupState; dictTitles: Record<string, string>; t: Translations }) {
+function Footer({ state, dictTitles, onEditReading, t }: { state: LookupState; dictTitles: Record<string, string>; onEditReading?: () => void; t: Translations }) {
   const [copiedWord, setCopiedWord] = useState<string | null>(null);
   const timerRef = useRef<number | null>(null);
   const word = state.status === 'done' ? state.result.entries[0]?.term ?? state.result.query : state.query;
@@ -100,9 +101,18 @@ function Footer({ state, dictTitles, t }: { state: LookupState; dictTitles: Reco
   const dicts = state.status === 'done' ? [...new Set(state.result.entries.map(entry => entry.dict))] : [];
   const source = dicts.map(id => dictTitles[id] ?? id).join(' · ');
   return (
-    <div className="flex items-center gap-2 border-t border-[var(--sep)] py-2 pl-4 pr-3 text-[11px] text-[var(--label-3)]">
+    <div className="flex items-center gap-1.5 border-t border-[var(--sep)] py-2 pl-4 pr-3 text-[11px] text-[var(--label-3)]">
       <span className="truncate">{source}</span>
       <span className="flex-1" />
+      {onEditReading && (
+        <GlassButton
+          className="!h-[30px] !px-2.5 text-xs text-[var(--label-2)]"
+          onClick={onEditReading}
+        >
+          <IconEdit size={14} />
+          <span>{t.lookupEditReading}</span>
+        </GlassButton>
+      )}
       <GlassButton
         className="!h-[30px] !px-2.5 text-xs text-[var(--label-2)]"
         onClick={() => {
@@ -158,7 +168,7 @@ export function BottomCard({ open, onClose, label, children }: { open: boolean; 
 }
 
 /** Word lookup (mockup v3): glass popover beside the word on desktop, bottom card on phones. */
-export function LookupCard({ state, anchor, phone, onClose, dictTitles, locale, t }: LookupCardProps) {
+export function LookupCard({ state, anchor, phone, onClose, dictTitles, locale, onEditReading, t }: LookupCardProps) {
   // Keep the last content while the phone card slides away.
   const [shown, setShown] = useState<LookupState | null>(state);
   if (state && state !== shown) setShown(state);
@@ -167,7 +177,7 @@ export function LookupCard({ state, anchor, phone, onClose, dictTitles, locale, 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain md:max-h-[380px]">
         <Entries state={shown} dictTitles={dictTitles} locale={locale} t={t} />
       </div>
-      <Footer state={shown} dictTitles={dictTitles} t={t} />
+      <Footer state={shown} dictTitles={dictTitles} onEditReading={onEditReading} t={t} />
     </>
   );
   if (phone) return <BottomCard open={Boolean(state)} onClose={onClose} label={t.lookupDialog}>{content}</BottomCard>;

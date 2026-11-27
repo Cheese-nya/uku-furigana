@@ -61,3 +61,8 @@ test('learnedOverrides produces overrides for matching context only', () => {
   const overrides2 = learnedOverrides(targetLine2, [learned], 'hiragana');
   assert.equal(overrides2.length, 0);
 });
+
+test('needsReview excludes ai-reviewed tokens', () => {
+  const { needsReview } = loadTypescript('../app/utils/review.ts');
+  assert.equal(needsReview({ surface: '辛い', ruby: 'からい', hasKanji: true, readingSource: 'ai', alternatives: ['からい', 'つらい'], needsReview: true }), false);
+});

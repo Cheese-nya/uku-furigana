@@ -9,6 +9,7 @@ import { splitSentences } from '../utils/sentences';
 import { IconWarning } from './glass/icons';
 
 const SPEAKER = /^([^：:]{1,16})[：:](.*)$/;
+const SCENE_BREAK_RE = /^(?:[-—─━=＝*＊◇◇◆□■・･]{3,}|\*\s+\*\s+\*)$/;
 
 export interface ReaderLineProps {
   line: ScriptLine;
@@ -16,6 +17,7 @@ export interface ReaderLineProps {
   bookId: string;
   vertical: boolean;
   showRuby: boolean;
+  isHeading?: boolean;
   /** Per-sentence translations under the text; undefined when bilingual reading is off. */
   bilingual?: { translations: Map<string, string>; failed: Set<string>; onRetry: (text: string) => void };
   /** What this line's sentences currently show (see bilingualSignature): the bundle is shared by every line,
@@ -23,6 +25,8 @@ export interface ReaderLineProps {
   bilingualSig?: string;
   /** Highlighted lookup range within this line. */
   hit?: { start: number; end: number } | null;
+  /** Highlighted search match range within this line. */
+  searchHit?: { start: number; end: number } | null;
   t: Translations;
 }
 
@@ -65,29 +69,41 @@ export function bilingualSignature(text: string, translations: Map<string, strin
 
 function sameLine(previous: ReaderLineProps, next: ReaderLineProps): boolean {
   return previous.line === next.line && previous.lineIndex === next.lineIndex && previous.bookId === next.bookId
-    && previous.vertical === next.vertical && previous.showRuby === next.showRuby && previous.t === next.t
+    && previous.vertical === next.vertical && previous.showRuby === next.showRuby
+    && Boolean(previous.isHeading) === Boolean(next.isHeading) && previous.t === next.t
     && Boolean(previous.bilingual) === Boolean(next.bilingual) && previous.bilingualSig === next.bilingualSig
-    && previous.hit?.start === next.hit?.start && previous.hit?.end === next.hit?.end;
+    && previous.hit?.start === next.hit?.start && previous.hit?.end === next.hit?.end
+    && previous.searchHit?.start === next.searchHit?.start && previous.searchHit?.end === next.searchHit?.end;
 }
 
 /** One line of the immersive reader. Every text piece carries `data-o`, its offset in the line, for word lookup. */
-export const ReaderLine = memo(function ReaderLine({ line, lineIndex, bookId, vertical, showRuby, bilingual, hit, t }: ReaderLineProps) {
+export const ReaderLine = memo(function ReaderLine({
+  line, lineIndex, bookId, vertical, showRuby, isHeading, bilingual, hit, searchHit, t,
+}: ReaderLineProps) {
   const text = line.tokens.map(token => token.surface).join('');
+  const trimmed = (line.cleanText || text).trim();
   const image = (line.cleanText || text).match(IMAGE_LINE);
   if (image) {
     return <figure data-line={lineIndex} className="reader-figure-wrap"><Figure bookId={bookId} id={image[1]} /></figure>;
   }
+  if (trimmed && SCENE_BREAK_RE.test(trimmed)) {
+    return <hr data-line={lineIndex} className="reader-scene-break" aria-hidden />;
+  }
 
   const speakerMatch = (line.rawText || line.cleanText || '').match(SPEAKER);
   const speaker = line.speaker || speakerMatch?.[1];
-  // "名前：" is shown as a label instead of inside the text.
+  // "名前：" is shown as a label instead of inside the text (headings keep their full title).
   let skip = 0;
-  if (speaker && text.startsWith(speaker)) {
+  if (speaker && !isHeading && text.startsWith(speaker)) {
     const delimiter = text.slice(speaker.length).match(/^[：:]\s*/);
     skip = speaker.length + (delimiter ? delimiter[0].length : 0);
   }
   const sentences = splitSentences(text);
-  const cuts = [...sentences.map(sentence => sentence.end), ...(hit ? [hit.start, hit.end] : [])];
+  const cuts = [
+    ...sentences.map(sentence => sentence.end),
+    ...(hit ? [hit.start, hit.end] : []),
+    ...(searchHit ? [searchHit.start, searchHit.end] : []),
+  ];
   const all = pieces(line, cuts);
   const rtStyle = { color: 'var(--ruby)', visibility: showRuby ? 'visible' : 'hidden' } as const;
 
@@ -96,19 +112,24 @@ export const ReaderLine = memo(function ReaderLine({ line, lineIndex, bookId, ve
     .map(piece => {
       let { start, text: value } = piece;
       if (start < skip) { value = value.slice(skip - start); start = skip; }
-      const lit = hit && start < hit.end && start + value.length > hit.start ? ' lookup-hit' : '';
-      if (!piece.ruby) return <span key={start} data-o={start} className={lit || undefined}>{value}</span>;
+      const isLookup = hit && start < hit.end && start + value.length > hit.start;
+      const isSearch = searchHit && start < searchHit.end && start + value.length > searchHit.start;
+      const cls = [isLookup ? 'lookup-hit' : '', isSearch ? 'reader-search-hit' : ''].filter(Boolean).join(' ') || undefined;
+      if (!piece.ruby) return <span key={start} data-o={start} className={cls}>{value}</span>;
       return (
-        <ruby key={start} data-o={start} className={lit || undefined}>
+        <ruby key={start} data-o={start} className={cls}>
           {value}
           <rt className="select-none text-[0.56em] font-semibold tracking-[0.01em]" style={rtStyle}>{piece.ruby}</rt>
         </ruby>
       );
     });
 
+  const spacingClass = vertical ? 'ml-4' : 'mb-[0.6em]';
+  const headingClass = isHeading ? (vertical ? ' ml-6 font-semibold text-[1.18em]' : ' mt-6 mb-4 text-[1.18em] font-semibold leading-[1.6]') : '';
+
   return (
-    <p data-line={lineIndex} className={`${vertical ? 'ml-4' : 'mb-[0.6em]'}${bilingual ? ' reader-bilingual' : ''}`}>
-      {speaker && <span className="mr-[0.4em] font-sans text-[0.72em] font-semibold tracking-normal text-[var(--label-2)]">{speaker}</span>}
+    <p data-line={lineIndex} className={`${spacingClass}${headingClass}${bilingual ? ' reader-bilingual' : ''}`}>
+      {speaker && !isHeading && <span className="mr-[0.4em] font-sans text-[0.72em] font-semibold tracking-normal text-[var(--label-2)]">{speaker}</span>}
       {line.tokens.length === 0 && <br />}
       {bilingual
         ? sentences.map(sentence => {
