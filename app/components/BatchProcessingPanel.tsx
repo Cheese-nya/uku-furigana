@@ -2,11 +2,14 @@
 
 import React, { useMemo, useRef, useState } from 'react';
 import { GlassButton, GlassCapsule } from './glass/GlassButton';
-import { GlassPopover, PopoverItem } from './glass/GlassPopover';
+import { GlassPopover, PopoverItem, PopoverSeparator } from './glass/GlassPopover';
+import { ExportTranslationOptions } from './ExportTranslationOptions';
 import { Modal } from './Modal';
 import { IconBooks, IconCheck, IconDoc, IconPlus, IconSearch, IconStack } from './glass/icons';
 import type { BookItem } from '../utils/libraryDatabase';
 import type { Translations } from '../utils/i18n';
+import type { TranslationSettings } from '../utils/translation';
+import type { ExportTranslationPrefs } from '../utils/exportTranslations';
 
 export interface BatchFileItem {
   id: string;
@@ -37,6 +40,10 @@ interface BatchProcessingPanelProps {
   /** Library books offered by the 从台本库添加 sheet. */
   books: BookItem[];
   onAddBooks: (books: BookItem[]) => void;
+  exportTranslationPrefs: ExportTranslationPrefs;
+  onExportTranslationPrefsChange: (next: ExportTranslationPrefs) => void;
+  translationSettings: TranslationSettings;
+  translationEngineLabel: string;
   t: Translations;
 }
 
@@ -45,7 +52,8 @@ const formatSize = (bytes: number) => (bytes >= 1024 * 1024 ? `${(bytes / 1024 /
 /** Mockup batch page: add files, export all (format chosen on click), one list card with per-file state. */
 export function BatchProcessingPanel({
   fileInputRef, handleFileSelect, handleDrop, batchFiles, removeBatchFile, processBatchQueue, isBatchProcessing,
-  isKuromojiLoading, correctionsReady, books, onAddBooks, t,
+  isKuromojiLoading, correctionsReady, books, onAddBooks,
+  exportTranslationPrefs, onExportTranslationPrefsChange, translationSettings, translationEngineLabel, t,
 }: BatchProcessingPanelProps) {
   const [exportAnchor, setExportAnchor] = useState<HTMLButtonElement | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
@@ -188,7 +196,15 @@ export function BatchProcessingPanel({
         )}
       </div>
 
-      <GlassPopover open={exportOpen} onClose={() => setExportOpen(false)} anchor={exportAnchor} ariaLabel={t.batchExportAll}>
+      <GlassPopover open={exportOpen} onClose={() => setExportOpen(false)} anchor={exportAnchor} ariaLabel={t.batchExportAll} className="min-w-[260px]">
+        <ExportTranslationOptions
+          prefs={exportTranslationPrefs}
+          onChange={onExportTranslationPrefsChange}
+          settings={translationSettings}
+          engineLabel={translationEngineLabel}
+          t={t}
+        />
+        <PopoverSeparator />
         {(['txt', 'srt', 'docx', 'epub', 'pdf'] as const).map(format => (
           <PopoverItem key={format} icon={<IconDoc size={17} />} onClick={() => { setExportOpen(false); processBatchQueue(format); }}>
             .{format.toUpperCase()}

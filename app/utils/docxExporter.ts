@@ -72,6 +72,7 @@ export interface DocxExportOptions {
   baseFontSize?: number; // in px (e.g. 16)
   rubyFontSize?: number; // in px (e.g. 10)
   lineSpacing?: number;  // e.g. 1.8
+  translations?: readonly (string | undefined)[];
 }
 
 /**
@@ -84,6 +85,8 @@ export async function buildDocxBlob(lines: ScriptLine[], options?: DocxExportOpt
   const baseSizeHalfPts = Math.round((options?.baseFontSize || 16) * 1.5);
   const rubySizeHalfPts = Math.round((options?.rubyFontSize || 10) * 1.5);
   const lineSpacingVal = Math.round((options?.lineSpacing || 1.8) * 240);
+  const transSizeHalfPts = Math.max(16, Math.round(baseSizeHalfPts * 0.85));
+  const transLineSpacingVal = Math.round(lineSpacingVal * 0.9);
 
   const docTitle = sanitizeText(cleanScriptTitle(options?.title || '')) || '日语假名配音台本';
 
@@ -155,12 +158,33 @@ export async function buildDocxBlob(lines: ScriptLine[], options?: DocxExportOpt
       }
     }
 
+    const translation = options?.translations?.[i]
+      ? sanitizeText(options.translations[i]!).replace(/\r\n?/g, '\n').trim()
+      : '';
+
     children.push(
       new Paragraph({
         children: paragraphChildren,
-        spacing: { after: 120, line: lineSpacingVal },
+        keepNext: translation ? true : undefined,
+        spacing: { after: translation ? 40 : 120, line: lineSpacingVal },
       })
     );
+
+    if (translation) {
+      children.push(
+        new Paragraph({
+          children: [
+            new TextRun({
+              text: translation.replace(/\n+/g, ' '),
+              size: transSizeHalfPts,
+              color: '595959',
+              font: 'Microsoft YaHei',
+            }),
+          ],
+          spacing: { before: 0, after: 160, line: transLineSpacingVal },
+        })
+      );
+    }
   }
 
   const doc = new Document({

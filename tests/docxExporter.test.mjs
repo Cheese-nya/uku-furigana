@@ -87,3 +87,36 @@ test('Word export omits suppressed ruby and strips XML-illegal control character
   assert.equal(rawXml.includes('\u0000'), false);
   assert.equal(rawXml.includes('\u0007'), false);
 });
+
+test('Word export appends bilingual translation paragraph with keepNext and sanitized text', async () => {
+  const lines = [
+    {
+      id: 'b1',
+      speaker: '佐藤',
+      rawText: '学校へ行く',
+      cleanText: '学校へ行く',
+      tokens: [
+        { surface: '学校', ruby: 'がっこう', hasKanji: true },
+        { surface: 'へ', hasKanji: false },
+        { surface: '行', ruby: 'い', hasKanji: true },
+        { surface: 'く', hasKanji: false },
+      ],
+    },
+    { id: 'blank', rawText: '', cleanText: '', tokens: [] },
+  ];
+  const blob = await buildDocxBlob(lines, {
+    title: '双语台本',
+    translations: ['佐藤：去学校\u0007测试', undefined],
+  });
+  const zip = await JSZip.loadAsync(await blob.arrayBuffer());
+  const rawXml = await zip.file('word/document.xml').async('string');
+  const xml = new DOMParser().parseFromString(rawXml, 'text/xml');
+  assert.equal(xml.getElementsByTagName('parsererror').length, 0);
+  const paragraphs = elements(xml, 'p');
+  // Title paragraph + line 1 source + line 1 translation + blank paragraph = 4
+  assert.equal(paragraphs.length, 4);
+  assert.ok(elements(paragraphs[1], 'keepNext').length >= 1, 'source paragraph keeps next translation paragraph attached');
+  const transText = elements(paragraphs[2], 't').map(n => n.textContent).join('');
+  assert.equal(transText, '佐藤：去学校测试');
+  assert.equal(rawXml.includes('\u0007'), false);
+});

@@ -6,6 +6,7 @@ import { TypographyPopover } from './TypographyPopover';
 import type { EditingTokenState } from './RubyCorrectionModal';
 import { GlassButton, GlassCapsule } from './glass/GlassButton';
 import { GlassPopover, PopoverItem, PopoverSeparator } from './glass/GlassPopover';
+import { ExportTranslationOptions } from './ExportTranslationOptions';
 import { UpdateDot } from './UpdateDot';
 import { LiquidSelector } from './glass/LiquidSelector';
 import {
@@ -26,6 +27,12 @@ import {
 import type { ScriptLine } from '../utils/furigana';
 import type { BookItem } from '../utils/libraryDatabase';
 import type { Translations } from '../utils/i18n';
+import type { TranslationSettings } from '../utils/translation';
+import {
+  countCachedExportTranslations,
+  type ExportTranslationPrefs,
+  type ExportTranslationSummary,
+} from '../utils/exportTranslations';
 import type { WorkbenchSearchHit, WorkbenchSearchMode } from '../utils/workbenchSearch';
 
 type Setter<T> = Dispatch<SetStateAction<T>>;
@@ -112,6 +119,11 @@ export interface EditorWorkspaceProps {
   aiReview?: { status: 'idle' | 'running' | 'done' | 'error'; completed: number; total: number; error: string };
   onTriggerAiReview?: () => void;
   onCancelAiReview?: () => void;
+  exportBookId: string;
+  exportTranslationPrefs: ExportTranslationPrefs;
+  onExportTranslationPrefsChange: (next: ExportTranslationPrefs) => void;
+  translationSettings: TranslationSettings;
+  translationEngineLabel: string;
 }
 
 export function EditorWorkspace(props: EditorWorkspaceProps) {
@@ -120,8 +132,9 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
     previewShowRuby, setPreviewShowRuby, correctionsReady, advanceControllerRef, setIsGlossaryOpen,
     editorFileInputRef, handleEditorFileImport, isImporting, importError, libraryBooks, onImportFromLibrary,
     handleSaveToLibrary, isExporting, handleExport, dictionaryStatus, isKuromojiLoading, runDependencyRepair,
-    isAnnotating, annotationError, reviewCount, jumpToNextReview, renderSettings, updateDot,
+    annotatedLines, isAnnotating, annotationError, reviewCount, jumpToNextReview, renderSettings, updateDot,
     documentId, onOpenSearch, aiReview, onTriggerAiReview, onCancelAiReview,
+    exportBookId, exportTranslationPrefs, onExportTranslationPrefsChange, translationSettings, translationEngineLabel,
   } = props;
 
   const [pane, setPane] = useState<'source' | 'preview'>('source');
@@ -133,6 +146,21 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
   const [importOpen, setImportOpen] = useState<'menu' | 'library' | null>(null);
   const [exportAnchor, setExportAnchor] = useState<HTMLButtonElement | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const [exportCacheSummary, setExportCacheSummary] = useState<ExportTranslationSummary | null>(null);
+
+  useEffect(() => {
+    if (!exportOpen || !exportTranslationPrefs.enabled) return;
+    let active = true;
+    void countCachedExportTranslations(annotatedLines, {
+      bookId: exportBookId,
+      settings: translationSettings,
+    }).then(summary => {
+      if (active) setExportCacheSummary(summary);
+    }).catch(() => {
+      if (active) setExportCacheSummary(null);
+    });
+    return () => { active = false; };
+  }, [exportOpen, exportTranslationPrefs.enabled, annotatedLines, exportBookId, translationSettings]);
 
   const exportDisabled = isExporting || isKuromojiLoading || isAnnotating || !!annotationError || !correctionsReady;
   const changeRubyType = (value: RubyMode) => { setEditingToken(null); setRubyType(value); };
@@ -338,7 +366,16 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
         )}
       </GlassPopover>
 
-      <GlassPopover open={exportOpen} onClose={() => setExportOpen(false)} anchor={exportAnchor} ariaLabel={t.exportButtonLabel}>
+      <GlassPopover open={exportOpen} onClose={() => setExportOpen(false)} anchor={exportAnchor} ariaLabel={t.exportButtonLabel} className="min-w-[260px]">
+        <ExportTranslationOptions
+          prefs={exportTranslationPrefs}
+          onChange={onExportTranslationPrefsChange}
+          settings={translationSettings}
+          engineLabel={translationEngineLabel}
+          cacheSummary={exportTranslationPrefs.enabled ? exportCacheSummary : null}
+          t={t}
+        />
+        <PopoverSeparator />
         {(['txt', 'srt', 'docx'] as const).map(format => (
           <PopoverItem
             key={format}

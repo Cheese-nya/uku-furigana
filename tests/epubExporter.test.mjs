@@ -65,3 +65,41 @@ test('buildEpubBlob emits valid EPUB 3 archive with stored mimetype first, ruby,
   assert.match(chXml, /<p>&#160;<\/p>/, 'blank lines must stay non-collapsed');
   assert.equal(chDoc.getElementsByTagName('ruby').length, 2);
 });
+
+test('buildEpubBlob emits well-formed bilingual markup and translation styles when translations provided', async () => {
+  const lines = [
+    {
+      id: '1',
+      speaker: '佐藤',
+      rawText: '私が行く',
+      cleanText: '私が行く',
+      tokens: [
+        { surface: '私', ruby: 'わたし', hasKanji: true },
+        { surface: 'が行く', hasKanji: false },
+      ],
+    },
+    { id: 'blank', rawText: '', cleanText: '', tokens: [] },
+    {
+      id: '2',
+      rawText: '未来',
+      cleanText: '未来',
+      tokens: [{ surface: '未来', ruby: 'みらい', hasKanji: true }],
+    },
+  ];
+
+  const blob = await buildEpubBlob(lines, {
+    title: '双语书籍',
+    translations: ['我去 & 测试 <OK>', undefined, undefined],
+    translationLang: 'zh-Hans',
+  });
+  const zip = await JSZip.loadAsync(await blob.arrayBuffer());
+  const css = await zip.file('OEBPS/style.css').async('string');
+  const chXml = await zip.file('OEBPS/chapter-001.xhtml').async('string');
+  parseStrictXml(chXml, 'bilingual chapter-001.xhtml');
+
+  assert.match(css, /\.bilingual\s*\{/);
+  assert.match(css, /\.translation\s*\{/);
+  assert.match(chXml, /<div class="bilingual"><p class="line">[\s\S]*?<p class="translation" xml:lang="zh-Hans" lang="zh-Hans">我去 &amp; 测试 &lt;OK&gt;<\/p><\/div>/);
+  assert.match(chXml, /<p>&#160;<\/p>/);
+  assert.match(chXml, /<p><ruby>未来<rt>みらい<\/rt><\/ruby><\/p>/);
+});

@@ -25,6 +25,7 @@ export interface PdfExportOptions {
   rubyFontSize?: number;
   lineSpacing?: number;
   layout?: PdfLayout;
+  translations?: readonly (string | undefined)[];
 }
 
 interface LayoutUnit {
@@ -52,6 +53,7 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 let cachedFontBytesPromise: Promise<ArrayBuffer> | null = null;
+let cachedScFontBytesPromise: Promise<ArrayBuffer> | null = null;
 
 function getNotoSansJpBytes(): Promise<ArrayBuffer> {
   if (!cachedFontBytesPromise) {
@@ -68,6 +70,23 @@ function getNotoSansJpBytes(): Promise<ArrayBuffer> {
       });
   }
   return cachedFontBytesPromise;
+}
+
+function getNotoSansScBytes(): Promise<ArrayBuffer> {
+  if (!cachedScFontBytesPromise) {
+    cachedScFontBytesPromise = fetch('/fonts/NotoSansSC-Regular.otf')
+      .then((res) => {
+        if (!res.ok) {
+          throw new Error(`Failed to fetch font: ${res.status} ${res.statusText}`);
+        }
+        return res.arrayBuffer();
+      })
+      .catch((err: unknown) => {
+        cachedScFontBytesPromise = null;
+        throw err;
+      });
+  }
+  return cachedScFontBytesPromise;
 }
 
 function sanitizePdfText(text: string): string {
@@ -255,9 +274,21 @@ export async function buildPdfBlob(
     ...lines.flatMap(l => [l.speaker ?? '', ...l.tokens.flatMap(t => [t.surface, (!t.annotationSuppressed && t.ruby) || ''])])].join('')) || ' ';
   const font = await doc.embedFont(await subsetFont(fontBytes, usedText), { subset: false });
 
+  const translationStrings = (opts?.translations ?? []).map(t => (t ? sanitizePdfText(t).trim() : ''));
+  const hasTranslations = translationStrings.some(Boolean);
+  let transFont: PDFFont | null = null;
+  if (hasTranslations) {
+    const scFontBytes = await getNotoSansScBytes();
+    const usedTransText = translationStrings.filter(Boolean).join('') || ' ';
+    transFont = await doc.embedFont(await subsetFont(scFontBytes, usedTransText), { subset: false });
+  }
+
   const baseColor = rgb(0.1, 0.1, 0.1);
   const rubyColor = rgb(0.145, 0.388, 0.922);
   const headingColor = rgb(0.08, 0.08, 0.08);
+  const transColor = rgb(0.35, 0.35, 0.35);
+  const transFontSize = Math.max(8, Math.round(baseFontSize * (vertical ? 0.78 : 0.82) * 10) / 10);
+  const transAdvance = transFontSize * 1.45;
 
   const contentSpan = (vertical ? pageHeight : pageWidth) - margin * 2;
   const startCoord = (vertical ? pageWidth : pageHeight) - margin;
@@ -312,7 +343,10 @@ export async function buildPdfBlob(
     const chapterLines =
       lines.length > 0 ? lines.slice(chapter.startLine, chapter.endLine + 1) : [];
 
-    for (const line of chapterLines) {
+    for (let offset = 0; offset < chapterLines.length; offset += 1) {
+      const line = chapterLines[offset];
+      const lineIdx = chapter.startLine + offset;
+      const transText = transFont ? (translationStrings[lineIdx] || '') : '';
       const units = buildLineUnits(line, font, baseFontSize, rubyFontSize, vertical);
 
       // Empty line -> blank gap
@@ -328,7 +362,8 @@ export async function buildPdfBlob(
       const segments = wrapUnits(units, contentSpan);
       const blockSpan = rubyReserve + baseFontSize;
 
-      for (const segment of segments) {
+      for (let segIdx = 0; segIdx < segments.length; segIdx += 1) {
+        const segment = segments[segIdx];
         ensureSpace(blockSpan);
 
         if (vertical) {
@@ -383,7 +418,39 @@ export async function buildPdfBlob(
           }
         }
 
-        cursor -= lineAdvance;
+        const isLastSourceSeg = segIdx === segments.length - 1;
+        cursor -= isLastSourceSeg && transText ? blockSpan + baseFontSize * 0.25 : lineAdvance;
+      }
+
+      if (transText && transFont) {
+        const transUnits = buildHeadingUnits(transText, transFont, transFontSize, vertical);
+        const transSegments = wrapUnits(transUnits, contentSpan);
+        for (const tSeg of transSegments) {
+          ensureSpace(transFontSize);
+          if (vertical) {
+            const colX = cursor - transFontSize;
+            let topY = pageHeight - margin;
+            for (const unit of tSeg) {
+              drawVerticalChar(page, transFont, unit.baseText, colX, topY - transFontSize, transFontSize, transColor);
+              topY -= transFontSize;
+            }
+          } else {
+            const baseY = cursor - transFontSize;
+            let x = margin;
+            for (const unit of tSeg) {
+              page.drawText(unit.baseText, {
+                x,
+                y: baseY,
+                size: transFontSize,
+                font: transFont,
+                color: transColor,
+              });
+              x += unit.unitWidth;
+            }
+          }
+          cursor -= transAdvance;
+        }
+        cursor -= baseFontSize * 0.35;
       }
     }
   }

@@ -128,6 +128,19 @@ export interface Translations {
   exportSrt: string;
   exportDocx: string;
   exportButtonLabel: string;
+  exportIncludeTranslation: string;
+  exportMissingAuto: string;
+  exportMissingCachedOnly: string;
+  exportTranslationCachedHint: string;
+  exportTranslationEngineHint: string;
+  exportTranslationNoKeyHint: string;
+  exportTranslatingStage: string;
+  exportTranslationPartialNotice: string;
+  exportLargeLlmConfirmTitle: string;
+  exportLargeLlmConfirmBody: string;
+  exportLargeLlmConfirmContinue: string;
+  exportLargeLlmConfirmCachedOnly: string;
+  exportCancelButton: string;
 
   // Batch Panel
   batchTitle: string;
@@ -901,6 +914,19 @@ export const translations: Record<Locale, Translations> = {
     exportSrt: '导出 SRT',
     exportDocx: '导出 Word (.docx)',
     exportButtonLabel: '导出',
+    exportIncludeTranslation: '附带逐句翻译',
+    exportMissingAuto: '自动补翻缺失句',
+    exportMissingCachedOnly: '仅用已有译文',
+    exportTranslationCachedHint: '{target} · {engine} · 已缓存 {cached}/{total} 句',
+    exportTranslationEngineHint: '{target} · {engine}',
+    exportTranslationNoKeyHint: '当前大模型未配置 API Key，补翻前请先在设置中填写',
+    exportTranslatingStage: '正在翻译缺失句子 ({done} / {total})...',
+    exportTranslationPartialNotice: '导出已完成，但有 {missing} 句未翻译成功（已保留原文）。',
+    exportLargeLlmConfirmTitle: '确认批量调用大模型翻译',
+    exportLargeLlmConfirmBody: '本次导出有 {missing} 句尚未缓存译文，将调用「{engine}」自动补翻并写入本地缓存。确认继续吗？',
+    exportLargeLlmConfirmContinue: '继续并补翻',
+    exportLargeLlmConfirmCachedOnly: '仅导出已有译文',
+    exportCancelButton: '取消导出',
 
     batchTitle: '台本批量注音与导出',
     batchDesc: '拖拽或选择多个台本文件（支持 .txt, .srt, .docx），系统将根据各自文件名自动生成 Word 标题并注音导出。',
@@ -1655,6 +1681,19 @@ export const translations: Record<Locale, Translations> = {
     exportSrt: 'Export SRT',
     exportDocx: 'Export Word (.docx)',
     exportButtonLabel: 'Export',
+    exportIncludeTranslation: 'Include line-by-line translation',
+    exportMissingAuto: 'Auto-translate missing',
+    exportMissingCachedOnly: 'Cached only',
+    exportTranslationCachedHint: '{target} · {engine} · {cached}/{total} cached',
+    exportTranslationEngineHint: '{target} · {engine}',
+    exportTranslationNoKeyHint: 'LLM API key not set — add one in Settings before auto-translating',
+    exportTranslatingStage: 'Translating missing lines ({done} / {total})...',
+    exportTranslationPartialNotice: 'Export finished with {missing} untranslated sentences (kept source text).',
+    exportLargeLlmConfirmTitle: 'Confirm LLM translation',
+    exportLargeLlmConfirmBody: '{missing} sentences are not cached yet and will be translated using "{engine}" and cached locally. Continue?',
+    exportLargeLlmConfirmContinue: 'Translate & Export',
+    exportLargeLlmConfirmCachedOnly: 'Export Cached Only',
+    exportCancelButton: 'Cancel Export',
 
     batchTitle: 'Batch Furigana Processing',
     batchDesc: 'Drop or select multiple script files (.txt, .srt, .docx) to batch annotate and export using filenames as titles.',

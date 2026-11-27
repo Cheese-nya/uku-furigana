@@ -131,25 +131,47 @@ function annotatedText(line: ScriptLine): string {
   return line.tokens.map(inlineRubyText).join('');
 }
 
-/** TXT export: each annotated line as its own paragraph. */
-export function generateTXT(lines: ScriptLine[]): string {
-  return lines.map(annotatedText).join('\n\n');
+function cleanTranslation(value?: string): string {
+  return (value ?? '').replace(/\r\n?/g, '\n').trim();
+}
+
+/** TXT export: each annotated line as its own paragraph, with optional line-by-line translation below. */
+export function generateTXT(lines: ScriptLine[], translations?: readonly (string | undefined)[]): string {
+  return lines.map((line, index) => {
+    const base = annotatedText(line);
+    const translation = cleanTranslation(translations?.[index]);
+    return translation ? `${base}\n${translation}` : base;
+  }).join('\n\n');
 }
 
 /** Preserve imported cue timing and grouping when the user has not changed the cue layout. */
-export function generateSRT(lines: ScriptLine[], cues?: SrtCue[]): string {
+export function generateSRT(
+  lines: ScriptLine[],
+  cues?: SrtCue[],
+  translations?: readonly (string | undefined)[],
+): string {
   const cueLineCount = cues?.reduce((total, cue) => total + cue.lines.length, 0) || 0;
   if (cues?.length && cueLineCount === lines.length) {
     let lineIndex = 0;
     return cues.map(cue => {
-      const content = cue.lines.map(() => annotatedText(lines[lineIndex++] || { tokens: [], cleanText: '', id: '' })).join('\n');
+      const sourceRows: string[] = [];
+      const translationRows: string[] = [];
+      for (let i = 0; i < cue.lines.length; i++) {
+        const idx = lineIndex++;
+        sourceRows.push(annotatedText(lines[idx] || { tokens: [], cleanText: '', id: '' }));
+        const translation = cleanTranslation(translations?.[idx]);
+        if (translation) translationRows.push(translation);
+      }
+      const content = [...sourceRows, ...translationRows].join('\n');
       return `${cue.index}\n${cue.start} --> ${cue.end}\n${content}`;
     }).join('\n\n') + '\n';
   }
   return lines.map((line, index) => {
     const startTime = formatSRTTime(index * 4);
     const endTime = formatSRTTime(index * 4 + 3);
-    return `${index + 1}\n${startTime} --> ${endTime}\n${annotatedText(line)}\n`;
+    const translation = cleanTranslation(translations?.[index]);
+    const body = translation ? `${annotatedText(line)}\n${translation}` : annotatedText(line);
+    return `${index + 1}\n${startTime} --> ${endTime}\n${body}\n`;
   }).join('\n');
 }
 

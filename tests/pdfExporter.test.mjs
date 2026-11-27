@@ -11,12 +11,17 @@ const { subsetFont } = loadTypescript('../app/utils/fontSubset.ts');
 
 const root = new URL('../', import.meta.url).pathname;
 
-function withFontFetch(fn) {
+function withFontFetch(fn, fetchedUrls = []) {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
     const target = String(url);
+    fetchedUrls.push(target);
     if (target.endsWith('/fonts/NotoSansJP-Regular.ttf')) {
       const buf = readFileSync(join(root, 'public/fonts/NotoSansJP-Regular.ttf'));
+      return { ok: true, status: 200, arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) };
+    }
+    if (target.endsWith('/fonts/NotoSansSC-Regular.otf')) {
+      const buf = readFileSync(join(root, 'public/fonts/NotoSansSC-Regular.otf'));
       return { ok: true, status: 200, arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) };
     }
     if (target.endsWith('/fonts/hb-subset.wasm')) {
@@ -31,6 +36,7 @@ function withFontFetch(fn) {
 }
 
 test('buildPdfBlob generates a valid horizontal PDF, skips suppressed ruby, and strips control chars', async () => {
+  const fetchedUrls = [];
   await withFontFetch(async () => {
     const lines = [
       {
@@ -51,7 +57,8 @@ test('buildPdfBlob generates a valid horizontal PDF, skips suppressed ruby, and 
     const doc = await PDFDocument.load(await blob.arrayBuffer());
     assert.equal(doc.getTitle(), '放課後');
     assert.ok(doc.getPageCount() >= 1);
-  });
+    assert.equal(fetchedUrls.some(url => url.endsWith('/fonts/NotoSansSC-Regular.otf')), false, 'monolingual PDF must not fetch SC font');
+  }, fetchedUrls);
 });
 
 test('buildPdfBlob vertical layout reserves space for ruby taller than its base kanji', async () => {
@@ -110,5 +117,43 @@ test('subsetFont handles empty text and rejects cleanly on corrupt font bytes wi
     // Subsequent valid call must still succeed cleanly
     const okSubset = await subsetFont(ttf.buffer.slice(ttf.byteOffset, ttf.byteOffset + ttf.byteLength), '漢字');
     assert.ok(okSubset.byteLength > 0);
+  });
+});
+
+test('buildPdfBlob embeds NotoSansSC lazily for horizontal and vertical bilingual Simplified Chinese translations', async () => {
+  await withFontFetch(async () => {
+    const lines = [
+      {
+        id: 'b1',
+        rawText: '私たち',
+        cleanText: '私たち',
+        tokens: [
+          { surface: '私', ruby: 'わたし', hasKanji: true },
+          { surface: 'たち', hasKanji: false },
+        ],
+      },
+    ];
+    const transText = '这是简体中文翻译测试：我们说的话、为时已晚、过对还进语译。';
+
+    const horizBlob = await buildPdfBlob(lines, { title: '双语', translations: [transText] });
+    const horizDoc = await PDFDocument.load(await horizBlob.arrayBuffer());
+    assert.ok(horizDoc.getPageCount() >= 1);
+
+    const vertBlob = await buildPdfBlob(lines, {
+      title: '縦書',
+      layout: { pageWidth: 420, pageHeight: 595, vertical: true, fontSize: 16 },
+      translations: ['这是中文翻译测试'],
+    });
+    const vertDoc = await PDFDocument.load(await vertBlob.arrayBuffer());
+    assert.equal(vertDoc.getPageCount(), 1);
+    const contents = vertDoc.getPage(0).node.Contents();
+    const refs = contents instanceof PDFArray ? contents.asArray() : [contents];
+    const rawStream = refs
+      .map(ref => inflateSync(vertDoc.context.lookup(ref).getContents()).toString('latin1'))
+      .join('\n');
+    const textMoves = [...rawStream.matchAll(/1 0 0 1 ([\d.]+) ([\d.]+) Tm/g)].map(m => ({ x: Number(m[1]), y: Number(m[2]) }));
+    const xs = [...new Set(textMoves.map(m => Math.round(m.x * 10) / 10))].sort((a, b) => a - b);
+    // Translation auxiliary column sits strictly to the left of the Japanese base text column.
+    assert.ok(xs.length >= 3, `expected at least heading, base+ruby, and translation columns, got ${xs.join(', ')}`);
   });
 });

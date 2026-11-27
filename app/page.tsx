@@ -14,6 +14,7 @@ import { LibraryPanel } from './components/LibraryPanel';
 import { ImportPreviewModal } from './components/ImportPreviewModal';
 import { ReaderPanel } from './components/ReaderPanel';
 import { GlossaryModal } from './components/GlossaryModal';
+import { Modal } from './components/Modal';
 import { ExportProgressModal } from './components/ExportProgressModal';
 import { BatchDoneModal } from './components/BatchDoneModal';
 import { LearnedReadingsModal } from './components/LearnedReadingsModal';
@@ -39,6 +40,16 @@ import { applyCorrectionOperation, lineOccurrenceAt, occurrenceStart, revertHist
 import { nextSearchHit, searchWorkbench, type WorkbenchSearchHit, type WorkbenchSearchMode } from './utils/workbenchSearch';
 import { selectReviewWord } from './utils/review';
 import { buildDocxBlob } from './utils/docxExporter';
+import {
+  countCachedExportTranslations,
+  DEFAULT_EXPORT_TRANSLATION_PREFS,
+  loadExportTranslationPrefs,
+  resolveExportTranslations,
+  saveExportTranslationPrefs,
+  type ExportMissingPolicy,
+  type ExportTranslationPrefs,
+} from './utils/exportTranslations';
+import { llmNeedsApiKey } from './utils/translation';
 import { saveBlob } from './utils/fileSave';
 import { installBackBridge, setNavigationBack } from './utils/backStack';
 import { FeedbackModal } from './components/FeedbackModal';
@@ -140,6 +151,21 @@ export default function DubbingStudioApp() {
 
   const [exportOutcome, setExportOutcome] = useState<'processing' | 'saved' | 'download' | 'cancelled' | 'error'>('processing');
   const [exportError, setExportError] = useState('');
+  const [exportStageMessage, setExportStageMessage] = useState('');
+  const [exportCompletionNotice, setExportCompletionNotice] = useState('');
+  const [exportTranslationPrefs, setExportTranslationPrefs] = useState<ExportTranslationPrefs>(DEFAULT_EXPORT_TRANSLATION_PREFS);
+  useEffect(() => {
+    // Post-mount restore keeps the static-export prerender hydration-safe.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setExportTranslationPrefs(loadExportTranslationPrefs());
+  }, []);
+  const updateExportTranslationPrefs = (next: ExportTranslationPrefs) => {
+    setExportTranslationPrefs(next);
+    saveExportTranslationPrefs(next);
+  };
+  const [pendingLargeExport, setPendingLargeExport] = useState<{ format: 'docx' | 'srt' | 'txt'; missing: number } | null>(null);
+  const exportAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => () => { exportAbortRef.current?.abort(); }, []);
   const [importError, setImportError] = useState('');
   const [pixivAccountOpen, setPixivAccountOpen] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
@@ -686,26 +712,82 @@ export default function DubbingStudioApp() {
     ]);
   };
 
+  const exportBookId = activeBook?.bookId || documentId || 'workbench';
+
   // Handle single script export
-  const handleExport = async (format: 'docx' | 'srt' | 'txt') => {
+  const handleExport = async (format: 'docx' | 'srt' | 'txt', overridePolicy?: ExportMissingPolicy) => {
     if (isExporting || isKuromojiLoading || isAnnotating || annotationError || !correctionsReady) return;
+    const effectivePolicy = overridePolicy ?? exportTranslationPrefs.missingPolicy;
+
+    if (
+      exportTranslationPrefs.enabled &&
+      effectivePolicy === 'translate-missing' &&
+      readingTools.settings.engine === 'llm' &&
+      !overridePolicy &&
+      (!llmNeedsApiKey(readingTools.settings.llm) || Boolean(readingTools.settings.llm.apiKey.trim()))
+    ) {
+      try {
+        const summary = await countCachedExportTranslations(annotatedLines, {
+          bookId: exportBookId,
+          settings: readingTools.settings,
+        });
+        if (summary.missingSentences > 200) {
+          setPendingLargeExport({ format, missing: summary.missingSentences });
+          return;
+        }
+      } catch {
+        // Proceed into main export path which surfaces any real error.
+      }
+    }
+
+    const controller = new AbortController();
+    exportAbortRef.current = controller;
     setExportFormat(format);
     setIsExporting(true);
     setExportOutcome('processing');
     setExportError('');
+    setExportStageMessage('');
+    setExportCompletionNotice('');
     setExportProgress(10);
     setIsExportModalOpen(true);
 
     try {
       const safeName = cleanScriptTitle(docTitle) || 'japanese_script';
       const filename = `${safeName}.${format}`;
+      let translations: (string | undefined)[] | undefined;
+
+      if (exportTranslationPrefs.enabled) {
+        const res = await resolveExportTranslations(annotatedLines, {
+          bookId: exportBookId,
+          missingPolicy: effectivePolicy,
+          settings: readingTools.settings,
+          glossary: glossaryEntries.map(g => ({ surface: g.surface, reading: g.reading })),
+          signal: controller.signal,
+          onProgress: ({ done, total }) => {
+            setExportProgress(10 + Math.round((done / Math.max(1, total)) * 60));
+            setExportStageMessage(fillTemplate(t.exportTranslatingStage, { done, total }));
+          },
+        });
+        translations = res.translations;
+        if (res.missingCount > 0 && res.failedError) {
+          setExportCompletionNotice(fillTemplate(t.exportTranslationPartialNotice, { missing: res.missingCount }));
+        }
+      }
+
+      if (controller.signal.aborted) {
+        setExportOutcome('cancelled');
+        return;
+      }
+
+      setExportStageMessage('');
       let blob: Blob;
 
       if (format === 'docx') {
-        setExportProgress(50);
-        blob = await buildDocxBlob(annotatedLines, { title: safeName, baseFontSize: fontSize, rubyFontSize, lineSpacing });
+        setExportProgress(75);
+        blob = await buildDocxBlob(annotatedLines, { title: safeName, baseFontSize: fontSize, rubyFontSize, lineSpacing, translations });
       } else {
-        const content = generateTextContent(annotatedLines, format);
+        setExportProgress(75);
+        const content = generateTextContent(annotatedLines, format, true, translations);
         const mime = format === 'srt' ? 'application/x-subrip' : 'text/plain';
         blob = new Blob([content], { type: mime });
       }
@@ -719,18 +801,34 @@ export default function DubbingStudioApp() {
         setExportOutcome('cancelled');
       }
     } catch (err) {
-      setExportOutcome('error');
-      setExportError(err instanceof Error ? err.message : String(err));
+      if (controller.signal.aborted || (err instanceof Error && err.name === 'AbortError')) {
+        setExportOutcome('cancelled');
+        setExportError('');
+      } else {
+        setExportOutcome('error');
+        setExportError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
+      if (exportAbortRef.current === controller) exportAbortRef.current = null;
       setIsExporting(false);
     }
   };
 
   // Text content generator (for srt / txt only)
-  const generateTextContent = (lines: ScriptLine[], format: 'srt' | 'txt', preserveSrtCues = true): string => {
+  const generateTextContent = (
+    lines: ScriptLine[],
+    format: 'srt' | 'txt',
+    preserveSrtCues = true,
+    translations?: readonly (string | undefined)[],
+  ): string => {
     if (format === 'srt') {
-      return generateSRT(lines, preserveSrtCues && srtCues.reduce((sum, cue) => sum + cue.lines.length, 0) === lines.length ? srtCues : undefined);
+      return generateSRT(
+        lines,
+        preserveSrtCues && srtCues.reduce((sum, cue) => sum + cue.lines.length, 0) === lines.length ? srtCues : undefined,
+        translations,
+      );
     } else {
+      if (translations) return generateTXT(lines, translations);
       return generateTXT(lines);
     }
   };
@@ -802,6 +900,7 @@ export default function DubbingStudioApp() {
   } = useBatchProcessing({
     t, database, setDatabase, libraryDbRef, setLibraryDb, annotate, rubyType, glossaryEntries,
     fontSize, rubyFontSize, lineSpacing, generateTextContent, isKuromojiLoading, correctionsReady,
+    exportTranslationPrefs, translationSettings: readingTools.settings,
   });
 
   /**
@@ -938,6 +1037,11 @@ export default function DubbingStudioApp() {
             aiReview={aiReview}
             onTriggerAiReview={() => triggerAiReview()}
             onCancelAiReview={cancelAiReview}
+            exportBookId={exportBookId}
+            exportTranslationPrefs={exportTranslationPrefs}
+            onExportTranslationPrefsChange={updateExportTranslationPrefs}
+            translationSettings={readingTools.settings}
+            translationEngineLabel={readingTools.engineLabel}
           />
         )}
 
@@ -1004,6 +1108,10 @@ export default function DubbingStudioApp() {
             correctionsReady={correctionsReady}
             books={libraryBooks}
             onAddBooks={addBooksToQueue}
+            exportTranslationPrefs={exportTranslationPrefs}
+            onExportTranslationPrefsChange={updateExportTranslationPrefs}
+            translationSettings={readingTools.settings}
+            translationEngineLabel={readingTools.engineLabel}
             t={t}
           />
         )}
@@ -1019,13 +1127,54 @@ export default function DubbingStudioApp() {
       <ExportProgressModal
         isOpen={isExportModalOpen}
         onClose={() => setIsExportModalOpen(false)}
+        onCancel={() => exportAbortRef.current?.abort()}
         isExporting={isExporting}
         exportFormat={exportFormat}
         exportProgress={exportProgress}
         exportOutcome={exportOutcome}
         exportError={exportError}
+        stageMessage={exportStageMessage}
+        completionNotice={exportCompletionNotice}
         t={t}
       />
+
+      <Modal
+        isOpen={pendingLargeExport !== null}
+        onClose={() => setPendingLargeExport(null)}
+        title={t.exportLargeLlmConfirmTitle}
+        maxWidth="sm"
+        footer={pendingLargeExport && (
+          <>
+            <button type="button" onClick={() => setPendingLargeExport(null)} className="btn h-11">{t.cancel}</button>
+            <button
+              type="button"
+              onClick={() => {
+                const target = pendingLargeExport.format;
+                setPendingLargeExport(null);
+                void handleExport(target, 'cached-only');
+              }}
+              className="btn h-11"
+            >
+              {t.exportLargeLlmConfirmCachedOnly}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const target = pendingLargeExport.format;
+                setPendingLargeExport(null);
+                void handleExport(target, 'translate-missing');
+              }}
+              className="btn btn-ink h-11"
+            >
+              {t.exportLargeLlmConfirmContinue}
+            </button>
+          </>
+        )}
+      >
+        <p className="text-sm leading-relaxed text-[var(--label-2)]">
+          {pendingLargeExport ? fillTemplate(t.exportLargeLlmConfirmBody, { missing: pendingLargeExport.missing, engine: readingTools.engineLabel }) : ''}
+        </p>
+      </Modal>
 
       {/* Import preview / password / failure sheet (single-book preview and batch anomalies) */}
       <ImportPreviewModal

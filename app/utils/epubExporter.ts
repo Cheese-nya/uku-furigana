@@ -14,6 +14,8 @@ export interface EpubExportOptions {
   baseFontSize?: number;
   rubyFontSize?: number;
   lineSpacing?: number;
+  translations?: readonly (string | undefined)[];
+  translationLang?: string;
 }
 
 function escapeXml(value: string): string {
@@ -40,7 +42,7 @@ function chapterFileName(index: number): string {
   return `chapter-${String(index + 1).padStart(3, '0')}.xhtml`;
 }
 
-function renderLineHtml(line: ScriptLine): string {
+function renderLineHtml(line: ScriptLine, translation?: string, translationLang?: string): string {
   const parts: string[] = [];
 
   if (line.speaker) {
@@ -56,12 +58,26 @@ function renderLineHtml(line: ScriptLine): string {
     }
   }
 
-  return parts.length > 0 ? `<p>${parts.join('')}</p>` : '<p>&#160;</p>';
+  if (parts.length === 0) return '<p>&#160;</p>';
+  const trans = translation ? translation.replace(/\r\n?/g, '\n').trim() : '';
+  if (!trans) return `<p>${parts.join('')}</p>`;
+
+  const langAttr = translationLang
+    ? ` xml:lang="${escapeXml(translationLang)}" lang="${escapeXml(translationLang)}"`
+    : '';
+  return `<div class="bilingual"><p class="line">${parts.join('')}</p><p class="translation"${langAttr}>${escapeXml(trans)}</p></div>`;
 }
 
-function buildChapterXhtml(chapter: BookChapter, chapterLines: ScriptLine[]): string {
+function buildChapterXhtml(
+  chapter: BookChapter,
+  chapterLines: ScriptLine[],
+  chapterTranslations?: readonly (string | undefined)[],
+  translationLang?: string,
+): string {
   const safeTitle = escapeXml(chapter.title);
-  const paragraphs = chapterLines.map(renderLineHtml).join('\n    ');
+  const paragraphs = chapterLines
+    .map((line, index) => renderLineHtml(line, chapterTranslations?.[index], translationLang))
+    .join('\n    ');
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
@@ -144,6 +160,20 @@ rt {
   ruby-align: center;
   text-align: center;
 }
+.bilingual {
+  break-inside: avoid;
+  page-break-inside: avoid;
+  margin: 0 0 0.75em 0;
+}
+.bilingual .line {
+  margin: 0 0 0.15em 0;
+}
+.translation {
+  margin: 0;
+  font-size: ${Math.max(11, Math.round(baseFontSize * 0.88))}px;
+  line-height: 1.5;
+  color: #555555;
+}
 `;
   zip.file('OEBPS/style.css', styleCss);
 
@@ -160,8 +190,12 @@ rt {
     const itemId = `chapter-${String(idx + 1).padStart(3, '0')}`;
     const chapterLines =
       lines.length > 0 ? lines.slice(chapter.startLine, chapter.endLine + 1) : [];
+    const chapterTranslations =
+      lines.length > 0 && opts?.translations
+        ? opts.translations.slice(chapter.startLine, chapter.endLine + 1)
+        : undefined;
 
-    const xhtml = buildChapterXhtml(chapter, chapterLines);
+    const xhtml = buildChapterXhtml(chapter, chapterLines, chapterTranslations, opts?.translationLang);
     zip.file(`OEBPS/${fileName}`, xhtml);
 
     manifestItems.push(

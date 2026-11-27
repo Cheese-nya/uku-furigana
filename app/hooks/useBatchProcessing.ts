@@ -18,6 +18,8 @@ import { withoutImageLines } from '../utils/bookAssets';
 import { buildBatchSaveOutput, pickBatchDirectory, saveBlob, saveBlobToDirectory, type BatchSaveMode } from '../utils/fileSave';
 import type { BatchDoneResults } from '../components/BatchDoneModal';
 import type { Translations } from '../utils/i18n';
+import type { TranslationSettings } from '../utils/translation';
+import { resolveExportTranslations, type ExportTranslationPrefs } from '../utils/exportTranslations';
 
 type Setter<T> = Dispatch<SetStateAction<T>>;
 
@@ -34,15 +36,23 @@ export interface BatchProcessingOptions {
   fontSize: number;
   rubyFontSize: number;
   lineSpacing: number;
-  generateTextContent: (lines: ScriptLine[], format: 'srt' | 'txt') => string;
+  generateTextContent: (
+    lines: ScriptLine[],
+    format: 'srt' | 'txt',
+    preserveSrtCues?: boolean,
+    translations?: readonly (string | undefined)[],
+  ) => string;
   isKuromojiLoading: boolean;
   correctionsReady: boolean;
+  exportTranslationPrefs: ExportTranslationPrefs;
+  translationSettings: TranslationSettings;
 }
 
 /** Batch page queue: file intake, sequential annotate + export, optional library save and the completion summary. */
 export function useBatchProcessing({
   t, database, setDatabase, libraryDbRef, setLibraryDb, annotate, rubyType, glossaryEntries,
   fontSize, rubyFontSize, lineSpacing, generateTextContent, isKuromojiLoading, correctionsReady,
+  exportTranslationPrefs, translationSettings,
 }: BatchProcessingOptions) {
   // Batch File Processing State
   const [batchFiles, setBatchFiles] = useState<BatchFileItem[]>([]);
@@ -229,16 +239,37 @@ export function useBatchProcessing({
           sourceOverrides: importedOverrides, overrides: batchDatabase.scripts[resolved.scriptId].overrides,
           learned: batchDatabase.scripts[resolved.scriptId]?.learned || [] }, controller.signal);
 
+        let translations: (string | undefined)[] | undefined;
+        if (exportTranslationPrefs.enabled) {
+          const cacheBookId = item.bookId || resolved.scriptId;
+          const res = await resolveExportTranslations(parsedLines, {
+            bookId: cacheBookId,
+            missingPolicy: exportTranslationPrefs.missingPolicy,
+            settings: translationSettings,
+            glossary: glossaryEntries.map(g => ({ surface: g.surface, reading: g.reading })),
+            signal: controller.signal,
+            onProgress: ({ done, total }) => {
+              const pct = 30 + Math.round((done / Math.max(1, total)) * 45);
+              setBatchFiles(prev =>
+                prev.map(f => f.id === item.id ? { ...f, progress: pct } : f)
+              );
+            },
+          });
+          translations = res.translations;
+        }
+
         // Generate output based on target format
         let outputBlob: Blob;
         if (format === 'docx') {
-          outputBlob = await buildDocxBlob(parsedLines, { title: itemTitle, baseFontSize: fontSize, rubyFontSize, lineSpacing });
+          outputBlob = await buildDocxBlob(parsedLines, { title: itemTitle, baseFontSize: fontSize, rubyFontSize, lineSpacing, translations });
         } else if (format === 'epub') {
-          outputBlob = await buildEpubBlob(parsedLines, { title: itemTitle, baseFontSize: fontSize, rubyFontSize, lineSpacing });
+          outputBlob = await buildEpubBlob(parsedLines, { title: itemTitle, baseFontSize: fontSize, rubyFontSize, lineSpacing, translations, translationLang: translationSettings.target });
         } else if (format === 'pdf') {
-          outputBlob = await buildPdfBlob(parsedLines, { title: itemTitle, baseFontSize: fontSize, rubyFontSize, lineSpacing, layout: pdfLayout });
+          outputBlob = await buildPdfBlob(parsedLines, { title: itemTitle, baseFontSize: fontSize, rubyFontSize, lineSpacing, layout: pdfLayout, translations });
         } else {
-          const textOutput = format === 'srt' ? generateSRT(parsedLines, importedCues) : generateTextContent(parsedLines, 'txt');
+          const textOutput = format === 'srt'
+            ? generateSRT(parsedLines, importedCues, translations)
+            : generateTextContent(parsedLines, 'txt', true, translations);
           const mime = format === 'srt' ? 'application/x-subrip' : 'text/plain';
           outputBlob = new Blob([textOutput], { type: mime });
         }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { loadTypescript } from './loadTypescript.mjs';
-const { parseSRT, parseVTT, generateSRT } = loadTypescript('../app/utils/srt.ts');
+const { parseSRT, parseVTT, generateSRT, generateTXT } = loadTypescript('../app/utils/srt.ts');
 const { applyRubyOverrides } = loadTypescript('../app/utils/rubyOverrides.ts');
 const { annotateLine } = loadTypescript('../app/utils/furigana.ts');
 
@@ -46,4 +46,26 @@ test('parseSRT accepts 1-digit hours and dot milliseconds; parseVTT ignores NOTE
   assert.deepEqual(parsed.cues, [
     { index: '1', start: '00:00:02,000', end: '00:00:04,500', lines: ['"台詞" \'テスト\''] },
   ]);
+});
+
+test('generateTXT and generateSRT append optional translations cleanly and stay unchanged when omitted', () => {
+  const lines = [annotateLine('学校へ'), annotateLine('また明日')];
+  assert.equal(generateTXT(lines), '学校(がっこう)へ\n\nまた明日(あした)');
+  assert.equal(
+    generateTXT(lines, ['去学校', undefined]),
+    '学校(がっこう)へ\n去学校\n\nまた明日(あした)',
+  );
+
+  const cues = [
+    { index: '1', start: '00:00:01,000', end: '00:00:03,000', lines: ['学校へ', 'また明日'] },
+  ];
+  const cueSrt = generateSRT(lines, cues, ['去学校', '明天见']);
+  assert.equal(
+    cueSrt,
+    '1\n00:00:01,000 --> 00:00:03,000\n学校(がっこう)へ\nまた明日(あした)\n去学校\n明天见\n',
+  );
+
+  const autoSrt = generateSRT(lines, undefined, ['去学校', undefined]);
+  assert.match(autoSrt, /00:00:00,000 --> 00:00:03,000\n学校\(がっこう\)へ\n去学校/);
+  assert.match(autoSrt, /00:00:04,000 --> 00:00:07,000\nまた明日\(あした\)\n$/);
 });
