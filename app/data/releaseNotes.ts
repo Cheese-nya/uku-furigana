@@ -12,6 +12,22 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '1.9.0',
+    date: '2026-11-28',
+    items: {
+      'zh-CN': [
+        '完全离线本地日语 OCR：全平台内置完整 NDLOCR-Lite 模型（iOS / macOS 优先系统 Apple Vision），支持竖排与横排自动判别、XY-Cut 栏序重建及原文振假名自动过滤。',
+        '扫描 PDF 与多图成书：扫描版 PDF 与混合版 PDF 自动触发本地识别，支持工作台粘贴截图、拖拽/选择单张或多张图片按自然页序合并成书并保留封面。',
+        '导出封面保留：EPUB、PDF 与 Word (.docx) 导出完整保留原书封面，可与逐句翻译对照导出同时生效。',
+      ],
+      en: [
+        'Offline Local Japanese OCR: Built-in complete NDLOCR-Lite models across platforms (preferring native Apple Vision on iOS/macOS) with vertical/horizontal layout detection, XY-Cut reading order, and source furigana filtering.',
+        'Scanned PDF & Multi-Image Import: Automatically OCRs scanned or hybrid PDFs, supports pasting screenshots and dropping images in Workbench, and groups numbered image sets into a book.',
+        'Export Cover Preservation: Keeps original book covers across EPUB, PDF, and DOCX exports alongside bilingual line-by-line translations.',
+      ],
+    },
+  },
+  {
     version: '1.8.8',
     date: '2026-11-27',
     items: {

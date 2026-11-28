@@ -1,3 +1,23 @@
+# 🎏 浮く Uku Furigana V1.9.0-rc.1 发布说明 (Release Notes)
+
+> **版本标签 (Tag)**: `v1.9.0-rc.1`
+> **发布标题 (Title)**: `浮く Uku Furigana V1.9.0-rc.1 — 本地离线日语 OCR 识别与导出封面保留（测试草稿）`
+> **发布日期 (Date)**: 2026-11-28
+
+## ✨ 改进与修复 (Improvements & Fixes)
+- **完全离线日语本地 OCR**：内置完整 NDLOCR-Lite 四模型（`onnxruntime-web/wasm`），iOS / macOS 支持优先调用系统 Apple Vision 加速；Web 端首次识别自动下载并加密校验缓存在本机，桌面与移动端开箱离线可用。
+- **竖排 / 横排识别与原文注音过滤**：支持竖排书页、横排图文混排、XY-Cut 栏序重建，以及语义与几何双层振假名过滤，导入后交由本应用统一精确标注读音。
+- **图片、扫描版与混合版 PDF 导入**：工作台支持直接选图、粘贴截图或拖拽图片/多图导入（带实时进度与取消）；书库与批处理支持扫描版 PDF 全量 OCR、混合 PDF 稀疏页定向 OCR，以及多图按自然页码顺序合并成书并自动提取封面。
+- **导出保留原书封面**：EPUB、PDF 与 Word (.docx) 在批处理及工作台导出时完整保留原书封面（含双语逐句翻译导出场景）。
+
+## English
+- **Fully Offline Local Japanese OCR**: Bundles the complete NDLOCR-Lite 4-model pipeline (`onnxruntime-web/wasm`), with native Apple Vision (`VNRecognizeTextRequest`) preference on iOS and macOS; web builds lazily cache and SHA-256 verify models in IndexedDB while desktop/mobile builds work 100% offline out of the box.
+- **Tategaki/Horizontal Layout & Source Furigana Filtering**: Reconstructs vertical and horizontal reading order via XY-Cut and filters printed ruby annotations using semantic + geometric checks so Uku Furigana re-annotates cleanly.
+- **Image, Scanned PDF & Hybrid PDF Import**: Supports picking, pasting screenshots, or dropping single/multiple images in Workbench with live progress & cancellation; imports scanned PDFs, OCRs sparse scanned pages in hybrid PDFs, and merges naturally ordered image sets into a single library book with a Page-1 cover.
+- **Export Cover Preservation**: Preserves book covers across EPUB (`OEBPS/cover.xhtml` & `cover-image`), PDF (proportional cover page), and Word `.docx` exports, alongside `v1.8.8` bilingual line-by-line translation exports.
+
+---
+
 # 🎏 浮く Uku Furigana V1.8.8 发布说明 (Release Notes)
 
 > **版本标签 (Tag)**: `v1.8.8`
