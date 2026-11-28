@@ -8,6 +8,7 @@ import {
   Document,
   Paragraph,
   TextRun,
+  ImageRun,
   AlignmentType,
   HeadingLevel,
   Packer,
@@ -16,6 +17,7 @@ import {
 } from 'docx';
 import type { ScriptLine } from './furigana';
 import { cleanScriptTitle, EXPORT_TITLE_BOOKMARK } from './docxImporter';
+import { readImageDimensions, resolveExportCover, type ExportCoverInput } from './exportCover';
 import { sanitizeText } from './textSanitize';
 
 class ElementComponent extends XmlComponent {
@@ -73,6 +75,7 @@ export interface DocxExportOptions {
   rubyFontSize?: number; // in px (e.g. 10)
   lineSpacing?: number;  // e.g. 1.8
   translations?: readonly (string | undefined)[];
+  cover?: ExportCoverInput;
 }
 
 /**
@@ -90,10 +93,40 @@ export async function buildDocxBlob(lines: ScriptLine[], options?: DocxExportOpt
 
   const docTitle = sanitizeText(cleanScriptTitle(options?.title || '')) || '日语假名配音台本';
 
+  let hasCover = false;
+  const resolvedCover = await resolveExportCover(options?.cover);
+  if (resolvedCover) {
+    try {
+      const dims = (resolvedCover.width && resolvedCover.height)
+        ? { width: resolvedCover.width, height: resolvedCover.height }
+        : readImageDimensions(resolvedCover.data, resolvedCover.mime) ?? { width: 420, height: 594 };
+      const scale = Math.min(1, 450 / dims.width, 620 / dims.height);
+      const width = Math.max(1, Math.round(dims.width * scale));
+      const height = Math.max(1, Math.round(dims.height * scale));
+      children.push(
+        new Paragraph({
+          alignment: AlignmentType.CENTER,
+          children: [
+            new ImageRun({
+              type: resolvedCover.mime === 'image/png' ? 'png' : 'jpg',
+              data: resolvedCover.data,
+              transformation: { width, height },
+            }),
+          ],
+          spacing: { after: 200 },
+        })
+      );
+      hasCover = true;
+    } catch {
+      // Invalid cover image bytes must not break DOCX export.
+    }
+  }
+
   // Title only — no exporter subtitle or horizontal rule. The bookmark lets
   // importDocx drop the title instead of turning it into a script line.
   children.push(
     new Paragraph({
+      pageBreakBefore: hasCover,
       children: [
         new Bookmark({
           id: EXPORT_TITLE_BOOKMARK,

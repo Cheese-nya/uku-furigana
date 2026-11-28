@@ -143,12 +143,13 @@ class FuriganaBridgeViewController: CAPBridgeViewController {
             WKUserScript(source: earlyThemeSyncScript, injectionTime: .atDocumentStart, forMainFrameOnly: true)
         )
 
-        // Pixiv 导入 needs a native transport: the packaged bundle has no /api routes and
-        // cross-origin fetch to pixiv.net is blocked (Android does this in MainActivity).
+        // Pixiv 导入 and local Apple Vision OCR both need native bridges on the local WKWebView.
         PixivNativeBridge.register(on: configuration)
+        OcrNativeBridge.register(on: configuration)
 
         let webView = super.webView(with: frame, configuration: configuration)
         PixivNativeBridge.attach(webView)
+        OcrNativeBridge.attach(webView)
         webView.isOpaque = true
         webView.backgroundColor = currentCanvasColor
         webView.scrollView.backgroundColor = currentCanvasColor

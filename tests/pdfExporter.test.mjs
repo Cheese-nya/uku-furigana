@@ -8,6 +8,7 @@ import { loadTypescript } from './loadTypescript.mjs';
 
 const { buildPdfBlob } = loadTypescript('../app/utils/pdfExporter.ts');
 const { subsetFont } = loadTypescript('../app/utils/fontSubset.ts');
+const TINY_PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 
 const root = new URL('../', import.meta.url).pathname;
 
@@ -155,5 +156,22 @@ test('buildPdfBlob embeds NotoSansSC lazily for horizontal and vertical bilingua
     const xs = [...new Set(textMoves.map(m => Math.round(m.x * 10) / 10))].sort((a, b) => a - b);
     // Translation auxiliary column sits strictly to the left of the Japanese base text column.
     assert.ok(xs.length >= 3, `expected at least heading, base+ruby, and translation columns, got ${xs.join(', ')}`);
+  });
+});
+
+test('buildPdfBlob prepends a dedicated cover page when given a valid cover and degrades cleanly on corrupt cover bytes', async () => {
+  await withFontFetch(async () => {
+    const lines = [
+      { id: '1', rawText: '本文', cleanText: '本文', tokens: [{ surface: '本文', ruby: 'ほんぶん', hasKanji: true }] },
+    ];
+    const withoutCover = await PDFDocument.load(await (await buildPdfBlob(lines, { title: 'Test' })).arrayBuffer());
+    const withCover = await PDFDocument.load(await (await buildPdfBlob(lines, { title: 'Test', cover: TINY_PNG_DATA_URL })).arrayBuffer());
+    assert.equal(withCover.getPageCount(), withoutCover.getPageCount() + 1);
+
+    const corruptCover = await PDFDocument.load(await (await buildPdfBlob(lines, {
+      title: 'Test',
+      cover: { data: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0]), mime: 'image/png' },
+    })).arrayBuffer());
+    assert.equal(corruptCover.getPageCount(), withoutCover.getPageCount());
   });
 });

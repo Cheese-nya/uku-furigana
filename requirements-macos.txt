@@ -1,0 +1,2 @@
+pyobjc-framework-Vision==13.1
+pyobjc-framework-Quartz==13.1

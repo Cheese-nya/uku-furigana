@@ -62,6 +62,11 @@ UKU_APP_VERSION="${VERSION}" "$PYTHON_BIN" -m PyInstaller \
   --onedir \
   --windowed \
   --collect-all webview \
+  --hidden-import=Vision \
+  --hidden-import=Quartz \
+  --hidden-import=Foundation \
+  --collect-submodules=Vision \
+  --collect-submodules=Quartz \
   --name "$APP_NAME" \
   --icon "$ICNS_PATH" \
   --osx-bundle-identifier "$BUNDLE_ID" \

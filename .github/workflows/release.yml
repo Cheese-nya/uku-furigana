@@ -64,7 +64,7 @@ jobs:
 
       - run: npm ci
 
-      - run: pip install -r requirements-desktop.txt
+      - run: pip install -r requirements-desktop.txt -r requirements-macos.txt
 
       - name: Build macOS DMG (${{ matrix.arch }})
         env:
@@ -173,7 +173,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          EXTRA_FLAGS="--draft"
+          case "${GITHUB_REF_NAME}" in
+            *-*) EXTRA_FLAGS="--draft --prerelease" ;;
+          esac
           gh release create "${GITHUB_REF_NAME}" dist/* \
             --title "浮く Uku Furigana ${GITHUB_REF_NAME}" \
             --notes-file notes.md \
-            --verify-tag
+            --verify-tag \
+            ${EXTRA_FLAGS}

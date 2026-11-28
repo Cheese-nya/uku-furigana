@@ -206,7 +206,7 @@ export function LibraryPanel({
         ref={fileRef}
         type="file"
         multiple
-        accept=".txt,.md,.srt,.vtt,.docx,.epub,.pdf,application/epub+zip,application/pdf,text/plain,text/markdown,application/x-subrip,text/vtt,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        accept=".txt,.md,.srt,.vtt,.docx,.epub,.pdf,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff,.avif,application/epub+zip,application/pdf,text/plain,text/markdown,application/x-subrip,text/vtt,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/*"
         className="hidden"
         onChange={event => {
           if (event.target.files?.length) void onImportFiles(event.target.files, activeFolder?.folderId ?? null);
@@ -711,8 +711,8 @@ function BookCover({ book, t, categoryText, lifted, onOpen, onMenu }: {
       <div className="mt-0.5 flex items-center gap-1 text-xs text-[var(--label-2)]" title={book.format.toUpperCase()}>
         {book.favorite && <IconStarFill size={12} className="shrink-0 text-[var(--review)]" />}
         <span className="truncate">
-          {categoryText} · {book.format === 'epub' || book.format === 'pdf'
-            ? `${book.format.toUpperCase()} · ${book.chapters.length > 1 ? fill(t.importChapters, { count: book.chapters.length }) : fill(t.libraryBookLines, { count: lines })}`
+          {categoryText} · {book.format === 'epub' || book.format === 'pdf' || book.format === 'image'
+            ? `${(book.format === 'image' ? 'IMG' : book.format.toUpperCase())} · ${book.chapters.length > 1 ? fill(t.importChapters, { count: book.chapters.length }) : fill(t.libraryBookLines, { count: lines })}`
             : fill(t.libraryBookLines, { count: lines })} · {started ? fill(t.libraryBookProgress, { percent }) : t.libraryUnread}
         </span>
       </div>

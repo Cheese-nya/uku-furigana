@@ -6,7 +6,7 @@ import { validateRubyOverrides } from './rubyOverrides';
 import type { SrtCue } from './srt';
 
 export type BookCategory = 'script' | 'novel' | 'subtitle' | 'other';
-export type BookFormat = 'txt' | 'srt' | 'docx' | 'epub' | 'pdf';
+export type BookFormat = 'txt' | 'srt' | 'docx' | 'epub' | 'pdf' | 'image';
 export type BookCoverTheme = 'indigo' | 'emerald' | 'amber' | 'rose' | 'slate';
 
 /**
@@ -111,7 +111,7 @@ export interface LibraryDatabase {
 export type LibraryDatabaseV1 = LibraryDatabase;
 
 const CATEGORIES: readonly BookCategory[] = ['script', 'novel', 'subtitle', 'other'];
-const FORMATS: readonly BookFormat[] = ['txt', 'srt', 'docx', 'epub', 'pdf'];
+const FORMATS: readonly BookFormat[] = ['txt', 'srt', 'docx', 'epub', 'pdf', 'image'];
 const THEMES: readonly BookCoverTheme[] = ['indigo', 'emerald', 'amber', 'rose', 'slate'];
 const VALID_THEMES = THEMES;
 const FINGERPRINT = /^sha256:[a-f0-9]{64}$/;
@@ -140,9 +140,9 @@ export function extractChapters(text: string, fallbackTitle = '全文'): BookCha
   }];
 }
 
-/** EPUB and PDF bring their own table of contents; every other format stays one piece. */
+/** EPUB, PDF, and multi-image books bring their own table of contents; every other format stays one piece. */
 function hasOwnChapters(format: BookFormat): boolean {
-  return format === 'epub' || format === 'pdf';
+  return format === 'epub' || format === 'pdf' || format === 'image';
 }
 
 export interface ChapterStart {

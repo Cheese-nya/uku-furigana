@@ -95,6 +95,7 @@ EOF
 
 echo "==> Building fresh Next.js static export (out/)..."
 rm -rf "$ROOT_DIR/out"
+node "$ROOT_DIR/scripts/vendor-assets.mjs"
 API_BACKUP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/furigana-apk-api-backup.XXXXXX")"
 mv "$ROOT_DIR/app/api" "$API_BACKUP_DIR/api"
 restore_api() {
@@ -128,7 +129,7 @@ echo "==> [3/7] Linking APK and generating R.java with aapt2..."
   ${ANDROID_DEBUGGABLE:+--debug-mode} \
   --java "$BUILD_DIR/gen" \
   -A "$ANDROID_DIR/assets" \
-  -0 .bin -0 .gz -0 .dat -0 .wasm -0 .woff2 -0 .mp3 -0 .ogg \
+  -0 .bin -0 .gz -0 .dat -0 .wasm -0 .onnx -0 .woff2 -0 .mp3 -0 .ogg \
   -o "$BUILD_DIR/unaligned.apk" \
   "$BUILD_DIR/compiled_res/res.zip"
 

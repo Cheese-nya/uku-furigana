@@ -5,6 +5,8 @@ import { DOMParser } from '@xmldom/xmldom';
 import { loadTypescript } from './loadTypescript.mjs';
 
 const { buildEpubBlob } = loadTypescript('../app/utils/epubExporter.ts');
+const { importEpub } = loadTypescript('../app/utils/epubImporter.ts');
+const TINY_PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 
 function parseStrictXml(source, label) {
   const doc = new DOMParser().parseFromString(source, 'application/xml');
@@ -102,4 +104,41 @@ test('buildEpubBlob emits well-formed bilingual markup and translation styles wh
   assert.match(chXml, /<div class="bilingual"><p class="line">[\s\S]*?<p class="translation" xml:lang="zh-Hans" lang="zh-Hans">我去 &amp; 测试 &lt;OK&gt;<\/p><\/div>/);
   assert.match(chXml, /<p>&#160;<\/p>/);
   assert.match(chXml, /<p><ruby>未来<rt>みらい<\/rt><\/ruby><\/p>/);
+});
+
+test('buildEpubBlob preserves cover image, author, and round-trips through importEpub cleanly', async () => {
+  const lines = [
+    {
+      id: '1',
+      rawText: '吾輩は猫である',
+      cleanText: '吾輩は猫である',
+      tokens: [{ surface: '吾輩', ruby: 'わがはい', hasKanji: true }, { surface: 'は猫である', hasKanji: false }],
+    },
+  ];
+  const blob = await buildEpubBlob(lines, {
+    title: '猫の本',
+    author: '夏目漱石',
+    cover: TINY_PNG_DATA_URL,
+  });
+  const bytes = await blob.arrayBuffer();
+  const zip = await JSZip.loadAsync(bytes);
+  const opfXml = await zip.file('OEBPS/content.opf').async('string');
+  assert.ok(zip.file('OEBPS/images/cover.png'));
+  assert.ok(zip.file('OEBPS/cover.xhtml'));
+  assert.match(opfXml, /properties="cover-image"/);
+  assert.match(opfXml, /<meta name="cover" content="cover-image"\/>/);
+  assert.match(opfXml, /<itemref idref="cover"\/>/);
+  assert.match(opfXml, /<dc:creator>夏目漱石<\/dc:creator>/);
+
+  const originalDomParser = globalThis.DOMParser;
+  globalThis.DOMParser = DOMParser;
+  try {
+    const imported = await importEpub(bytes, 'cat.epub');
+    assert.ok(imported.cover, 'imported EPUB should recover exported cover');
+    assert.equal(imported.cover.mime, 'image/png');
+    assert.equal(imported.author, '夏目漱石');
+    assert.match(imported.text, /吾輩は猫である/);
+  } finally {
+    globalThis.DOMParser = originalDomParser;
+  }
 });

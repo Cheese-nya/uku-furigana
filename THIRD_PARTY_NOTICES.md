@@ -159,3 +159,33 @@ writing, such person, organization or entity, will also be exempted
 from and not be held liable to the user for any such damages as noted
 above as far as the program is concerned.
 ```
+
+## NDLOCR-Lite (`ndl-lab/ndlocr-lite`)
+
+本应用内置的本地日语 OCR 布局检测与行文本识别模型来自国立国会図書館（National Diet Library, Japan）发布的 [NDLOCR-Lite](https://github.com/ndl-lab/ndlocr-lite)，依据 **Creative Commons Attribution 4.0 International (CC BY 4.0)** 许可使用。
+
+```
+NDLOCR-Lite — National Diet Library (国立国会図書館)
+Copyright (c) National Diet Library, Japan
+Licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
+Source: https://github.com/ndl-lab/ndlocr-lite
+Included models & config:
+  - deim-s-1024x1024-261124.onnx
+  - parseq-ndl-24x256-30-tiny-499epoch-261124.onnx
+  - parseq-ndl-24x384-50-tiny-278epoch-261124.onnx
+  - parseq-ndl-24x768-100-tiny-153epoch-261124.onnx
+  - ndl.yaml / NDLmoji.yaml (compiled to ndl-config.json)
+```
+
+## ONNX Runtime Web (`onnxruntime-web`)
+
+用于在 Web Worker 中通过 WebAssembly 执行本地 OCR 模型推理，依据 MIT 许可证分发：
+
+```
+Copyright (c) Microsoft Corporation. All rights reserved.
+Licensed under the MIT License.
+```
+
+## PyObjC (`pyobjc-framework-Vision`, `pyobjc-framework-Quartz`)
+
+macOS 桌面端可选调用系统 Vision 文字识别框架，依据 MIT 许可证分发。

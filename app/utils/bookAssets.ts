@@ -1,5 +1,6 @@
 import { ImportError } from './importErrors';
 import type { PdfLayout } from './libraryDatabase';
+import type { OcrPageResult } from './ocrTypes';
 import type { RubyOverride } from './rubyOverrides';
 
 export interface ImportedBookImage {
@@ -26,7 +27,10 @@ export type ImportWarningCode =
   | 'missing-cover'
   | 'images-skipped'
   | 'low-text'
-  | 'unknown-image-format';
+  | 'unknown-image-format'
+  | 'ocr-recognized'
+  | 'ocr-low-confidence'
+  | 'ocr-pages-failed';
 
 export interface ImportWarning {
   code: ImportWarningCode;
@@ -67,7 +71,7 @@ export class ScannedPdfError extends ImportError {
   }
 }
 
-export type ImportStage = 'reading' | 'text' | 'images' | 'chapters' | 'cover' | 'done';
+export type ImportStage = 'reading' | 'text' | 'images' | 'ocr' | 'chapters' | 'cover' | 'done';
 
 export interface ImportProgress {
   stage: ImportStage;
@@ -75,11 +79,22 @@ export interface ImportProgress {
   total?: number;
 }
 
+export interface OcrPageInput {
+  pageIndex: number;
+  width: number;
+  height: number;
+  canvas?: HTMLCanvasElement;
+}
+
 export interface ImportOptions {
   signal?: AbortSignal;
   onProgress?: (progress: ImportProgress) => void;
   /** Password for an encrypted PDF; omit on the first attempt so pdf.js reports that one is needed. */
   password?: string;
+  /** Control local OCR on scanned/mixed PDFs (`auto` by default). */
+  ocr?: 'auto' | 'off' | 'force';
+  /** Test seam: run OCR on a page without spawning a browser worker or native bridge. */
+  recognizePage?: (page: OcrPageInput) => Promise<OcrPageResult>;
 }
 
 /** A content line that stands for an EPUB illustration: U+FFFC (object replacement) + the image id. */

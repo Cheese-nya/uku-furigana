@@ -116,7 +116,7 @@ export function BatchProcessingPanel({
         ref={fileInputRef}
         type="file"
         multiple
-        accept=".txt,.md,.srt,.vtt,.docx,.epub,.pdf,text/plain,text/markdown,application/x-subrip,text/vtt,application/pdf,application/epub+zip,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        accept=".txt,.md,.srt,.vtt,.docx,.epub,.pdf,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff,.avif,text/plain,text/markdown,application/x-subrip,text/vtt,application/pdf,application/epub+zip,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/*"
         className="hidden"
         onChange={event => { handleFileSelect(event); event.target.value = ''; }}
       />

@@ -6,7 +6,8 @@ import type { AppTab } from '../components/MobileNavBar';
 import type { EditingTokenState } from '../components/RubyCorrectionModal';
 import type { SrtCue } from '../utils/srt';
 import { withLfLineKeys } from '../utils/inlineRuby';
-import { parseBookFile } from '../utils/bookImport';
+import { detectBookFormat, parseBookFile, registerGroupedImageFiles } from '../utils/bookImport';
+import { sortImageFilesNaturally } from '../utils/imageImporter';
 import { buildImportPreview, importEditToUpsertInput, importStageText } from '../utils/importPreview';
 import { useImportQueue, type ImportCommitArgs, type ImportQueueSummary } from './useImportQueue';
 import { logEvent } from '../utils/appLog';
@@ -327,6 +328,17 @@ export function useLibraryController({
   const importLibraryFiles = async (files: FileList, folderId?: string | null) => {
     const list = Array.from(files);
     if (!list.length || importQueue.isRunning) return;
+    if (list.length > 1) {
+      const formats = await Promise.all(list.map(file => detectBookFormat(file)));
+      if (formats.every(format => format === 'image')) {
+        const sorted = sortImageFilesNaturally(list);
+        const leadFile = sorted[0];
+        registerGroupedImageFiles(leadFile, sorted);
+        setImportToast({ kind: 'progress', title: fill(t.importingFile, { name: `${leadFile.name} (+${sorted.length - 1})` }) });
+        importQueue.enqueue([leadFile], folderId ?? null);
+        return;
+      }
+    }
     if (list.length === 1) {
       setImportToast({ kind: 'progress', title: fill(t.importingFile, { name: list[0].name }) });
     }

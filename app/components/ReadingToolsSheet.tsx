@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Modal } from './Modal';
 import { LiquidSelector } from './glass/LiquidSelector';
 import { IconDictionary, IconImport, IconTrash } from './glass/icons';
@@ -8,6 +8,10 @@ import type { Translations } from '../utils/i18n';
 import type { DictionaryInfo } from '../utils/readingTools';
 import type { TranslationSettings } from '../utils/translation';
 import { llmNeedsApiKey } from '../utils/translation';
+import { getOcrModelStore, type OcrModelCacheStatus } from '../utils/ocrModelStore';
+import { isAppleVisionAvailable } from '../utils/ocrService';
+import { loadOcrSettings, saveOcrSettings } from '../utils/ocrSettings';
+import type { OcrEnginePreference, OcrSettings } from '../utils/ocrTypes';
 import { LlmFields } from './LlmFields';
 
 export interface ReadingToolsSheetProps {
@@ -58,6 +62,31 @@ export function ReadingToolsSheet({
   const nameFileRef = useRef<HTMLInputElement | null>(null);
   const [order, setOrder] = useState<DictionaryInfo[]>(dictionaries);
   const drag = useRef<{ id: string; y: number } | null>(null);
+  const [ocrSettings, setOcrSettings] = useState<OcrSettings>(() => loadOcrSettings());
+  const [appleVisionAvailable, setAppleVisionAvailable] = useState(false);
+  const [ocrCacheStatus, setOcrCacheStatus] = useState<OcrModelCacheStatus | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    let active = true;
+    void isAppleVisionAvailable().then(available => {
+      if (active) setAppleVisionAvailable(available);
+    }).catch(() => {
+      if (active) setAppleVisionAvailable(false);
+    });
+    void getOcrModelStore().getStatus().then(status => {
+      if (active) setOcrCacheStatus(status);
+    }).catch(() => {
+      if (active) setOcrCacheStatus(null);
+    });
+    return () => { active = false; };
+  }, [open]);
+
+  const updateOcr = (patch: Partial<OcrSettings>) => {
+    const next = { ...ocrSettings, ...patch };
+    saveOcrSettings(next);
+    setOcrSettings(next);
+  };
   const listRef = useRef<HTMLDivElement | null>(null);
   const [source, setSource] = useState(dictionaries);
   if (source !== dictionaries) { setSource(dictionaries); setOrder(dictionaries); }
@@ -228,6 +257,74 @@ export function ReadingToolsSheet({
       </div>
       {nameImportError && <p role="alert" className="text-center text-xs text-[var(--danger)]">{nameImportError}</p>}
       {nameImportMessage && <p role="status" className="text-center text-xs text-[var(--ok)]">{nameImportMessage}</p>}
+
+      <Section>{t.toolsOcrSection}</Section>
+      <div className="rounded-[14px] bg-[var(--fill-2)] px-3 py-2.5">
+        {appleVisionAvailable && (
+          <div className="mb-2.5 border-b border-[var(--sep)] pb-2.5">
+            <div className="mb-1.5 text-xs font-medium text-[var(--label-2)]">{t.toolsOcrEngine}</div>
+            <LiquidSelector
+              variant="solid"
+              ariaLabel={t.toolsOcrEngine}
+              value={ocrSettings.engine}
+              onChange={value => updateOcr({ engine: value as OcrEnginePreference })}
+              options={[
+                { value: 'auto', label: t.toolsOcrEngineAuto },
+                { value: 'ndlocr-lite', label: t.toolsOcrEngineNdlocr },
+                { value: 'apple-vision', label: t.toolsOcrEngineAppleVision },
+              ]}
+            />
+          </div>
+        )}
+        <div className="flex min-h-[40px] items-center justify-between gap-2.5">
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium text-[var(--label)]">{t.toolsOcrFilterRuby}</div>
+            <div className="text-xs leading-normal text-[var(--label-3)]">{t.toolsOcrFilterRubyHint}</div>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={ocrSettings.filterRuby}
+            aria-label={t.toolsOcrFilterRuby}
+            className="switch reading-tools-switch shrink-0 origin-right scale-[.85]"
+            onClick={() => updateOcr({ filterRuby: !ocrSettings.filterRuby })}
+          ><i /></button>
+        </div>
+        <div className="mt-2 flex min-h-[40px] items-center justify-between gap-2.5 border-t border-[var(--sep)] pt-2">
+          <div className="min-w-0 flex-1 text-sm font-medium text-[var(--label)]">{t.toolsOcrAutoScannedPdf}</div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={ocrSettings.autoOcrScannedPdf}
+            aria-label={t.toolsOcrAutoScannedPdf}
+            className="switch reading-tools-switch shrink-0 origin-right scale-[.85]"
+            onClick={() => updateOcr({ autoOcrScannedPdf: !ocrSettings.autoOcrScannedPdf })}
+          ><i /></button>
+        </div>
+        {ocrCacheStatus && !ocrCacheStatus.bundled && (
+          <div className="mt-2 flex items-center justify-between gap-2 border-t border-[var(--sep)] pt-2 text-xs text-[var(--label-2)]">
+            <span className="min-w-0 flex-1 truncate">
+              {ocrCacheStatus.cached && ocrCacheStatus.cachedBytes > 0
+                ? fill(t.toolsOcrCacheStatus, { size: Math.max(1, Math.round(ocrCacheStatus.cachedBytes / (1024 * 1024))) })
+                : t.toolsOcrCacheNotDownloaded}
+            </span>
+            {ocrCacheStatus.cached && (
+              <button
+                type="button"
+                className="btn shrink-0 !h-7 !px-2.5 text-xs"
+                onClick={async () => {
+                  await getOcrModelStore().clearCache();
+                  const next = await getOcrModelStore().getStatus();
+                  setOcrCacheStatus(next);
+                }}
+              >
+                {t.toolsOcrClearCache}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
       <div className="mt-4 flex">
         <button type="button" className="btn btn-ink h-11 flex-1 justify-center" onClick={onClose}>{t.toolsDone}</button>
       </div>

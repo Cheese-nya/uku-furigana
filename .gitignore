@@ -39,9 +39,10 @@ __pycache__/
 *.pem
 *.tsbuildinfo
 
-# Dictionary sources (downloaded, see scripts/build-dictionary.mjs)
+# Dictionary and OCR model caches (downloaded by scripts/)
 /tools/dict-src/
-# Copied from node_modules by scripts/vendor-assets.mjs
+/.cache/
+# Copied from node_modules / cache by scripts/vendor-assets.mjs
 /public/vendor/
 /public/uku-pixiv-helper.zip
 /tests/.tmp/

@@ -219,6 +219,9 @@ export function importWarningText(t: Translations, warning: ImportWarning): stri
     case 'images-skipped': return fill(t.importPreviewWarningImagesSkipped, { count: warning.count ?? 0 });
     case 'low-text': return t.importPreviewWarningLowText;
     case 'unknown-image-format': return t.importPreviewWarningUnknownImageFormat;
+    case 'ocr-recognized': return fill(t.importPreviewWarningOcrRecognized, { count: warning.count ?? 0 });
+    case 'ocr-low-confidence': return t.importPreviewWarningOcrLowConfidence;
+    case 'ocr-pages-failed': return fill(t.importPreviewWarningOcrPagesFailed, { count: warning.count ?? 0 });
   }
 }
 
@@ -233,6 +236,7 @@ export function importErrorText(t: Translations, code: ImportErrorCode): string 
     case 'unsupported-format': return t.importPreviewErrorUnsupportedFormat;
     case 'out-of-memory': return t.importPreviewErrorOutOfMemory;
     case 'io-error': return t.importPreviewErrorIo;
+    case 'ocr-failed': return t.importPreviewErrorOcrFailed;
     case 'cancelled': return t.importPreviewErrorCancelled;
     case 'unknown': return t.importPreviewErrorUnknown;
   }
@@ -242,6 +246,7 @@ export function importStageText(t: Translations, stage: string): string {
   switch (stage) {
     case 'reading': return t.importPreviewStageReading;
     case 'text': return t.importPreviewStageText;
+    case 'ocr': return t.importPreviewStageOcr;
     case 'images': return t.importPreviewStageImages;
     case 'chapters': return t.importPreviewStageChapters;
     case 'cover': return t.importPreviewStageCover;

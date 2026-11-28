@@ -7,10 +7,27 @@ import {
   type ImportedBook,
   type ImportedChapter,
   type ImportedBookImage,
+  type OcrPageInput,
 } from './bookAssets';
-import { toImportError, throwIfAborted } from './importErrors';
+import { ImportError, toImportError, throwIfAborted } from './importErrors';
+import {
+  HEADING_PATTERN_RE,
+  PAGE_NUMBER_RE,
+  PARA_END_RE,
+  PARA_START_RE,
+  asciiJoin,
+  bodyGlyphHeight,
+  computeMedian,
+  foldRadicals,
+  glyphLength,
+  runningHeadKey,
+} from './japaneseLayoutText';
 import { installPdfJsCompat } from './pdfjsCompat';
 import type { PdfLayout } from './libraryDatabase';
+import { reconstructOcrDocument } from './ocrLayout';
+import { recognizeCanvas } from './ocrService';
+import { loadOcrSettings } from './ocrSettings';
+import type { OcrPageResult } from './ocrTypes';
 import {
   defaultCoverEncoder,
   extractPageImages,
@@ -94,39 +111,15 @@ export type PdfLoader =
 export interface PdfImportOptions extends ImportOptions {
   /** Test seam: render page 1 as a cover without a DOM canvas. */
   renderCover?: (page: PdfPageLike) => Promise<EncodedImage | null>;
+  /** Test seam: render a PDF page for OCR without a DOM canvas. */
+  renderOcrPage?: (
+    page: PdfPageLike,
+    maxLongSide: number,
+  ) => Promise<{ width: number; height: number; canvas?: HTMLCanvasElement } | null>;
   /** Test seam: encode one pdf.js image object without a DOM canvas. */
   encodeImage?: (image: unknown) => Promise<EncodedImage | null>;
   /** Test seam: pdf.js OPS constants (the browser extractor loads them itself). */
   ops?: PdfImageExtractionOptions['ops'];
-}
-
-const PAGE_NUMBER_RE = /^\s*[-–—―]?\s*[\d０-９]{1,4}\s*[-–—―]?\s*$/u;
-const PARA_START_RE = /^[　「『（]/u;
-const PARA_END_RE = /[。」』！？!?]$/u;
-// ASCII lines wrap after words, sentence punctuation, or a closing bracket; CJK lines join directly.
-// A trailing hyphen is deliberately absent: it is a word split, not a line break to be spaced.
-const ASCII_WORD_END_RE = /[A-Za-z0-9.,!?;:%)}\]"'”’]/;
-const ASCII_WORD_START_RE = /[A-Za-z0-9([{"'“‘]/;
-function asciiJoin(previous: string, next: string): string {
-  return ASCII_WORD_END_RE.test(previous) && ASCII_WORD_START_RE.test(next) ? ' ' : '';
-}
-const HEADING_PATTERN_RE =
-  /^(?:第[0-9０-９一二三四五六七八九十百千]+[章話節篇部]|序章|終章|プロローグ|エピローグ|あとがき|後書き|目次|Chapter\b)/;
-
-// Embedded CJK fonts often map glyphs to Kangxi radicals or compatibility ideographs (⼀ ⾒ ⼥) instead of
-// the unified ideographs (一 見 女); NFKC folds exactly those back, and only those are touched here.
-// The CJK Radicals Supplement (⻑ ⻄ ⻝ …) has no NFKC mapping; this is Unicode's EquivalentUnifiedIdeograph.txt for it.
-const SUPPLEMENT_FROM = Array.from('⺁⺂⺃⺄⺅⺆⺇⺈⺉⺊⺋⺌⺍⺎⺏⺐⺑⺒⺓⺔⺕⺖⺗⺘⺙⺛⺜⺝⺞⺟⺠⺡⺢⺣⺤⺥⺦⺧⺨⺩⺪⺫⺬⺭⺮⺯⺰⺱⺲⺳⺴⺵⺶⺷⺸⺹⺺⺻⺼⺽⺾⺿⻀⻁⻂⻃⻄⻅⻆⻇⻈⻉⻊⻋⻌⻍⻎⻏⻐⻑⻒⻓⻔⻕⻖⻗⻘⻙⻚⻛⻜⻝⻞⻟⻠⻡⻢⻣⻤⻥⻦⻧⻨⻩⻪⻫⻬⻭⻮⻯⻰⻱⻲⻳');
-const SUPPLEMENT_TO = Array.from('厂乛乚乙亻冂𠘨刀刂卜㔾小小兀尣尢𡯂巳幺彑𫜹忄心扌攵旡日月歺母民氵氺灬爫爫丬牛犭王𤴔目示礻𥫗糹纟罓罒㓁冗𦉫羊𦍌𦍋耂肀聿肉𦥑艹艹艹虎衤覀西见角𧢲讠贝𧾷车辶辶辶邑钅長镸长门𨸏阝雨青韦页风飞食𩙿飠饣𩠐马骨鬼鱼鸟卤麦黄黾斉齐歯齿竜龙龜亀龟');
-const VERTICAL_PUNCTUATION_FROM = Array.from('︑︒︓︔︕︖︗︘︙︱︲︵︶︷︸︹︺︻︼︽︾︿﹀﹁﹂﹃﹄﹇﹈');
-const VERTICAL_PUNCTUATION_TO = Array.from('、。：；！？〖〗…—―（）｛｝〔〕【】《》〈〉「」『』［］');
-const SUPPLEMENT = new Map([
-  ...SUPPLEMENT_FROM.map((char, index) => [char, SUPPLEMENT_TO[index]] as const),
-  ...VERTICAL_PUNCTUATION_FROM.map((char, index) => [char, VERTICAL_PUNCTUATION_TO[index]] as const),
-]);
-const RADICALS = /[⺀-⿟豈-﫿︐-︙︰-﹏]/g;
-function foldRadicals(text: string): string {
-  return text.replace(RADICALS, char => SUPPLEMENT.get(char) ?? char.normalize('NFKC'));
 }
 
 function trimAscii(text: string): string {
@@ -201,13 +194,6 @@ interface HeadingLine {
   level: number;
 }
 
-function computeMedian(values: number[]): number {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-}
-
 function roundTenth(value: number): number {
   return Math.round(value * 10) / 10;
 }
@@ -227,18 +213,6 @@ function readPageSize(page: PdfPageLike): { width: number; height: number } | nu
   } catch {
     return null;
   }
-}
-
-/** Text characters in a line, ignoring whitespace. */
-function glyphLength(text: string): number {
-  return Array.from(text.replace(/\s+/g, '')).length;
-}
-
-/** The body size of a page: the median of the upper half, so source ruby (about half the body size) cannot pull it down. */
-function bodyGlyphHeight(heights: number[]): number {
-  const median = computeMedian(heights);
-  if (median <= 0) return median;
-  return computeMedian(heights.filter(height => height >= median)) || median;
 }
 
 /**
@@ -429,11 +403,6 @@ function glyphColumns(lines: VisualLine[], tolerance: number, bodyHeight: number
     });
 }
 
-/** Digits (ASCII or full-width) become `#` so "第 3 章 · 12" and "第 3 章 · 13" share a running-head key. */
-function runningHeadKey(text: string): string {
-  return text.replace(/[\d０-９]+/g, '#').replace(/\s+/g, '');
-}
-
 /**
  * Remove a line repeated in the top/bottom margin of at least three pages (book title, chapter name,
  * folio). Conservative by design: short line, small type, within the outer 6% of the page, and the
@@ -607,6 +576,307 @@ function refineChapterStarts(chapters: ImportedChapter[], lines: string[]): Impo
   return refined;
 }
 
+function isMemoryError(error: unknown): boolean {
+  const message = error instanceof Error ? `${error.name} ${error.message}` : String(error ?? '');
+  return /RangeError|out of memory|memory allocation|Allocation/i.test(message);
+}
+
+async function defaultOcrPageRenderer(
+  page: PdfPageLike,
+  maxLongSide: number,
+): Promise<{ width: number; height: number; canvas?: HTMLCanvasElement } | null> {
+  if (typeof document === 'undefined' || !page.getViewport) return null;
+  const renderable = page as PdfPageLike & {
+    render?: (params: {
+      canvasContext: CanvasRenderingContext2D;
+      viewport: PdfViewportLike;
+      intent?: string;
+    }) => Promise<void> | { promise: Promise<void> };
+  };
+  if (typeof renderable.render !== 'function') return null;
+  const base = page.getViewport({ scale: 1 });
+  const longSide = Math.max(base.width, base.height, 1);
+  const scale = Math.min(2.5, Math.max(1, maxLongSide / longSide));
+  const viewport = page.getViewport({ scale });
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(viewport.width));
+  canvas.height = Math.max(1, Math.round(viewport.height));
+  const context = canvas.getContext('2d');
+  if (!context) return null;
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  const task = renderable.render({ canvasContext: context, viewport, intent: 'print' });
+  await (task && typeof task === 'object' && 'promise' in task ? task.promise : task);
+  return { width: canvas.width, height: canvas.height, canvas };
+}
+
+async function defaultPdfRecognizePage(
+  input: OcrPageInput,
+  signal?: AbortSignal,
+  filterRuby?: boolean,
+): Promise<OcrPageResult> {
+  if (!input.canvas) {
+    throw new ImportError('ocr-failed', 'No canvas available to run OCR on PDF page');
+  }
+  return recognizeCanvas(input.canvas, {
+    signal,
+    filterRuby,
+  });
+}
+
+async function recognizePdfPage(
+  page: PdfPageLike,
+  pageIndex: number,
+  pageSize: { width: number; height: number } | undefined,
+  options: PdfImportOptions,
+  filterRuby: boolean,
+): Promise<OcrPageResult> {
+  const renderer = options.renderOcrPage ?? defaultOcrPageRenderer;
+  const runAtSize = async (maxLongSide: number) => {
+    const rendered = await renderer(page, maxLongSide);
+    const pageInput: OcrPageInput = {
+      canvas: rendered?.canvas,
+      width: rendered?.width ?? Math.round(pageSize?.width ?? 1000),
+      height: rendered?.height ?? Math.round(pageSize?.height ?? 1400),
+      pageIndex,
+    };
+    if (options.recognizePage) {
+      return options.recognizePage(pageInput);
+    }
+    return defaultPdfRecognizePage(pageInput, options.signal, filterRuby);
+  };
+  try {
+    return await runAtSize(1600);
+  } catch (error) {
+    if (isMemoryError(error)) {
+      throwIfAborted(options.signal);
+      return runAtSize(1200);
+    }
+    throw error;
+  }
+}
+
+async function readPdfMetadata(
+  doc: PdfDocumentLike,
+  fallbackTitle: string,
+): Promise<{
+  title: string;
+  author: string;
+  description: string;
+  language: string;
+  publisher: string;
+  publishedAt: string;
+  identifier: string;
+}> {
+  let title = fallbackTitle;
+  let author = '';
+  let description = '';
+  let language = '';
+  let publisher = '';
+  let publishedAt = '';
+  let identifier = '';
+  try {
+    const metadata = await doc.getMetadata();
+    const rawTitle = cleanDownloadTitle(sanitizeText(metadata?.info?.Title ?? '').trim());
+    if (rawTitle && !isLikelyFilePath(rawTitle)) {
+      title = rawTitle;
+    }
+    author = sanitizeText(metadata?.info?.Author ?? '').trim();
+    description = sanitizeText(metadata?.info?.Subject ?? '').trim();
+    publishedAt = parsePdfDate(metadata?.info?.CreationDate) ?? '';
+    language = xmpValue(metadata?.metadata, 'dc:language') || sanitizeText(metadata?.info?.Language ?? '').trim();
+    publisher = xmpValue(metadata?.metadata, 'dc:publisher');
+    identifier = xmpValue(metadata?.metadata, 'dc:identifier');
+    if (!publishedAt) publishedAt = parsePdfDate(xmpValue(metadata?.metadata, 'dc:date')) ?? '';
+    if (!description) description = xmpValue(metadata?.metadata, 'dc:description');
+  } catch {
+    // Ignore metadata failures and keep fallback title/author.
+  }
+  return { title, author, description, language, publisher, publishedAt, identifier };
+}
+
+async function readPdfOutlineChapters(
+  doc: PdfDocumentLike,
+  resolveStartLine: (pageIndex: number) => number | undefined,
+): Promise<ImportedChapter[]> {
+  const outlineChapters: ImportedChapter[] = [];
+  try {
+    const outline = await doc.getOutline();
+    const collect = async (items: PdfOutlineItem[], level: number): Promise<void> => {
+      for (const item of items) {
+        const chapterTitle = sanitizeText(item?.title ?? '').trim();
+        let pushed = false;
+        if (chapterTitle) {
+          try {
+            let destArray: unknown[] | null = null;
+            if (typeof item.dest === 'string') {
+              destArray = await doc.getDestination(item.dest);
+            } else if (Array.isArray(item.dest)) {
+              destArray = item.dest;
+            }
+            if (Array.isArray(destArray) && destArray.length > 0) {
+              const pageIndex = await doc.getPageIndex(destArray[0]);
+              const startLine = resolveStartLine(pageIndex);
+              if (startLine !== undefined) {
+                outlineChapters.push({
+                  title: chapterTitle,
+                  startLine,
+                  level: Math.min(2, level),
+                  page: pageIndex + 1,
+                });
+                pushed = true;
+              }
+            }
+          } catch {
+            // Ignore unresolvable outline destinations.
+          }
+        }
+        if (item.items?.length) {
+          await collect(item.items, pushed ? Math.min(2, level + 1) : level);
+        }
+      }
+    };
+    if (Array.isArray(outline)) await collect(outline, 0);
+  } catch {
+    // Ignore outline failures.
+  }
+  return outlineChapters;
+}
+
+async function readPdfPageLabels(doc: PdfDocumentLike): Promise<string[] | undefined> {
+  try {
+    const labels = await doc.getPageLabels?.();
+    if (Array.isArray(labels) && labels.length === doc.numPages) {
+      return labels.map(label => sanitizeText(String(label ?? '')).slice(0, 40));
+    }
+  } catch {
+    // Page labels are optional.
+  }
+  return undefined;
+}
+
+async function renderPdfCover(
+  firstPage: PdfPageLike | null,
+  options: PdfImportOptions,
+): Promise<EncodedImage | undefined> {
+  if (!firstPage) return undefined;
+  report(options, { stage: 'cover', current: 1, total: 1 });
+  try {
+    const encoder = options.renderCover ?? defaultCoverEncoder;
+    const rendered = await encoder(firstPage);
+    return rendered ?? undefined;
+  } catch {
+    // A cover is nice to have; a render failure never fails the import.
+    return undefined;
+  } finally {
+    try {
+      firstPage.cleanup?.();
+    } catch {
+      // Best effort: the page's bitmaps are already encoded or no longer needed.
+    }
+  }
+}
+
+async function ocrScannedPdf(
+  doc: PdfDocumentLike,
+  fileName: string,
+  firstPage: PdfPageLike | null,
+  pageSizes: Map<number, { width: number; height: number }>,
+  options: PdfImportOptions,
+  filterRuby: boolean,
+): Promise<ImportedBook> {
+  const pageResults: OcrPageResult[] = [];
+  let pagesFailed = 0;
+
+  // Render page 1's cover before cleaning up page 1 so the scanned PDF keeps its cover.
+  throwIfAborted(options.signal);
+  let cover: EncodedImage | undefined;
+  if (firstPage && (options.renderCover || typeof document !== 'undefined')) {
+    try {
+      const encoder = options.renderCover ?? defaultCoverEncoder;
+      cover = (await encoder(firstPage)) ?? undefined;
+    } catch {
+      // Best effort.
+    }
+  }
+
+  for (let pageNum = 1; pageNum <= doc.numPages; pageNum += 1) {
+    throwIfAborted(options.signal);
+    const pageIndex = pageNum - 1;
+    report(options, { stage: 'ocr', current: pageNum, total: doc.numPages });
+    const page = pageNum === 1 && firstPage ? firstPage : await doc.getPage(pageNum);
+    const size = pageSizes.get(pageIndex) ?? readPageSize(page) ?? undefined;
+    try {
+      const result = await recognizePdfPage(page, pageIndex, size, options, filterRuby);
+      pageResults.push(result);
+    } catch (error) {
+      if (error instanceof ImportError && error.code === 'cancelled') throw error;
+      if (options.signal?.aborted) throw new ImportError('cancelled', 'Import cancelled');
+      pagesFailed += 1;
+    } finally {
+      try {
+        page.cleanup?.();
+      } catch {
+        // Ignore cleanup failures.
+      }
+    }
+  }
+
+  if (pageResults.length === 0 && pagesFailed > 0) {
+    throw new ImportError('ocr-failed', 'OCR failed on every page of this PDF');
+  }
+
+  const docResult = reconstructOcrDocument(pageResults, { filterRuby });
+  if (!docResult.text || docResult.text.replace(/\s+/g, '').length === 0) {
+    throw new ImportError('empty-book', 'OCR did not recognize readable text in this PDF');
+  }
+
+  const fallbackTitle = cleanDownloadTitle(stripExtension(fileName));
+  throwIfAborted(options.signal);
+  const meta = await readPdfMetadata(doc, fallbackTitle);
+
+  report(options, { stage: 'chapters', current: 1, total: 1 });
+  throwIfAborted(options.signal);
+  const outlineChapters = await readPdfOutlineChapters(doc, pageIndex => {
+    const start = docResult.pageStarts[pageIndex];
+    return start !== undefined && start >= 0 ? start : undefined;
+  });
+  const chapters = outlineChapters.length > 0
+    ? outlineChapters
+    : docResult.chapters.length >= 2
+      ? docResult.chapters
+      : [];
+
+  const warnings: ImportWarning[] = [{ code: 'ocr-recognized', count: pageResults.length }];
+  if (docResult.warnings.some(w => w.code === 'ocr-low-confidence')) warnings.push({ code: 'ocr-low-confidence' });
+  if (pagesFailed > 0) warnings.push({ code: 'ocr-pages-failed', count: pagesFailed });
+  if (outlineChapters.length === 0 && docResult.chapters.length >= 2) {
+    warnings.push({ code: 'auto-chapters', count: docResult.chapters.length });
+  }
+  if (!cover) warnings.push({ code: 'missing-cover' });
+
+  const pageLabels = await readPdfPageLabels(doc);
+  report(options, { stage: 'done', current: 1, total: 1 });
+  return {
+    title: meta.title,
+    author: meta.author,
+    text: docResult.text,
+    overrides: [],
+    chapters,
+    images: [],
+    warnings,
+    defaultWritingMode: docResult.defaultWritingMode,
+    ...(meta.description ? { description: meta.description } : {}),
+    ...(meta.language ? { language: meta.language } : {}),
+    ...(meta.publisher ? { publisher: meta.publisher } : {}),
+    ...(meta.publishedAt ? { publishedAt: meta.publishedAt } : {}),
+    ...(meta.identifier ? { identifier: meta.identifier } : {}),
+    ...(docResult.pageStarts.length ? { pageStarts: docResult.pageStarts } : {}),
+    ...(pageLabels ? { pageLabels } : {}),
+    ...(cover ? { cover } : {}),
+  };
+}
+
 export async function importPdf(
   data: ArrayBuffer,
   fileName: string,
@@ -641,6 +911,7 @@ export async function importPdf(
   const extractedImages: PdfImageItem[] = [];
   const seenImages = new Set<string>();
   let imagesFailed = 0;
+  const pageStats: Array<{ pageIndex: number; pageChars: number; hasScanImage: boolean }> = [];
 
   const canRenderCover = Boolean(options.renderCover)
     || (typeof document !== 'undefined');
@@ -768,6 +1039,7 @@ export async function importPdf(
     }
     flushVisualLine();
 
+    let hasScanImage = false;
     if (!(pageIndex === 0 && canRenderCover)) {
       throwIfAborted(options.signal);
       report(options, { stage: 'images', current: pageIndex + 1, total: doc.numPages });
@@ -780,7 +1052,9 @@ export async function importPdf(
       });
       extractedImages.push(...extracted.images);
       imagesFailed += extracted.failed;
+      hasScanImage = extracted.images.length > 0;
     }
+    pageStats.push({ pageIndex, pageChars, hasScanImage });
     if (page !== firstPage) {
       try {
         page.cleanup?.();
@@ -790,15 +1064,73 @@ export async function importPdf(
     }
   }
 
+  const ocrSettings = loadOcrSettings();
+  const canUseOcr = options.ocr !== 'off'
+    && (options.ocr === 'force' || ocrSettings.autoOcrScannedPdf)
+    && (Boolean(options.recognizePage) || Boolean(options.renderOcrPage) || typeof document !== 'undefined');
+
   const minChars = Math.max(30, doc.numPages * 15);
   if (nonWhitespaceCount < minChars) {
+    if (canUseOcr) {
+      return await ocrScannedPdf(doc, fileName, firstPage, pageSizes, options, ocrSettings.filterRuby);
+    }
     throw new ScannedPdfError();
+  }
+
+  // Hybrid PDFs: pages with almost no text layer (<10 chars) and a scanned image are OCR'd individually.
+  const ocrParagraphsByPage = new Map<number, string[]>();
+  const ocrSucceededPages = new Set<number>();
+  let hybridOcrLowConfidence = false;
+  let hybridOcrFailed = 0;
+  if (canUseOcr) {
+    const sparsePages = pageStats.filter(stat => stat.pageChars < 10 && stat.hasScanImage);
+    for (let i = 0; i < sparsePages.length; i += 1) {
+      const stat = sparsePages[i];
+      throwIfAborted(options.signal);
+      report(options, { stage: 'ocr', current: i + 1, total: sparsePages.length });
+      const page = await doc.getPage(stat.pageIndex + 1);
+      const size = pageSizes.get(stat.pageIndex) ?? readPageSize(page) ?? undefined;
+      try {
+        const result = await recognizePdfPage(page, stat.pageIndex, size, options, ocrSettings.filterRuby);
+        const pageDoc = reconstructOcrDocument([result], { filterRuby: ocrSettings.filterRuby });
+        const ocrParagraphs = pageDoc.text.split('\n').filter(line => line.trim().length > 0);
+        const ocrChars = pageDoc.text.replace(/\s+/g, '').length;
+        if (ocrChars >= 10 && ocrParagraphs.length > 0) {
+          ocrParagraphsByPage.set(stat.pageIndex, ocrParagraphs);
+          ocrSucceededPages.add(stat.pageIndex);
+          if (pageDoc.warnings.some(w => w.code === 'ocr-low-confidence')) hybridOcrLowConfidence = true;
+        }
+      } catch (error) {
+        if (error instanceof ImportError && error.code === 'cancelled') throw error;
+        if (options.signal?.aborted) throw new ImportError('cancelled', 'Import cancelled');
+        hybridOcrFailed += 1;
+      } finally {
+        if (page !== firstPage) {
+          try {
+            page.cleanup?.();
+          } catch {
+            // Ignore cleanup errors.
+          }
+        }
+      }
+    }
+    if (ocrSucceededPages.size > 0) {
+      // Drop the raw scanned-page images for pages replaced by recognized OCR text.
+      for (let i = extractedImages.length - 1; i >= 0; i -= 1) {
+        if (ocrSucceededPages.has(extractedImages[i].pageIndex)) {
+          extractedImages.splice(i, 1);
+        }
+      }
+    }
   }
 
   // Measure body type away from the outer margins: a short page can carry more running-head and
   // folio lines than body lines, and counting those would make the body look smaller than it is.
+  const activeVisualLines = ocrSucceededPages.size > 0
+    ? visualLines.filter(line => !ocrSucceededPages.has(line.pageIndex))
+    : visualLines;
   const pageHeightForCleanup = bodyGlyphHeight(
-    visualLines
+    activeVisualLines
       .filter(line => {
         if (line.rotated || line.height <= 0) return false;
         const size = pageSizes.get(line.pageIndex);
@@ -807,7 +1139,7 @@ export async function importPdf(
       })
       .map(line => line.height),
   );
-  const cleaned = stripRunningHeads(visualLines, pageSizes, pageHeightForCleanup);
+  const cleaned = stripRunningHeads(activeVisualLines, pageSizes, pageHeightForCleanup);
   const linesForAssembly = cleaned.lines;
 
   // A tategaki page drawn with a horizontal font arrives as one glyph per item, so the paragraph
@@ -924,7 +1256,26 @@ export async function importPdf(
   const autoChapterStarts: ImportedChapter[] = [];
   let prevLine: VisualLine | null = null;
 
+  const ocrPageQueue = [...ocrParagraphsByPage.keys()].sort((a, b) => a - b);
+  let ocrQueuePos = 0;
+  const flushOcrPagesUpTo = (limitPageIndex: number) => {
+    while (ocrQueuePos < ocrPageQueue.length && ocrPageQueue[ocrQueuePos] <= limitPageIndex) {
+      const ocrPageIdx = ocrPageQueue[ocrQueuePos];
+      ocrQueuePos += 1;
+      const ocrParas = ocrParagraphsByPage.get(ocrPageIdx) ?? [];
+      for (const para of ocrParas) {
+        const paraIndex = paragraphs.length;
+        paragraphs.push(para);
+        paragraphFirst.push({ pageIndex: ocrPageIdx, y: 0 });
+        if (!firstParaStartingOnPage.has(ocrPageIdx)) firstParaStartingOnPage.set(ocrPageIdx, paraIndex);
+        if (!firstParaTouchingPage.has(ocrPageIdx)) firstParaTouchingPage.set(ocrPageIdx, paraIndex);
+      }
+      prevLine = null;
+    }
+  };
+
   for (const line of logicalLines) {
+    flushOcrPagesUpTo(line.pageIndex - 1);
     const heading = headings.get(line);
     let startNewParagraph = false;
     if (!prevLine) {
@@ -998,82 +1349,26 @@ export async function importPdf(
 
     prevLine = line;
   }
+  flushOcrPagesUpTo(doc.numPages - 1);
 
   const extractedChars = paragraphs.reduce((sum, para) => sum + para.replace(/\s+/g, '').length, 0);
   if (extractedChars < minChars) {
+    if (canUseOcr) {
+      return await ocrScannedPdf(doc, fileName, firstPage, pageSizes, options, ocrSettings.filterRuby);
+    }
     throw new ScannedPdfError();
   }
 
   const fallbackTitle = cleanDownloadTitle(stripExtension(fileName));
-  let title = fallbackTitle;
-  let author = '';
-  let description = '';
-  let language = '';
-  let publisher = '';
-  let publishedAt = '';
-  let identifier = '';
   throwIfAborted(options.signal);
-  try {
-    const metadata = await doc.getMetadata();
-    const rawTitle = cleanDownloadTitle(sanitizeText(metadata?.info?.Title ?? '').trim());
-    if (rawTitle && !isLikelyFilePath(rawTitle)) {
-      title = rawTitle;
-    }
-    author = sanitizeText(metadata?.info?.Author ?? '').trim();
-    description = sanitizeText(metadata?.info?.Subject ?? '').trim();
-    publishedAt = parsePdfDate(metadata?.info?.CreationDate) ?? '';
-    language = xmpValue(metadata?.metadata, 'dc:language') || sanitizeText(metadata?.info?.Language ?? '').trim();
-    publisher = xmpValue(metadata?.metadata, 'dc:publisher');
-    identifier = xmpValue(metadata?.metadata, 'dc:identifier');
-    if (!publishedAt) publishedAt = parsePdfDate(xmpValue(metadata?.metadata, 'dc:date')) ?? '';
-    if (!description) description = xmpValue(metadata?.metadata, 'dc:description');
-  } catch {
-    // Ignore metadata failures and keep fallback title/author.
-  }
+  const { title, author, description, language, publisher, publishedAt, identifier } = await readPdfMetadata(doc, fallbackTitle);
 
   // Outline chapters, depth preserved. A parent without a destination promotes its children.
-  const outlineChapters: ImportedChapter[] = [];
   throwIfAborted(options.signal);
-  try {
-    const outline = await doc.getOutline();
-    const collect = async (items: PdfOutlineItem[], level: number): Promise<void> => {
-      for (const item of items) {
-        const chapterTitle = sanitizeText(item?.title ?? '').trim();
-        let pushed = false;
-        if (chapterTitle) {
-          try {
-            let destArray: unknown[] | null = null;
-            if (typeof item.dest === 'string') {
-              destArray = await doc.getDestination(item.dest);
-            } else if (Array.isArray(item.dest)) {
-              destArray = item.dest;
-            }
-            if (Array.isArray(destArray) && destArray.length > 0) {
-              const pageIndex = await doc.getPageIndex(destArray[0]);
-              const startLine = firstParaStartingOnPage.get(pageIndex) ?? firstParaTouchingPage.get(pageIndex);
-              if (startLine !== undefined) {
-                outlineChapters.push({
-                  title: chapterTitle,
-                  startLine,
-                  level: Math.min(2, level),
-                  page: pageIndex + 1,
-                });
-                pushed = true;
-              }
-            }
-          } catch {
-            // Ignore unresolvable outline destinations.
-          }
-        }
-        if (item.items?.length) {
-          await collect(item.items, pushed ? Math.min(2, level + 1) : level);
-        }
-      }
-    };
-    if (Array.isArray(outline)) await collect(outline, 0);
-  } catch {
-    // Ignore outline failures.
-  }
+  const outlineChapters = await readPdfOutlineChapters(
+    doc,
+    pageIndex => firstParaStartingOnPage.get(pageIndex) ?? firstParaTouchingPage.get(pageIndex),
+  );
 
   report(options, { stage: 'chapters', current: 1, total: 1 });
   const warnings: ImportWarning[] = [];
@@ -1088,27 +1383,20 @@ export async function importPdf(
   if (cleaned.removed > 0) {
     warnings.push({ code: 'running-heads-removed', count: cleaned.removed });
   }
+  if (ocrSucceededPages.size > 0) {
+    warnings.push({ code: 'ocr-recognized', count: ocrSucceededPages.size });
+  }
+  if (hybridOcrLowConfidence) {
+    warnings.push({ code: 'ocr-low-confidence' });
+  }
+  if (hybridOcrFailed > 0) {
+    warnings.push({ code: 'ocr-pages-failed', count: hybridOcrFailed });
+  }
 
   // Cover: render page 1. A rendered cover replaces page-1 image extraction, so a full-page cover
   // scan is not stored twice.
   throwIfAborted(options.signal);
-  let cover: EncodedImage | undefined;
-  if (firstPage) {
-    report(options, { stage: 'cover', current: 1, total: 1 });
-    try {
-      const encoder = options.renderCover ?? defaultCoverEncoder;
-      const rendered = await encoder(firstPage);
-      if (rendered) cover = rendered;
-    } catch {
-      // A cover is nice to have; a render failure never fails the import.
-    } finally {
-      try {
-        firstPage.cleanup?.();
-      } catch {
-        // Best effort: the page's bitmaps are already encoded or no longer needed.
-      }
-    }
-  }
+  const cover = await renderPdfCover(firstPage, options);
   if (!cover) warnings.push({ code: 'missing-cover' });
 
   // Image lines use the shared `￼img-N` shape, so ids are renumbered across pages.

@@ -39,8 +39,10 @@ test('isImportableFile：无扩展名的 content:// 文件（含空 MIME / octet
   assert.equal(isImportableFile(new File([DOCX_HEAD], 'document:1234', { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' })), true);
   assert.equal(isImportableFile(new File(['台本'], 'script.txt')), true);
   assert.equal(isImportableFile(new File(['台本'], 'document:5', { type: 'text/plain' })), true);
-  assert.equal(isImportableFile(new File([PDF_HEAD], 'document:1234', { type: 'image/png' })), false);
-  assert.equal(isImportableFile(new File([PDF_HEAD], 'cover.png')), false);
+  assert.equal(isImportableFile(new File([PDF_HEAD], 'document:1234', { type: 'image/png' })), true);
+  assert.equal(isImportableFile(new File([PDF_HEAD], 'cover.png')), true);
+  assert.equal(isImportableFile(new File([PDF_HEAD], 'document:1234', { type: 'video/mp4' })), false);
+  assert.equal(isImportableFile(new File([PDF_HEAD], 'clip.mp4')), false);
 });
 
 test('cleanScriptTitle 与 parseBookFile：剥离 Android content:// 占位名与非法文件名字符', async () => {

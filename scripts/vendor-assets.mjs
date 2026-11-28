@@ -1,8 +1,10 @@
 // Copies runtime files that live in node_modules into public/vendor/ (gitignored), so the
-// static export serves them: the pdf.js worker and the CMaps it needs for Japanese PDFs.
+// static export serves them: the pdf.js worker and CMaps, onnxruntime-web WASM files, and
+// (unless UKU_SKIP_OCR_MODELS=1) the NDLOCR-Lite ONNX models.
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { syncOcrModels } from './fetch-ocr-models.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const pdfjs = join(root, 'node_modules', 'pdfjs-dist');
@@ -38,4 +40,15 @@ writeFileSync(join(target, 'pdf.worker.min.js'), chrome99Polyfills + patchedWork
 cpSync(join(pdfjs, 'cmaps'), join(target, 'cmaps'), { recursive: true });
 cpSync(join(pdfjs, 'standard_fonts'), join(target, 'standard_fonts'), { recursive: true });
 console.log('==> pdf.js runtime copied to public/vendor/pdfjs');
+
+const ortDist = join(root, 'node_modules', 'onnxruntime-web', 'dist');
+const ortTarget = join(root, 'public', 'vendor', 'ort');
+rmSync(ortTarget, { recursive: true, force: true });
+mkdirSync(ortTarget, { recursive: true });
+for (const file of ['ort-wasm-simd-threaded.wasm', 'ort-wasm-simd-threaded.mjs']) {
+  cpSync(join(ortDist, file), join(ortTarget, file));
+}
+console.log('==> onnxruntime-web WASM runtime copied to public/vendor/ort');
+
+await syncOcrModels();
 await import('./build-pixiv-browser-helper.mjs');

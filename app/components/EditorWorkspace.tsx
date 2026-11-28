@@ -25,6 +25,7 @@ import {
   IconWarning,
 } from './glass/icons';
 import type { ScriptLine } from '../utils/furigana';
+import type { ImportProgress } from '../utils/bookAssets';
 import type { BookItem } from '../utils/libraryDatabase';
 import type { Translations } from '../utils/i18n';
 import type { TranslationSettings } from '../utils/translation';
@@ -78,6 +79,10 @@ export interface EditorWorkspaceProps {
   handleEditorFileImport: (event: React.ChangeEvent<HTMLInputElement>) => Promise<void>;
   isImporting: boolean;
   importError: string;
+  ocrProgress: ImportProgress | null;
+  onCancelOcr: () => void;
+  onEditorPasteImages: (files: File[], selectionStart: number, selectionEnd: number) => Promise<void>;
+  onEditorDropFiles: (files: File[]) => Promise<void>;
   onOpenPixivAccount?: () => void;
   libraryBooks: BookItem[];
   onImportFromLibrary: (book: BookItem) => void;
@@ -300,8 +305,9 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
       <input
         type="file"
         ref={editorFileInputRef}
+        multiple
         onChange={handleEditorFileImport}
-        accept=".txt,.md,.srt,.vtt,.docx,.epub,.pdf,text/plain,text/markdown,application/x-subrip,text/vtt,application/pdf,application/epub+zip,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        accept=".txt,.md,.srt,.vtt,.docx,.epub,.pdf,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff,.avif,text/plain,text/markdown,application/x-subrip,text/vtt,application/pdf,application/epub+zip,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/*"
         className="hidden"
       />
 
@@ -358,7 +364,7 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
           </>
         ) : (
           <>
-            <PopoverItem icon={<IconImport size={17} />} detail="TXT · DOCX · SRT" onClick={() => { setImportOpen(null); editorFileInputRef.current?.click(); }}>
+            <PopoverItem icon={<IconImport size={17} />} detail={t.editorImportFormats} onClick={() => { setImportOpen(null); editorFileInputRef.current?.click(); }}>
               {t.chooseFile}
             </PopoverItem>
             <PopoverItem icon={<IconBooks size={17} />} onClick={() => setImportOpen('library')}>{t.importFromLibrary}</PopoverItem>
@@ -396,11 +402,30 @@ export function EditorWorkspace(props: EditorWorkspaceProps) {
 const CARD = 'flex min-h-0 flex-col overflow-hidden rounded-[18px] bg-[var(--surface)] shadow-[var(--card-shadow)]';
 
 function SourceCard({ t, hidden, docTitle, setDocTitle, rawText, setRawText, setEditingToken, correctionsReady, isImporting,
-  onStartSearch, onOpenHistory }: EditorWorkspaceProps & { hidden: boolean; onStartSearch: () => void }) {
+  ocrProgress, onCancelOcr, onEditorPasteImages, onEditorDropFiles, onStartSearch, onOpenHistory }: EditorWorkspaceProps & { hidden: boolean; onStartSearch: () => void }) {
+  const [dragOver, setDragOver] = useState(false);
   const lineCount = rawText ? rawText.split('\n').length : 0;
   const characterCount = rawText.replace(/\s/g, '').length;
   return (
-    <div className={`${CARD} ${hidden ? 'max-md:hidden' : ''}`}>
+    <div
+      className={`${CARD} relative ${hidden ? 'max-md:hidden' : ''} ${dragOver ? 'ring-2 ring-[var(--accent)]' : ''}`}
+      onDragOver={event => {
+        if (!event.dataTransfer?.types.includes('Files')) return;
+        event.preventDefault();
+        setDragOver(true);
+      }}
+      onDragLeave={event => {
+        if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+        setDragOver(false);
+      }}
+      onDrop={event => {
+        event.preventDefault();
+        setDragOver(false);
+        if (!correctionsReady || isImporting) return;
+        const dropped = Array.from(event.dataTransfer?.files ?? []);
+        if (dropped.length > 0) void onEditorDropFiles(dropped);
+      }}
+    >
       <div className="flex items-baseline gap-2.5 px-5 pt-4">
         <span className="text-xs font-semibold tracking-[0.02em] text-[var(--label-2)]">{t.sourceLabel}</span>
         <span className="text-xs tabular-nums text-[var(--label-3)]">{lineCount} {t.linesCount} · {characterCount} {t.charsUnit}</span>
@@ -413,6 +438,18 @@ function SourceCard({ t, hidden, docTitle, setDocTitle, rawText, setRawText, set
           </button>
         </span>
       </div>
+      {ocrProgress && (
+        <div role="status" className="mx-5 mt-2 flex items-center justify-between gap-2 rounded-xl bg-[var(--fill-2)] px-3 py-1.5 text-xs text-[var(--label-2)]">
+          <span className="truncate">
+            {t.ocrProgressPage
+              .replace('{current}', String(ocrProgress.current))
+              .replace('{total}', String(ocrProgress.total || 1))}
+          </span>
+          <button type="button" className="btn shrink-0 !h-6 !px-2 text-xs" onClick={onCancelOcr}>
+            {t.ocrProgressCancel}
+          </button>
+        </div>
+      )}
       <input
         type="text"
         value={docTitle}
@@ -426,9 +463,32 @@ function SourceCard({ t, hidden, docTitle, setDocTitle, rawText, setRawText, set
         spellCheck={false}
         disabled={!correctionsReady || isImporting}
         onChange={event => { setEditingToken(null); setRawText(event.target.value); }}
+        onPaste={event => {
+          if (!correctionsReady || isImporting) return;
+          const items = event.clipboardData?.items;
+          if (!items) return;
+          const plain = event.clipboardData.getData('text/plain');
+          if (plain) return;
+          const pastedImages: File[] = [];
+          for (const item of Array.from(items)) {
+            if (item.type.startsWith('image/')) {
+              const pastedFile = item.getAsFile();
+              if (pastedFile) pastedImages.push(pastedFile);
+            }
+          }
+          if (pastedImages.length === 0) return;
+          event.preventDefault();
+          const el = event.currentTarget;
+          void onEditorPasteImages(pastedImages, el.selectionStart ?? rawText.length, el.selectionEnd ?? rawText.length);
+        }}
         placeholder={t.inputPlaceholder}
         className="min-h-0 w-full flex-1 resize-none overflow-y-auto overscroll-contain border-0 bg-transparent px-5 pb-5 pt-1 text-base leading-[1.95] text-[var(--label)] outline-none placeholder:text-[var(--label-3)] disabled:opacity-50"
       />
+      {dragOver && (
+        <div className="pointer-events-none absolute inset-2 flex items-center justify-center rounded-[14px] border-2 border-dashed border-[var(--accent)] bg-[var(--surface)] text-sm font-semibold text-[var(--label)]">
+          {t.ocrDropHint}
+        </div>
+      )}
     </div>
   );
 }

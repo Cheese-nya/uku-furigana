@@ -890,3 +890,111 @@ test('importPdf sorts out-of-order outline chapters stably and always calls doc.
   );
   assert.equal(destroyed, 2);
 });
+
+test('importPdf runs local OCR on scanned PDFs via recognizePage seam and honors ocr=off', async () => {
+  const scannedLoader = {
+    numPages: 2,
+    getPage: () => ({
+      getViewport: () => ({ width: 800, height: 1200 }),
+      getTextContent: () => ({ items: [] }),
+    }),
+    getMetadata: () => ({ info: { Title: 'Scanned Novel', Author: '山田' } }),
+    getOutline: () => null,
+    getPageIndex: () => 0,
+    getDestination: () => null,
+  };
+
+  await assert.rejects(
+    () => importPdf(new ArrayBuffer(8), 'scanned.pdf', scannedLoader, {
+      ocr: 'off',
+      recognizePage: async () => {
+        throw new Error('must not be called when ocr=off');
+      },
+    }),
+    err => err instanceof ScannedPdfError,
+  );
+
+  const recognizedPages = [];
+  const book = await importPdf(new ArrayBuffer(8), 'scanned.pdf', scannedLoader, {
+    ocr: 'force',
+    renderCover: async () => ({ mime: 'image/jpeg', data: new Uint8Array([1, 2, 3]) }),
+    recognizePage: async ({ pageIndex }) => {
+      recognizedPages.push(pageIndex);
+      return {
+        pageIndex,
+        pageWidth: 800,
+        pageHeight: 1200,
+        engineUsed: 'ndlocr-lite',
+        elapsedMs: 10,
+        warnings: [],
+        boxes: pageIndex === 0
+          ? [{ x: 600, y: 120, width: 32, height: 320, text: '一頁目の縦書き本文です。', confidence: 0.96, role: 'main', vertical: true }]
+          : [{ x: 600, y: 120, width: 32, height: 320, text: '二頁目の縦書き本文です。', confidence: 0.95, role: 'main', vertical: true }],
+      };
+    },
+  });
+
+  assert.deepEqual(recognizedPages, [0, 1]);
+  assert.equal(book.title, 'Scanned Novel');
+  assert.equal(book.author, '山田');
+  assert.equal(book.defaultWritingMode, 'vertical');
+  assert.equal(book.cover?.mime, 'image/jpeg');
+  assert.deepEqual(book.text.split('\n'), ['一頁目の縦書き本文です。', '二頁目の縦書き本文です。']);
+  assert.deepEqual(book.pageStarts, [0, 1]);
+  assert.equal(book.warnings.some(w => w.code === 'ocr-recognized' && w.count === 2), true);
+});
+
+test('importPdf OCRs sparse scanned pages inside hybrid PDFs without duplicating scan images', async () => {
+  const imageObject = { width: 500, height: 700, kind: 1, data: new Uint8Array([1, 0, 1]) };
+  const ocrCalledOn = [];
+  const hybridLoader = {
+    numPages: 3,
+    getPage(n) {
+      return {
+        getViewport: () => ({ width: 600, height: 800 }),
+        getTextContent: () => ({
+          items: n === 2
+            ? []
+            : [makeItem(n === 1 ? '　一頁目の通常テキストです。十分な長さを確保して判定を通します。' : '　三頁目の通常テキストです。こちらも通常の文字レイヤです。', { y: 740 })],
+        }),
+        getOperatorList: async () => (n === 2 ? { fnArray: [1], argsArray: [['ImScan']] } : { fnArray: [], argsArray: [] }),
+        objs: { get: name => (name === 'ImScan' ? imageObject : undefined) },
+      };
+    },
+    getMetadata: () => ({ info: { Title: 'Hybrid PDF' } }),
+    getOutline: () => null,
+    getPageIndex: () => 0,
+    getDestination: () => null,
+  };
+
+  const book = await importPdf(new ArrayBuffer(8), 'hybrid.pdf', hybridLoader, {
+    ocr: 'auto',
+    renderCover: async () => ({ mime: 'image/png', data: new Uint8Array([8]) }),
+    encodeImage: async () => ({ mime: 'image/png', data: new Uint8Array([9]) }),
+    ops: { paintImageXObject: 1 },
+    recognizePage: async ({ pageIndex }) => {
+      ocrCalledOn.push(pageIndex);
+      return {
+        pageIndex,
+        pageWidth: 600,
+        pageHeight: 800,
+        engineUsed: 'ndlocr-lite',
+        elapsedMs: 12,
+        warnings: [],
+        boxes: [
+          { x: 60, y: 100, width: 480, height: 28, text: '二頁目は画像スキャンからローカル文字認識されました。', confidence: 0.94, role: 'main', vertical: false },
+        ],
+      };
+    },
+  });
+
+  assert.deepEqual(ocrCalledOn, [1]);
+  assert.equal(book.images.length, 0, 'recognized sparse-page scan image should not be duplicated as illustration');
+  assert.deepEqual(book.text.split('\n'), [
+    '　一頁目の通常テキストです。十分な長さを確保して判定を通します。',
+    '二頁目は画像スキャンからローカル文字認識されました。',
+    '　三頁目の通常テキストです。こちらも通常の文字レイヤです。',
+  ]);
+  assert.deepEqual(book.pageStarts, [0, 1, 2]);
+  assert.equal(book.warnings.some(w => w.code === 'ocr-recognized' && w.count === 1), true);
+});

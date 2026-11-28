@@ -6,16 +6,20 @@
 import JSZip from 'jszip';
 import type { ScriptLine } from './furigana';
 import { cleanScriptTitle } from './docxImporter';
+import { resolveExportCover, type ExportCoverInput } from './exportCover';
 import { extractChapters, type BookChapter } from './libraryDatabase';
 import { sanitizeText } from './textSanitize';
 
 export interface EpubExportOptions {
   title?: string;
+  author?: string;
   baseFontSize?: number;
   rubyFontSize?: number;
   lineSpacing?: number;
   translations?: readonly (string | undefined)[];
   translationLang?: string;
+  cover?: ExportCoverInput;
+  chapters?: BookChapter[];
 }
 
 function escapeXml(value: string): string {
@@ -96,6 +100,30 @@ function buildChapterXhtml(
 </html>`;
 }
 
+function resolveExportChapters(
+  lines: ScriptLine[],
+  title: string,
+  provided?: BookChapter[],
+): BookChapter[] {
+  if (!provided || provided.length === 0 || lines.length === 0) {
+    return extractChapters(lines.map((l) => l.rawText).join('\n'), title);
+  }
+  const normalized: BookChapter[] = [];
+  for (let i = 0; i < provided.length; i += 1) {
+    const ch = provided[i];
+    const startLine = Math.max(0, Math.min(lines.length - 1, ch.startLine));
+    const endLine = Math.max(startLine, Math.min(lines.length - 1, ch.endLine));
+    normalized.push({
+      ...ch,
+      id: ch.id || `chapter:${i + 1}`,
+      title: sanitizeText(ch.title) || `Chapter ${i + 1}`,
+      startLine,
+      endLine,
+    });
+  }
+  return normalized.length > 0 ? normalized : extractChapters(lines.map((l) => l.rawText).join('\n'), title);
+}
+
 /**
  * Build an EPUB 3 Blob with horizontal layout and <ruby> furigana annotations.
  */
@@ -104,12 +132,13 @@ export async function buildEpubBlob(
   opts?: EpubExportOptions
 ): Promise<Blob> {
   const title = cleanScriptTitle(opts?.title || '') || '日语假名配音台本';
+  const author = sanitizeText(opts?.author || '').trim();
   const baseFontSize = opts?.baseFontSize ?? 16;
   const rubyFontSize = opts?.rubyFontSize ?? 10;
   const lineSpacing = opts?.lineSpacing ?? 1.8;
 
-  const rawJoined = lines.map((l) => l.rawText).join('\n');
-  const chapters: BookChapter[] = extractChapters(rawJoined, title);
+  const chapters: BookChapter[] = resolveExportChapters(lines, title, opts?.chapters);
+  const resolvedCover = await resolveExportCover(opts?.cover);
 
   const zip = new JSZip();
 
@@ -177,13 +206,40 @@ rt {
 `;
   zip.file('OEBPS/style.css', styleCss);
 
-  // 4. Chapter XHTML files
+  // 4. Optional cover page + Chapter XHTML files
   const manifestItems: string[] = [
     '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>',
     '<item id="style" href="style.css" media-type="text/css"/>',
   ];
   const spineItems: string[] = [];
   const navItems: string[] = [];
+
+  if (resolvedCover) {
+    const ext = resolvedCover.mime === 'image/png' ? 'png' : 'jpg';
+    const coverHref = `images/cover.${ext}`;
+    zip.file(`OEBPS/${coverHref}`, resolvedCover.data);
+    const coverXhtml = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="ja" lang="ja">
+<head>
+  <meta charset="UTF-8"/>
+  <title>${escapeXml(title)}</title>
+  <style type="text/css">
+    html, body { margin: 0; padding: 0; height: 100%; text-align: center; }
+    img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  </style>
+</head>
+<body epub:type="cover">
+  <img src="${coverHref}" alt="Cover"/>
+</body>
+</html>`;
+    zip.file('OEBPS/cover.xhtml', coverXhtml);
+    manifestItems.push(
+      `<item id="cover-image" href="${coverHref}" media-type="${resolvedCover.mime}" properties="cover-image"/>`,
+      '<item id="cover" href="cover.xhtml" media-type="application/xhtml+xml"/>',
+    );
+    spineItems.push('<itemref idref="cover"/>');
+  }
 
   chapters.forEach((chapter, idx) => {
     const fileName = chapterFileName(idx);
@@ -230,20 +286,25 @@ rt {
   // 6. OEBPS/content.opf
   const bookUuid = generateUuid();
   const modifiedIso = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+  const creatorMeta = author ? `\n    <dc:creator>${escapeXml(author)}</dc:creator>` : '';
+  const coverMeta = resolvedCover ? `\n    <meta name="cover" content="cover-image"/>` : '';
+  const guideXml = resolvedCover
+    ? `\n  <guide>\n    <reference type="cover" title="Cover" href="cover.xhtml"/>\n  </guide>`
+    : '';
   const contentOpf = `<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/" version="3.0" unique-identifier="book-id" xml:lang="ja">
   <metadata>
     <dc:identifier id="book-id">urn:uuid:${bookUuid}</dc:identifier>
-    <dc:title>${escapeXml(title)}</dc:title>
+    <dc:title>${escapeXml(title)}</dc:title>${creatorMeta}
     <dc:language>ja</dc:language>
-    <meta property="dcterms:modified">${modifiedIso}</meta>
+    <meta property="dcterms:modified">${modifiedIso}</meta>${coverMeta}
   </metadata>
   <manifest>
     ${manifestItems.join('\n    ')}
   </manifest>
   <spine>
     ${spineItems.join('\n    ')}
-  </spine>
+  </spine>${guideXml}
 </package>`;
   zip.file('OEBPS/content.opf', contentOpf);
 

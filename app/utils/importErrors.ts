@@ -4,6 +4,7 @@ export type ImportErrorCode =
   | 'password-wrong'
   | 'drm-protected'
   | 'scanned-pdf'
+  | 'ocr-failed'
   | 'empty-book'
   | 'corrupt-file'
   | 'unsupported-format'

@@ -9,7 +9,9 @@ import { importTextScript, scriptSourceFormat, withLfLineKeys } from '../utils/i
 import { cleanScriptTitle, importDocx } from '../utils/docxImporter';
 import type { RubyOverride } from '../utils/rubyOverrides';
 import { fingerprintText, resolveScript, type CorrectionDatabaseV2, type ProperNounEntry } from '../utils/correctionDatabase';
-import { upsertBook, type BookItem, type LibraryDatabaseV1, type PdfLayout } from '../utils/libraryDatabase';
+import { upsertBook, type BookChapter, type BookItem, type LibraryDatabaseV1, type PdfLayout } from '../utils/libraryDatabase';
+import { downscaleCover } from '../utils/assetStore';
+import type { ExportCoverInput } from '../utils/exportCover';
 import { buildDocxBlob } from '../utils/docxExporter';
 import { buildEpubBlob } from '../utils/epubExporter';
 import { buildPdfBlob } from '../utils/pdfExporter';
@@ -186,10 +188,14 @@ export function useBatchProcessing({
         let textContent = '';
         let importedOverrides: RubyOverride[] = [];
         let importedCues: SrtCue[] = [];
-        // Source PDF layout travels with the item: from the imported file, or from the library book.
+        // Source PDF layout, cover and chapters travel with the item: from the imported file, or from the library book.
         let pdfLayout: PdfLayout | undefined;
+        let cover: ExportCoverInput;
+        let coverBlob: Blob | undefined;
+        let exportChapters: BookChapter[] | undefined;
+        let exportAuthor: string | undefined;
         // Format detected from the bytes when the picked name carries no usable extension.
-        let detectedFormat: 'epub' | 'pdf' | 'docx' | null = null;
+        let detectedFormat: 'epub' | 'pdf' | 'docx' | 'image' | null = null;
         let parsedBookMeta: Pick<ParsedBookFile, 'title' | 'author' | 'category' | 'chapters'> | undefined;
         // A queued library book is already parsed: read its text, overrides and cues straight from the library.
         const libraryBook = item.bookId ? libraryDbRef.current.books[item.bookId] : undefined;
@@ -200,6 +206,9 @@ export function useBatchProcessing({
           importedOverrides = libraryBook.sourceOverrides;
           importedCues = libraryBook.srtCues || [];
           pdfLayout = libraryBook.pdfLayout;
+          cover = libraryBook.coverUrl;
+          exportChapters = libraryBook.chapters;
+          exportAuthor = libraryBook.author;
         } else if (!item.file) {
           throw new Error('未找到待处理的文件');
         } else {
@@ -207,11 +216,23 @@ export function useBatchProcessing({
           // no extension (an Android content:// pick).
           const format = await detectBookFormat(item.file);
           detectedFormat = format;
-          if (format === 'epub' || format === 'pdf') {
-            const parsed = await parseBookFile(item.file);
+          if (format === 'epub' || format === 'pdf' || format === 'image') {
+            const parsed = await parseBookFile(item.file, {
+              signal: controller.signal,
+              ocr: format === 'pdf' || format === 'image' ? 'force' : 'auto',
+              onProgress: progress => {
+                if (progress.stage === 'ocr' && progress.total && progress.total > 0) {
+                  const pct = Math.min(60, Math.max(5, Math.round((progress.current / progress.total) * 60)));
+                  setBatchFiles(prev => prev.map(f => f.id === item.id ? { ...f, progress: pct } : f));
+                }
+              },
+            });
             textContent = withoutImageLines(parsed.content);
             importedOverrides = parsed.sourceOverrides;
             pdfLayout = parsed.pdfLayout;
+            coverBlob = parsed.cover;
+            cover = parsed.cover;
+            exportAuthor = parsed.author;
             parsedBookMeta = { title: parsed.title, author: parsed.author, category: parsed.category, chapters: parsed.chapters };
           } else if (format === 'docx') {
             const arrayBuffer = await item.file.arrayBuffer();
@@ -261,11 +282,11 @@ export function useBatchProcessing({
         // Generate output based on target format
         let outputBlob: Blob;
         if (format === 'docx') {
-          outputBlob = await buildDocxBlob(parsedLines, { title: itemTitle, baseFontSize: fontSize, rubyFontSize, lineSpacing, translations });
+          outputBlob = await buildDocxBlob(parsedLines, { title: itemTitle, baseFontSize: fontSize, rubyFontSize, lineSpacing, translations, cover });
         } else if (format === 'epub') {
-          outputBlob = await buildEpubBlob(parsedLines, { title: itemTitle, baseFontSize: fontSize, rubyFontSize, lineSpacing, translations, translationLang: translationSettings.target });
+          outputBlob = await buildEpubBlob(parsedLines, { title: itemTitle, author: exportAuthor, baseFontSize: fontSize, rubyFontSize, lineSpacing, translations, translationLang: translationSettings.target, cover, chapters: exportChapters });
         } else if (format === 'pdf') {
-          outputBlob = await buildPdfBlob(parsedLines, { title: itemTitle, baseFontSize: fontSize, rubyFontSize, lineSpacing, layout: pdfLayout, translations });
+          outputBlob = await buildPdfBlob(parsedLines, { title: itemTitle, baseFontSize: fontSize, rubyFontSize, lineSpacing, layout: pdfLayout, translations, cover, chapters: exportChapters });
         } else {
           const textOutput = format === 'srt'
             ? generateSRT(parsedLines, importedCues, translations)
@@ -286,9 +307,11 @@ export function useBatchProcessing({
         if (alsoSaveToLibrary && !item.bookId) {
           // A book taken from the library is already saved: never write it back.
           // The book's format describes its source file (as in the library importer), not the export.
+          const coverUrl = coverBlob ? await downscaleCover(coverBlob).catch(() => undefined) : undefined;
           librarySnapshot = await upsertBook(librarySnapshot, {
             title: cleanScriptTitle(itemTitle) || t.untitledScript,
             ...(parsedBookMeta?.author ? { author: parsedBookMeta.author } : {}),
+            ...(coverUrl ? { coverUrl } : {}),
             content: textContent,
             fingerprint,
             format: detectedFormat ?? scriptSourceFormat(item.name),

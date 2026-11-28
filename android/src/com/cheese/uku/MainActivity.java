@@ -633,6 +633,7 @@ public class MainActivity extends Activity {
         if (lower.endsWith(".woff")) return "font/woff";
         if (lower.endsWith(".ttf")) return "font/ttf";
         if (lower.endsWith(".wasm")) return "application/wasm";
+        if (lower.endsWith(".onnx")) return "application/octet-stream";
         if (lower.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
         if (lower.endsWith(".srt")) return "application/x-subrip";
         if (lower.endsWith(".txt")) return "text/plain";

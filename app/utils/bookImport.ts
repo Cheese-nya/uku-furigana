@@ -26,7 +26,7 @@ export interface ParsedBookFile {
   cover?: Blob;
   /** Source PDF layout, forwarded so batch export can reproduce it. */
   pdfLayout?: PdfLayout;
-  /** PDF line→page mapping, index = page - 1. */
+  /** PDF/OCR line→page mapping, index = page - 1. */
   pageStarts?: number[];
   pageLabels?: string[];
   warnings: ImportWarning[];
@@ -36,6 +36,14 @@ export interface ParsedBookFile {
 }
 
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+const IMAGE_MIMES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/jpg',
+  'image/webp',
+  'image/bmp',
+  'image/gif',
+]);
 // The pickers also offer text/plain and subtitle/markdown/archive MIMEs, so an extension-less pick must pass the queue filter too.
 const IMPORTABLE_MIMES = new Set([
   'application/pdf',
@@ -47,10 +55,12 @@ const IMPORTABLE_MIMES = new Set([
   'text/vtt',
   'application/zip',
   'application/octet-stream',
+  ...IMAGE_MIMES,
 ]);
-const IMPORTABLE_NAME = /\.(?:txt|md|srt|vtt|docx|epub|pdf)$/i;
+const IMAGE_NAME = /\.(?:png|jpe?g|webp|bmp|gif)$/i;
+const IMPORTABLE_NAME = /\.(?:txt|md|srt|vtt|docx|epub|pdf|png|jpe?g|webp|bmp|gif)$/i;
 
-export type DetectedBookFormat = 'epub' | 'pdf' | 'docx' | null;
+export type DetectedBookFormat = 'epub' | 'pdf' | 'docx' | 'image' | null;
 
 /**
  * Whether the batch queue should take the file: a known extension, a known document MIME
@@ -76,11 +86,13 @@ export async function detectBookFormat(file: File): Promise<DetectedBookFormat> 
   if (lower.endsWith('.epub')) return 'epub';
   if (lower.endsWith('.pdf')) return 'pdf';
   if (lower.endsWith('.docx')) return 'docx';
+  if (IMAGE_NAME.test(lower)) return 'image';
 
   const type = (file.type || '').toLowerCase();
   if (type === 'application/epub+zip') return 'epub';
   if (type === 'application/pdf') return 'pdf';
   if (type === DOCX_MIME) return 'docx';
+  if (IMAGE_MIMES.has(type)) return 'image';
 
   const head = new Uint8Array(await file.slice(0, 1024).arrayBuffer());
   const headAscii = new TextDecoder('latin1').decode(head);
@@ -91,10 +103,20 @@ export async function detectBookFormat(file: File): Promise<DetectedBookFormat> 
     // EPUB and DOCX are both ZIP files; an EPUB opens with a stored `mimetype` entry or `META-INF/`.
     return headAscii.includes('application/epub+zip') || headAscii.includes('META-INF/') ? 'epub' : 'docx';
   }
+  if (
+    (head.length >= 8 && head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47) ||
+    (head.length >= 3 && head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) ||
+    (head.length >= 12 && head[0] === 0x52 && head[1] === 0x49 && head[2] === 0x46 && head[3] === 0x46 &&
+      head[8] === 0x57 && head[9] === 0x45 && head[10] === 0x42 && head[11] === 0x50) ||
+    (head.length >= 2 && head[0] === 0x42 && head[1] === 0x4d) ||
+    (head.length >= 4 && head[0] === 0x47 && head[1] === 0x49 && head[2] === 0x46 && head[3] === 0x38)
+  ) {
+    return 'image';
+  }
   return null;
 }
 
-function fromImportedBook(book: ImportedBook, format: 'epub' | 'pdf'): ParsedBookFile {
+function fromImportedBook(book: ImportedBook, format: 'epub' | 'pdf' | 'image'): ParsedBookFile {
   return {
     title: book.title,
     author: book.author,
@@ -122,9 +144,20 @@ function fromImportedBook(book: ImportedBook, format: 'epub' | 'pdf'): ParsedBoo
   };
 }
 
+const groupedImageFiles = new WeakMap<File, readonly File[]>();
+
+/** Associate a multi-image book pick with its lead File so `parseBookFile(leadFile)` processes all pages as one book. */
+export function registerGroupedImageFiles(leadFile: File, files: readonly File[]): void {
+  groupedImageFiles.set(leadFile, files);
+}
+
 /** Parse a picked file (TXT/MD/SRT/VTT/DOCX/EPUB/PDF) into a library-ready book. EPUB and PDF load their parsers on demand. */
 export async function parseBookFile(file: File, options: ImportOptions = {}): Promise<ParsedBookFile> {
   throwIfAborted(options.signal);
+  const grouped = groupedImageFiles.get(file);
+  if (grouped) {
+    return parseImageFilesAsBook(grouped, { ...options, ocr: 'force' });
+  }
   const title = cleanScriptTitle(file.name.replace(/\.[^/.]+$/, '')) || 'Untitled';
   let format: Awaited<ReturnType<typeof detectBookFormat>>;
   try {
@@ -148,6 +181,14 @@ export async function parseBookFile(file: File, options: ImportOptions = {}): Pr
       throw toImportError(error);
     }
   }
+  if (format === 'image') {
+    const { importImagesAsBook } = await import('./imageImporter');
+    try {
+      return fromImportedBook(await importImagesAsBook([file], options), 'image');
+    } catch (error) {
+      throw toImportError(error);
+    }
+  }
   if (format === 'docx') {
     try {
       const imported = await importDocx(await file.arrayBuffer());
@@ -164,6 +205,17 @@ export async function parseBookFile(file: File, options: ImportOptions = {}): Pr
       title, content: imported.text, format: scriptSourceFormat(file.name), category: 'script',
       sourceOverrides: imported.overrides, srtCues: imported.cues, images: [], warnings: [],
     };
+  } catch (error) {
+    throw toImportError(error);
+  }
+}
+
+/** Parse multiple image files as one natural-ordered book via local OCR. */
+export async function parseImageFilesAsBook(files: readonly File[], options: ImportOptions = {}): Promise<ParsedBookFile> {
+  throwIfAborted(options.signal);
+  const { importImagesAsBook } = await import('./imageImporter');
+  try {
+    return fromImportedBook(await importImagesAsBook(files, options), 'image');
   } catch (error) {
     throw toImportError(error);
   }

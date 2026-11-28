@@ -6,6 +6,7 @@
 
 import { PDFDocument, degrees, rgb, type Color, type PDFFont, type PDFPage } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
+import { resolveExportCover, type ExportCoverInput } from './exportCover';
 import { subsetFont } from './fontSubset';
 import type { ScriptLine } from './furigana';
 import { cleanScriptTitle } from './docxImporter';
@@ -26,6 +27,8 @@ export interface PdfExportOptions {
   lineSpacing?: number;
   layout?: PdfLayout;
   translations?: readonly (string | undefined)[];
+  cover?: ExportCoverInput;
+  chapters?: BookChapter[];
 }
 
 interface LayoutUnit {
@@ -262,12 +265,43 @@ export async function buildPdfBlob(
   const chapterFontSize = Math.round(baseFontSize * 1.25);
 
   const rawJoined = lines.map((l) => l.rawText).join('\n');
-  const chapters: BookChapter[] = extractChapters(rawJoined, title);
+  const chapters: BookChapter[] = opts?.chapters && opts.chapters.length > 0 && lines.length > 0
+    ? opts.chapters.map((ch, idx) => {
+        const startLine = Math.max(0, Math.min(lines.length - 1, ch.startLine));
+        const endLine = Math.max(startLine, Math.min(lines.length - 1, ch.endLine));
+        return { ...ch, id: ch.id || `chapter:${idx + 1}`, title: sanitizePdfText(ch.title) || `Chapter ${idx + 1}`, startLine, endLine };
+      })
+    : extractChapters(rawJoined, title);
 
   const fontBytes = await getNotoSansJpBytes();
   const doc = await PDFDocument.create();
   doc.registerFontkit(fontkit);
   doc.setTitle(title);
+
+  // Optional cover page: embedded before text pages, scaled proportionally to fit page bounds.
+  const resolvedCover = await resolveExportCover(opts?.cover);
+  if (resolvedCover) {
+    try {
+      const embedded = resolvedCover.mime === 'image/png'
+        ? await doc.embedPng(resolvedCover.data)
+        : await doc.embedJpg(resolvedCover.data);
+      const dims = embedded.scale(1);
+      if (dims.width > 0 && dims.height > 0) {
+        const coverPage = doc.addPage([pageWidth, pageHeight]);
+        const scale = Math.min(pageWidth / dims.width, pageHeight / dims.height);
+        const drawWidth = dims.width * scale;
+        const drawHeight = dims.height * scale;
+        coverPage.drawImage(embedded, {
+          x: (pageWidth - drawWidth) / 2,
+          y: (pageHeight - drawHeight) / 2,
+          width: drawWidth,
+          height: drawHeight,
+        });
+      }
+    } catch {
+      // Corrupt or unsupported cover image bytes must never fail the PDF export.
+    }
+  }
 
   // Every string drawn below comes from these: title, chapter titles, speakers, token surfaces and rubies.
   const usedText = sanitizePdfText([title, '：', ' ', ...chapters.map(c => c.title),

@@ -592,6 +592,7 @@ export interface Translations {
   importPreviewQueueRetry: string;
   importPreviewStageReading: string;
   importPreviewStageText: string;
+  importPreviewStageOcr: string;
   importPreviewStageImages: string;
   importPreviewStageChapters: string;
   importPreviewStageCover: string;
@@ -605,6 +606,9 @@ export interface Translations {
   importPreviewWarningImagesSkipped: string;
   importPreviewWarningLowText: string;
   importPreviewWarningUnknownImageFormat: string;
+  importPreviewWarningOcrRecognized: string;
+  importPreviewWarningOcrLowConfidence: string;
+  importPreviewWarningOcrPagesFailed: string;
   importPreviewErrorPasswordRequired: string;
   importPreviewErrorPasswordWrong: string;
   importPreviewErrorDrmProtected: string;
@@ -614,6 +618,7 @@ export interface Translations {
   importPreviewErrorUnsupportedFormat: string;
   importPreviewErrorOutOfMemory: string;
   importPreviewErrorIo: string;
+  importPreviewErrorOcrFailed: string;
   importPreviewErrorCancelled: string;
   importPreviewErrorUnknown: string;
   readerSourcePage: string;
@@ -705,6 +710,21 @@ export interface Translations {
   toolsDeleteDict: string;
   toolsDone: string;
   libraryImportFormats: string;
+  editorImportFormats: string;
+  ocrProgressPage: string;
+  ocrProgressCancel: string;
+  ocrDropHint: string;
+  toolsOcrSection: string;
+  toolsOcrEngine: string;
+  toolsOcrEngineAuto: string;
+  toolsOcrEngineNdlocr: string;
+  toolsOcrEngineAppleVision: string;
+  toolsOcrFilterRuby: string;
+  toolsOcrFilterRubyHint: string;
+  toolsOcrAutoScannedPdf: string;
+  toolsOcrCacheStatus: string;
+  toolsOcrCacheNotDownloaded: string;
+  toolsOcrClearCache: string;
   libPixivImportError: string;
 
   // Book Metadata Gear Modal
@@ -1363,6 +1383,7 @@ export const translations: Record<Locale, Translations> = {
     importPreviewQueueRetry: '重试失败项',
     importPreviewStageReading: '读取文件',
     importPreviewStageText: '提取正文',
+    importPreviewStageOcr: '本地 OCR 识别',
     importPreviewStageImages: '提取插图',
     importPreviewStageChapters: '整理目录',
     importPreviewStageCover: '生成封面',
@@ -1376,6 +1397,9 @@ export const translations: Record<Locale, Translations> = {
     importPreviewWarningImagesSkipped: '有 {count} 张图片无法解码，已跳过',
     importPreviewWarningLowText: '正文文字较少，请确认不是扫描版',
     importPreviewWarningUnknownImageFormat: '有图片格式无法识别，已跳过',
+    importPreviewWarningOcrRecognized: '已通过本地 OCR 识别 {count} 页',
+    importPreviewWarningOcrLowConfidence: '部分页面文字置信度较低，建议对照原文校对',
+    importPreviewWarningOcrPagesFailed: '有 {count} 页 OCR 识别失败，已跳过',
     importPreviewErrorPasswordRequired: '这个 PDF 需要打开密码',
     importPreviewErrorPasswordWrong: 'PDF 密码不正确',
     importPreviewErrorDrmProtected: '文件受 DRM 保护，无法导入',
@@ -1385,6 +1409,7 @@ export const translations: Record<Locale, Translations> = {
     importPreviewErrorUnsupportedFormat: '不支持这种文件格式',
     importPreviewErrorOutOfMemory: '内存不足，导入失败',
     importPreviewErrorIo: '文件读取失败',
+    importPreviewErrorOcrFailed: '本地 OCR 识别失败，请检查模型文件或重试',
     importPreviewErrorCancelled: '导入已取消',
     importPreviewErrorUnknown: '导入失败',
     readerSourcePage: '原书 p.{page}',
@@ -1475,7 +1500,22 @@ export const translations: Record<Locale, Translations> = {
     toolsDictOrderNote: '多部词典按此顺序依次显示，可拖动排序。',
     toolsDeleteDict: '删除词典',
     toolsDone: '完成',
-    libraryImportFormats: 'TXT · DOCX · SRT · EPUB · PDF',
+    libraryImportFormats: 'TXT · DOCX · SRT · EPUB · PDF · 图片',
+    editorImportFormats: 'TXT · DOCX · PDF · 图片',
+    ocrProgressPage: '正在本地识别第 {current}/{total} 页',
+    ocrProgressCancel: '取消',
+    ocrDropHint: '松开以识别图片或导入文稿',
+    toolsOcrSection: '本地文字识别 (OCR)',
+    toolsOcrEngine: '识别引擎',
+    toolsOcrEngineAuto: '自动（系统优先）',
+    toolsOcrEngineNdlocr: 'NDLOCR-Lite',
+    toolsOcrEngineAppleVision: 'Apple Vision',
+    toolsOcrFilterRuby: '自动过滤原文注音（振假名）',
+    toolsOcrFilterRubyHint: '扫描书页或截图时尽量忽略旁注小字，由本应用重新标注。',
+    toolsOcrAutoScannedPdf: '扫描版 PDF 自动启用本地 OCR',
+    toolsOcrCacheStatus: '离线模型缓存：{size} MB',
+    toolsOcrCacheNotDownloaded: '离线模型未缓存（约 150 MB，首次识别时下载）',
+    toolsOcrClearCache: '清理缓存',
     libPixivImportError: 'Pixiv 导入失败',
 
     // Book Metadata Gear Modal
@@ -2130,6 +2170,7 @@ export const translations: Record<Locale, Translations> = {
     importPreviewQueueRetry: 'Retry failed',
     importPreviewStageReading: 'Reading file',
     importPreviewStageText: 'Extracting text',
+    importPreviewStageOcr: 'Local OCR',
     importPreviewStageImages: 'Extracting images',
     importPreviewStageChapters: 'Building contents',
     importPreviewStageCover: 'Rendering cover',
@@ -2143,6 +2184,9 @@ export const translations: Record<Locale, Translations> = {
     importPreviewWarningImagesSkipped: '{count} images could not be decoded and were skipped',
     importPreviewWarningLowText: 'Very little text was found; check that this is not a scanned book',
     importPreviewWarningUnknownImageFormat: 'Some images had an unknown format and were skipped',
+    importPreviewWarningOcrRecognized: 'Recognized {count} pages with local OCR',
+    importPreviewWarningOcrLowConfidence: 'Some recognized text has low confidence; consider proofreading',
+    importPreviewWarningOcrPagesFailed: 'Local OCR failed on {count} pages, which were skipped',
     importPreviewErrorPasswordRequired: 'This PDF needs an open password',
     importPreviewErrorPasswordWrong: 'The PDF password is incorrect',
     importPreviewErrorDrmProtected: 'This file is DRM protected and cannot be imported',
@@ -2152,6 +2196,7 @@ export const translations: Record<Locale, Translations> = {
     importPreviewErrorUnsupportedFormat: 'This file format is not supported',
     importPreviewErrorOutOfMemory: 'Not enough memory to import this file',
     importPreviewErrorIo: 'The file could not be read',
+    importPreviewErrorOcrFailed: 'Local OCR failed; check model assets and try again',
     importPreviewErrorCancelled: 'Import cancelled',
     importPreviewErrorUnknown: 'Import failed',
     readerSourcePage: 'Source p.{page}',
@@ -2242,7 +2287,22 @@ export const translations: Record<Locale, Translations> = {
     toolsDictOrderNote: 'Results follow this order; drag to reorder.',
     toolsDeleteDict: 'Delete dictionary',
     toolsDone: 'Done',
-    libraryImportFormats: 'TXT · DOCX · SRT · EPUB · PDF',
+    libraryImportFormats: 'TXT · DOCX · SRT · EPUB · PDF · Images',
+    editorImportFormats: 'TXT · DOCX · PDF · Images',
+    ocrProgressPage: 'Recognizing page {current}/{total} locally',
+    ocrProgressCancel: 'Cancel',
+    ocrDropHint: 'Drop images for OCR or files to import',
+    toolsOcrSection: 'Local OCR',
+    toolsOcrEngine: 'Recognition engine',
+    toolsOcrEngineAuto: 'Auto (prefer Apple Vision)',
+    toolsOcrEngineNdlocr: 'NDLOCR-Lite',
+    toolsOcrEngineAppleVision: 'Apple Vision',
+    toolsOcrFilterRuby: 'Filter source furigana automatically',
+    toolsOcrFilterRubyHint: 'Skip small printed ruby annotations in scans and screenshots so the app can re-annotate cleanly.',
+    toolsOcrAutoScannedPdf: 'Auto-run OCR on scanned PDFs',
+    toolsOcrCacheStatus: 'Offline model cache: {size} MB',
+    toolsOcrCacheNotDownloaded: 'Offline models not cached (~150 MB on first use)',
+    toolsOcrClearCache: 'Clear cache',
     libPixivImportError: 'Pixiv import failed',
 
     // Book Metadata Gear Modal

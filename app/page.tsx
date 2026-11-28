@@ -4,8 +4,11 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { GlassToast } from './components/GlassToast';
 import { ReadingToolsSheet } from './components/ReadingToolsSheet';
 import { useReadingTools } from './hooks/useReadingTools';
-import { detectBookFormat, parseBookFile } from './utils/bookImport';
-import { withoutImageLines } from './utils/bookAssets';
+import { detectBookFormat, parseBookFile, parseImageFilesAsBook } from './utils/bookImport';
+import type { BookFormat } from './utils/libraryDatabase';
+import { sortImageFilesNaturally } from './utils/imageImporter';
+import { ImportError } from './utils/importErrors';
+import { withoutImageLines, type ImportProgress } from './utils/bookAssets';
 import { Sidebar } from './components/Sidebar';
 import { SettingsMenu } from './components/SettingsMenu';
 import { PixivAccountSheet } from './components/PixivAccountSheet';
@@ -169,6 +172,8 @@ export default function DubbingStudioApp() {
   const [importError, setImportError] = useState('');
   const [pixivAccountOpen, setPixivAccountOpen] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [ocrProgress, setOcrProgress] = useState<ImportProgress | null>(null);
+  const ocrAbortRef = useRef<AbortController | null>(null);
   const importSequenceRef = useRef(0);
   const [editingToken, setEditingToken] = useState<EditingTokenState | null>(null);
   const [pendingCorrection, setPendingCorrection] = useState<PendingCorrection | null>(null);
@@ -182,7 +187,7 @@ export default function DubbingStudioApp() {
   // Built-in library state + integration. Called here so its effects keep their original
   // position (after the tab/orientation effects, before the correction-database effects).
   const {
-    libraryDb, setLibraryDb, libraryDbRef, activeBook, setEditorBookId, markEditorSource, libraryBooks, libraryFolders, handleCreateFolder, handleRenameFolder, handleDeleteFolder, handleMoveBook,
+    libraryDb, setLibraryDb, libraryDbRef, activeBook, editorBook, setEditorBookId, markEditorSource, libraryBooks, libraryFolders, handleCreateFolder, handleRenameFolder, handleDeleteFolder, handleMoveBook,
     libraryToast, setLibraryToast, importToast, setImportToast,
     loadBookIntoWorkspace, handleSaveToLibrary, importLibraryFiles, createOrUpdateBook,
     importReview, resolveImportReview,
@@ -784,7 +789,7 @@ export default function DubbingStudioApp() {
 
       if (format === 'docx') {
         setExportProgress(75);
-        blob = await buildDocxBlob(annotatedLines, { title: safeName, baseFontSize: fontSize, rubyFontSize, lineSpacing, translations });
+        blob = await buildDocxBlob(annotatedLines, { title: safeName, baseFontSize: fontSize, rubyFontSize, lineSpacing, translations, cover: editorBook?.coverUrl });
       } else {
         setExportProgress(75);
         const content = generateTextContent(annotatedLines, format, true, translations);
@@ -833,46 +838,102 @@ export default function DubbingStudioApp() {
     }
   };
 
-  // File import for Editor
-  const handleEditorFileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files || e.target.files.length === 0 || !correctionsReady) return;
-    const input = e.target;
+  const handleCancelOcr = () => {
+    ocrAbortRef.current?.abort();
+  };
+
+  const importFilesIntoEditor = async (
+    rawFiles: File[],
+    mode: 'replace' | 'insert',
+    insertRange?: { start: number; end: number },
+  ) => {
+    if (rawFiles.length === 0 || !correctionsReady) return;
     const request = ++importSequenceRef.current;
+    ocrAbortRef.current?.abort();
+    const controller = new AbortController();
+    ocrAbortRef.current = controller;
     setIsImporting(true);
+    setOcrProgress(null);
     advanceControllerRef.current?.abort();
-    const file = e.target.files[0];
+    setImportError('');
+
+    const file = rawFiles[0];
     const baseName = file.name.replace(/\.[^/.]+$/, "");
     let importedTitle = cleanScriptTitle(baseName) || baseName;
-    setImportError('');
 
     try {
       let content = '';
       let importedRuby: RubyOverride[] = [];
       let importedCues: SrtCue[] = [];
-      // The file name is not enough on Android: a content:// pick can arrive as a document id
-      // with no extension, so the MIME type and magic bytes decide which parser runs.
-      const format = await detectBookFormat(file);
-      if (format === 'epub' || format === 'pdf') {
-        const parsed = await parseBookFile(file);
-        content = withoutImageLines(parsed.content);
-        importedRuby = parsed.sourceOverrides;
-        if (parsed.title && parsed.title !== 'Untitled') importedTitle = parsed.title;
-      } else if (format === 'docx') {
-        const arrayBuffer = await file.arrayBuffer();
-        const imported = await importDocx(arrayBuffer);
-        content = imported.text;
-        importedRuby = imported.overrides;
-      } else {
-        // Inline 漢字(かな) readings from an earlier TXT/SRT export come back as source overrides.
-        const imported = importTextScript(file.name, await file.text());
-        if (file.name.toLowerCase().endsWith('.srt') && !imported.cues.length) throw new Error('未找到有效的 SRT 时间轴');
-        content = imported.text;
-        importedRuby = imported.overrides;
-        importedCues = imported.cues;
+      let format: BookFormat | null = null;
+
+      if (rawFiles.length > 1) {
+        const formats = await Promise.all(rawFiles.map(item => detectBookFormat(item)));
+        if (formats.every(f => f === 'image')) {
+          const sorted = sortImageFilesNaturally(rawFiles);
+          const parsed = await parseImageFilesAsBook(sorted, {
+            signal: controller.signal,
+            ocr: 'force',
+            onProgress: progress => {
+              if (progress.stage === 'ocr') setOcrProgress(progress);
+            },
+          });
+          content = withoutImageLines(parsed.content);
+          importedRuby = parsed.sourceOverrides;
+          format = 'image';
+          if (parsed.title && parsed.title !== 'Untitled') importedTitle = parsed.title;
+        }
       }
+
+      if (!format) {
+        // The file name is not enough on Android: a content:// pick can arrive as a document id
+        // with no extension, so the MIME type and magic bytes decide which parser runs.
+        format = await detectBookFormat(file);
+        if (format === 'epub' || format === 'pdf' || format === 'image') {
+          const parsed = await parseBookFile(file, {
+            signal: controller.signal,
+            ocr: format === 'pdf' || format === 'image' ? 'force' : 'auto',
+            onProgress: progress => {
+              if (progress.stage === 'ocr') setOcrProgress(progress);
+            },
+          });
+          content = withoutImageLines(parsed.content);
+          importedRuby = parsed.sourceOverrides;
+          if (parsed.title && parsed.title !== 'Untitled') importedTitle = parsed.title;
+        } else if (format === 'docx') {
+          const arrayBuffer = await file.arrayBuffer();
+          const imported = await importDocx(arrayBuffer);
+          content = imported.text;
+          importedRuby = imported.overrides;
+        } else {
+          // Inline 漢字(かな) readings from an earlier TXT/SRT export come back as source overrides.
+          const imported = importTextScript(file.name, await file.text());
+          if (file.name.toLowerCase().endsWith('.srt') && !imported.cues.length) throw new Error('未找到有效的 SRT 时间轴');
+          content = imported.text;
+          importedRuby = imported.overrides;
+          importedCues = imported.cues;
+        }
+      }
+
+      if (request !== importSequenceRef.current) return;
+      if (mode === 'insert' && rawText.trim().length > 0) {
+        const start = Math.max(0, Math.min(rawText.length, insertRange?.start ?? rawText.length));
+        const end = Math.max(start, Math.min(rawText.length, insertRange?.end ?? start));
+        const prefixNeedsNewline = start > 0 && !rawText.slice(0, start).endsWith('\n');
+        const suffixNeedsNewline = end < rawText.length && !rawText.slice(end).startsWith('\n');
+        const merged = rawText.slice(0, start)
+          + (prefixNeedsNewline ? '\n' : '')
+          + content
+          + (suffixNeedsNewline ? '\n' : '')
+          + rawText.slice(end);
+        setEditingToken(null);
+        setRawText(merged);
+        return;
+      }
+
       const fingerprint = await fingerprintText(content);
       if (request !== importSequenceRef.current) return;
-      // Reconcile with current state; metadata saves may finish while DOCX parses.
+      // Reconcile with current state; metadata saves may finish while DOCX/OCR parses.
       const resolved = resolveScript(databaseRef.current, importedTitle, content, fingerprint);
       setDatabase(resolved.database);
       setDocumentId(resolved.scriptId);
@@ -886,10 +947,39 @@ export default function DubbingStudioApp() {
       // "Save to Library" creates a new book instead of overwriting the linked one.
       setEditorBookId(null);
     } catch (err) {
+      if (err instanceof ImportError && err.code === 'cancelled') return;
       if (request === importSequenceRef.current) setImportError(`导入失败：${err instanceof Error ? err.message : String(err)}`);
     } finally {
-      if (request === importSequenceRef.current) { setIsImporting(false); input.value = ''; }
+      if (request === importSequenceRef.current) {
+        setIsImporting(false);
+        setOcrProgress(null);
+      }
     }
+  };
+
+  // File import for Editor
+  const handleEditorFileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0 || !correctionsReady) return;
+    const input = e.target;
+    const files = Array.from(e.target.files);
+    try {
+      await importFilesIntoEditor(files, 'replace');
+    } finally {
+      input.value = '';
+    }
+  };
+
+  const handleEditorPasteImages = async (files: File[], selectionStart: number, selectionEnd: number) => {
+    await importFilesIntoEditor(files, rawText.trim().length > 0 ? 'insert' : 'replace', { start: selectionStart, end: selectionEnd });
+  };
+
+  const handleEditorDropFiles = async (files: File[]) => {
+    const formats = await Promise.all(files.map(file => detectBookFormat(file)));
+    if (formats.every(f => f === 'image') && rawText.trim().length > 0) {
+      await importFilesIntoEditor(files, 'insert', { start: rawText.length, end: rawText.length });
+      return;
+    }
+    await importFilesIntoEditor(files, 'replace');
   };
 
   // Batch page queue (state, file intake and processing).
@@ -1008,6 +1098,10 @@ export default function DubbingStudioApp() {
             advanceControllerRef={advanceControllerRef} setIsGlossaryOpen={setIsGlossaryOpen}
             editorFileInputRef={editorFileInputRef} handleEditorFileImport={handleEditorFileImport}
             isImporting={isImporting} importError={importError}
+            ocrProgress={ocrProgress}
+            onCancelOcr={handleCancelOcr}
+            onEditorPasteImages={handleEditorPasteImages}
+            onEditorDropFiles={handleEditorDropFiles}
             onOpenPixivAccount={() => setPixivAccountOpen(true)}
             libraryBooks={libraryBooks} onImportFromLibrary={book => loadBookIntoWorkspace(book, 'editor')}
             handleSaveToLibrary={handleSaveToLibrary}

@@ -25,7 +25,7 @@
     "package:exe": "node scripts/build-web.mjs && python -m PyInstaller --noconfirm --onefile --windowed --icon=\"app_icon.ico\" --name UkuFurigana --add-data \"out;out\" desktop_runner.py && copy /y dist\\UkuFurigana.exe .\\UkuFurigana.exe",
     "package:macos": "bash scripts/build-macos.sh",
     "lint": "eslint",
-    "pretest": "node scripts/vendor-assets.mjs",
+    "pretest": "UKU_SKIP_OCR_MODELS=1 node scripts/vendor-assets.mjs",
     "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
@@ -36,6 +36,7 @@
     "jszip": "^3.10.2",
     "kuromoji": "^0.1.2",
     "next": "16.2.12",
+    "onnxruntime-web": "^1.31.1",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "6.4.299",
     "react": "19.2.4",

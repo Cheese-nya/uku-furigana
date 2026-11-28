@@ -19,6 +19,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import webview
+from desktop_ocr import MAX_OCR_IMAGE_BYTES, is_apple_vision_available, recognize_image_bytes, validate_ocr_request
 from desktop_pixiv import DesktopPixivSession
 
 
@@ -163,6 +164,7 @@ def start_http_server(web_dir, port, ready_event, pixiv_session=None):
             '.json': 'application/json',
             '.gz': 'application/octet-stream',
             '.wasm': 'application/wasm',
+            '.onnx': 'application/octet-stream',
         }
 
         def __init__(self, *args, **kwargs):
@@ -171,20 +173,51 @@ def start_http_server(web_dir, port, ready_event, pixiv_session=None):
         def log_message(self, format, *args):
             pass  # Suppress HTTP request logs
 
+        def _send_json(self, status, payload):
+            body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+            self.send_response(status)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
         def do_GET(self):
             from urllib.parse import urlsplit, parse_qs
             parsed = urlsplit(self.path)
+            if parsed.path == '/api/native-ocr/status':
+                available = is_apple_vision_available()
+                self._send_json(200, {'available': available, 'engine': 'apple-vision' if available else None})
+                return
             if parsed.path == '/api/pixiv-ajax' and pixiv_session is not None:
                 status, result = pixiv_session.novel(parse_qs(parsed.query).get('id', [''])[0])
-                body = json.dumps(result, ensure_ascii=False).encode('utf-8')
-                self.send_response(status)
-                self.send_header('Content-Type', 'application/json; charset=utf-8')
-                self.send_header('Cache-Control', 'no-store')
-                self.send_header('Content-Length', str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_json(status, result)
                 return
             super().do_GET()
+
+        def do_POST(self):
+            from urllib.parse import urlsplit
+            parsed = urlsplit(self.path)
+            if parsed.path != '/api/native-ocr':
+                self._send_json(404, {'ok': False, 'error': 'not-found'})
+                return
+            try:
+                content_length = int(self.headers.get('Content-Length') or '0')
+            except ValueError:
+                self._send_json(400, {'ok': False, 'error': 'invalid-content-length'})
+                return
+            if content_length <= 0 or content_length > MAX_OCR_IMAGE_BYTES:
+                status = 413 if content_length > MAX_OCR_IMAGE_BYTES else 400
+                self._send_json(status, {'ok': False, 'error': 'invalid-content-length'})
+                return
+            body = self.rfile.read(content_length)
+            ok, err = validate_ocr_request(self.headers.get('Content-Type', ''), body)
+            if not ok:
+                status = 413 if err == 'payload-too-large' else 415 if err == 'unsupported-content-type' else 400
+                self._send_json(status, {'ok': False, 'error': err})
+                return
+            status, payload = recognize_image_bytes(body)
+            self._send_json(status, payload)
 
     # A slow authenticated Pixiv request must not block dictionary/worker assets.
     server = ThreadingHTTPServer(('127.0.0.1', port), QuietHandler)

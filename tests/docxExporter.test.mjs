@@ -5,6 +5,8 @@ import { DOMParser } from '@xmldom/xmldom';
 import { loadTypescript } from './loadTypescript.mjs';
 
 const { buildDocxBlob } = loadTypescript('../app/utils/docxExporter.ts');
+const { importDocx } = loadTypescript('../app/utils/docxImporter.ts');
+const TINY_PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 const namespace = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const elements = (node, name) => Array.from(node.getElementsByTagNameNS(namespace, name));
 
@@ -119,4 +121,29 @@ test('Word export appends bilingual translation paragraph with keepNext and sani
   const transText = elements(paragraphs[2], 't').map(n => n.textContent).join('');
   assert.equal(transText, '佐藤：去学校测试');
   assert.equal(rawXml.includes('\u0007'), false);
+});
+
+test('Word export embeds cover image cleanly and round-trips body text via importDocx', async () => {
+  const line = {
+    id: 'cover-body',
+    rawText: '未来',
+    cleanText: '未来',
+    tokens: [{ surface: '未来', ruby: 'みらい', hasKanji: true }],
+  };
+  const blob = await buildDocxBlob([line], { title: '封面测试', cover: TINY_PNG_DATA_URL });
+  const bytes = await blob.arrayBuffer();
+  const zip = await JSZip.loadAsync(bytes);
+  const mediaFiles = Object.keys(zip.files).filter(name => name.startsWith('word/media/') && !zip.files[name].dir);
+  assert.equal(mediaFiles.length, 1, 'cover image should be embedded in word/media/');
+
+  const originalDomParser = globalThis.DOMParser;
+  globalThis.DOMParser = DOMParser;
+  try {
+    const imported = await importDocx(bytes);
+    assert.equal(imported.text, '未来');
+    assert.equal(imported.overrides.length, 1);
+    assert.equal(imported.overrides[0].reading, 'みらい');
+  } finally {
+    globalThis.DOMParser = originalDomParser;
+  }
 });
